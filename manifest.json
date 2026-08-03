@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "BrowserControl Agent",
+  "version": "1.6.0",
+  "description": "AI Workspace extension for controlling browser via CDP",
+  "permissions": [
+    "tabs",
+    "tabGroups",
+    "scripting",
+    "debugger",
+    "alarms"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "dist/background.js",
+    "type": "module"
+  }
+}

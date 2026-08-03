@@ -1,0 +1,15 @@
+{
+  "name": "browsercontrol",
+  "version": "1.6.0",
+  "description": "Chrome extension + local MCP server for driving your everyday Chrome browser via CDP",
+  "scripts": {
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.263",
+    "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0"
+  }
+}
