@@ -185,8 +185,21 @@ async function attachDebuggerIfNeeded(tabId: number) {
     await new Promise<void>((resolve) => {
       chrome.debugger.sendCommand({ tabId }, 'Network.enable', {}, () => resolve());
     });
+    // CSS: required by getMatchedStylesForNode / getComputedStyleForNode.
+    await new Promise<void>((resolve) => {
+      chrome.debugger.sendCommand({ tabId }, 'CSS.enable', {}, () => resolve());
+    });
   }
 }
+
+const RELEVANT_STYLE_PROPS = new Set([
+  'display', 'position', 'top', 'left', 'right', 'bottom', 'width', 'height',
+  'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+  'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+  'color', 'background-color', 'border', 'border-radius',
+  'font-size', 'font-weight', 'line-height', 'opacity', 'visibility',
+  'z-index', 'overflow', 'flex-direction', 'justify-content', 'align-items',
+]);
 
 async function dispatchCommand(data: any): Promise<any> {
   const cmd = data.cmd;
@@ -389,7 +402,91 @@ async function dispatchCommand(data: any): Promise<any> {
     return { success: true, format, dataBase64: res.data };
   }
 
-  // 7. Network
+  // 7. Inspect element (style + logic detail for ONE node, on demand)
+  if (cmd === 'inspect_element') {
+    if (!data.nodeId) return { error: "Missing nodeId", hint: "Call snapshot or visual_snapshot first and pass one of the returned node ids." };
+    const backendNodeId = data.nodeId;
+
+    const describeResult: any = await new Promise((resolve) => {
+      chrome.debugger.sendCommand(target, 'DOM.describeNode', { backendNodeId }, resolve);
+    });
+    if (describeResult?.error || !describeResult?.node) {
+      return { error: 'Failed to resolve node', hint: 'The node id may be stale (page navigated/re-rendered since the last snapshot). Take a fresh snapshot and retry.' };
+    }
+
+    const outerHTMLResult: any = await new Promise((resolve) => {
+      chrome.debugger.sendCommand(target, 'DOM.getOuterHTML', { backendNodeId }, resolve);
+    });
+    let outerHTML: string | undefined = outerHTMLResult?.outerHTML;
+    let outerHTMLTruncated = false;
+    const MAX_HTML_CHARS = 5000;
+    if (typeof outerHTML === 'string' && outerHTML.length > MAX_HTML_CHARS) {
+      outerHTML = outerHTML.slice(0, MAX_HTML_CHARS);
+      outerHTMLTruncated = true;
+    }
+
+    // CSS domain methods need a session-scoped nodeId, not backendNodeId.
+    const pushResult: any = await new Promise((resolve) => {
+      chrome.debugger.sendCommand(target, 'DOM.pushNodesByBackendIdsToFrontend', { backendNodeIds: [backendNodeId] }, resolve);
+    });
+    const nodeId = pushResult?.nodeIds?.[0];
+
+    let matchedRules: any[] = [];
+    let computedStyle: Record<string, string> = {};
+    if (nodeId) {
+      const matchedResult: any = await new Promise((resolve) => {
+        chrome.debugger.sendCommand(target, 'CSS.getMatchedStylesForNode', { nodeId }, resolve);
+      });
+      matchedRules = (matchedResult?.matchedCSSRules || []).slice(0, 15).map((m: any) => ({
+        selector: m.rule?.selectorList?.text,
+        origin: m.rule?.origin,
+        properties: Object.fromEntries(
+          (m.rule?.style?.cssProperties || [])
+            .filter((p: any) => !p.disabled)
+            .map((p: any) => [p.name, p.value]),
+        ),
+      }));
+
+      const computedResult: any = await new Promise((resolve) => {
+        chrome.debugger.sendCommand(target, 'CSS.getComputedStyleForNode', { nodeId }, resolve);
+      });
+      for (const prop of computedResult?.computedStyle || []) {
+        if (RELEVANT_STYLE_PROPS.has(prop.name)) computedStyle[prop.name] = prop.value;
+      }
+    }
+
+    // Event listeners: DOMDebugger works on a Runtime remote object, not a
+    // DOM node id, so resolve one and release it when done.
+    let eventListeners: any[] = [];
+    const resolveResult: any = await new Promise((resolve) => {
+      chrome.debugger.sendCommand(target, 'DOM.resolveNode', { backendNodeId }, resolve);
+    });
+    const objectId = resolveResult?.object?.objectId;
+    if (objectId) {
+      const listenersResult: any = await new Promise((resolve) => {
+        chrome.debugger.sendCommand(target, 'DOMDebugger.getEventListeners', { objectId }, resolve);
+      });
+      eventListeners = (listenersResult?.listeners || []).map((l: any) => ({
+        type: l.type,
+        useCapture: l.useCapture,
+        passive: l.passive,
+        once: l.once,
+      }));
+      chrome.debugger.sendCommand(target, 'Runtime.releaseObject', { objectId }, () => {});
+    }
+
+    return {
+      nodeName: describeResult.node.nodeName,
+      attributes: describeResult.node.attributes,
+      outerHTML,
+      outerHTMLTruncated,
+      matchedRules,
+      computedStyle,
+      eventListeners,
+    };
+  }
+
+  // 8. Network
   if (cmd === 'network_requests') {
     return {
       requests: listNetworkRequests({
@@ -410,7 +507,7 @@ async function dispatchCommand(data: any): Promise<any> {
     return { success: true, message: "Network log cleared." };
   }
 
-  // 8. Evaluate JS
+  // 9. Evaluate JS
   if (cmd === 'evaluate') {
     const res: any = await new Promise((resolve) => {
       chrome.debugger.sendCommand(target, 'Runtime.evaluate', { expression: data.expression, returnByValue: true }, resolve);

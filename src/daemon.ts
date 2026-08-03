@@ -167,6 +167,12 @@ verified UI behavior:
   you need to see rendering issues the accessibility tree can't show.
 - browser_visual_snapshot: structure + visual grounding in one call, for
   when you need both an id to act on and confidence about its position.
+- browser_inspect_element: browser_snapshot deliberately shows very little
+  per element to stay cheap across a whole page. When you need to know WHY
+  one specific element looks or behaves a certain way — which CSS rule set
+  that color/spacing, what its computed layout is, whether it has a click/
+  change listener attached — call browser_inspect_element on its id instead
+  of trying to infer it from the snapshot or re-reading source files blind.
 
 Both browser_screenshot and browser_visual_snapshot return the image inline
 AND save it to a file on disk (path given in the text output). Some MCP
@@ -253,6 +259,11 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: { type: "object", properties: {} }
       },
       {
+        name: "browser_inspect_element",
+        description: "Deep-dive on ONE element by id (from browser_snapshot/browser_visual_snapshot): outerHTML, which CSS rule/selector set its computed styles, key computed layout properties, and any event listeners attached (type only, not handler source). Expensive relative to browser_snapshot — use it only for the specific element you need to explain, not in a loop over every node.",
+        inputSchema: { type: "object", properties: { nodeId: { type: "number" } }, required: ["nodeId"] }
+      },
+      {
         name: "browser_screenshot",
         description: "Capture a screenshot so you can visually inspect layout, styling, spacing, and rendering issues that the accessibility snapshot (text-only) can't show",
         inputSchema: {
@@ -315,6 +326,9 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case "browser_network_clear":
         result = await executeCommand("network_clear");
+        break;
+      case "browser_inspect_element":
+        result = await executeCommand("inspect_element", { nodeId: args?.nodeId });
         break;
       case "browser_screenshot": {
         const shot = await executeCommand("screenshot", {
