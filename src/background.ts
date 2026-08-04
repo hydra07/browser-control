@@ -178,12 +178,26 @@ function quadToBox(quad: number[]): { x: number; y: number; w: number; h: number
 // real click/type in sync with the animation instead of racing ahead of it.
 function moveCursorTo(x: number, y: number): Promise<void> {
   return new Promise((resolve) => {
+    // Diagnostic: open DevTools (F12) on the page itself and watch for this
+    // — if it never appears, the injected code isn't running at all (page
+    // JS error, CSP, or a debugger command failure upstream). If it DOES
+    // appear but nothing is visible, the element is rendering but hidden —
+    // most likely a page-level CSS ancestor with transform/filter/perspective,
+    // which makes position:fixed descendants position relative to THAT
+    // ancestor's box instead of the real viewport, not this code.
+    console.log('[browsercontrol] moveCursorTo', x, y);
+    // documentElement (<html>) instead of body: fewer real-world apps put a
+    // transform/filter on <html> than on <body> or a layout wrapper div, so
+    // appending here is less likely to get silently clipped/repositioned by
+    // an ancestor's CSS.
     let cursor = document.getElementById('__bc_cursor__') as HTMLDivElement | null;
     if (!cursor) {
       cursor = document.createElement('div');
       cursor.id = '__bc_cursor__';
-      cursor.style.cssText = 'position:fixed;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;background:rgba(255,255,255,0.9);border:2px solid #111;box-shadow:0 0 0 2px rgba(0,0,0,0.25),0 1px 4px rgba(0,0,0,0.35);z-index:2147483647;pointer-events:none;transition:left 0.35s ease,top 0.35s ease;left:-100px;top:-100px;';
-      document.body.appendChild(cursor);
+      // Slight overshoot easing (back-out) reads as a more natural glide
+      // than linear/ease — same idea as native OS pointer/spring animations.
+      cursor.style.cssText = 'all:initial;position:fixed;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;background:rgba(255,255,255,0.95);border:2px solid #111;box-shadow:0 0 0 2px rgba(0,0,0,0.2),0 2px 6px rgba(0,0,0,0.35);z-index:2147483647;pointer-events:none;transition:left 0.35s cubic-bezier(0.34,1.56,0.64,1),top 0.35s cubic-bezier(0.34,1.56,0.64,1);left:-100px;top:-100px;';
+      document.documentElement.appendChild(cursor);
     }
     // Force a layout flush so the transition animates from the cursor's
     // current position instead of jumping straight to the new one.
@@ -194,23 +208,84 @@ function moveCursorTo(x: number, y: number): Promise<void> {
   });
 }
 
-// Self-contained: injected via .toString(). Draws a brief highlight around
-// the exact element an action just touched, so anyone watching the tab (or a
-// screen recording) can see what browser_click/browser_type acted on, in
-// real time — distinct from browser_visual_snapshot's static "here are all
-// the candidates" overlay.
-function flashElementHighlight(box: { x: number; y: number; w: number; h: number }, color: string) {
-  const el = document.createElement('div');
-  el.style.cssText = `position:fixed;left:${box.x}px;top:${box.y}px;width:${box.w}px;height:${box.h}px;border:3px solid ${color};border-radius:3px;box-sizing:border-box;background:${color}22;z-index:2147483647;pointer-events:none;opacity:1;transition:opacity 0.6s ease-out;`;
-  document.body.appendChild(el);
-  setTimeout(() => {
-    el.style.opacity = '0';
-    setTimeout(() => el.remove(), 600);
-  }, 400);
+// Self-contained: injected via .toString(). A brief ripple at the exact
+// point a click was dispatched — separate from the corner-bracket highlight
+// (which marks the element), this marks the precise pixel the mouse event
+// fired at, the same "tap feedback" pattern as native touch/click UIs.
+function showClickRipple(x: number, y: number, color: string) {
+  console.log('[browsercontrol] showClickRipple', x, y);
+  const ripple = document.createElement('div');
+  ripple.style.cssText = `all:initial;position:fixed;left:${x}px;top:${y}px;width:0;height:0;margin:0;border-radius:50%;background:${color};opacity:0.55;transform:translate(-50%,-50%);z-index:2147483647;pointer-events:none;transition:width 0.4s ease-out,height 0.4s ease-out,opacity 0.4s ease-out;`;
+  document.documentElement.appendChild(ripple);
+  requestAnimationFrame(() => {
+    ripple.style.width = '36px';
+    ripple.style.height = '36px';
+    ripple.style.opacity = '0';
+  });
+  setTimeout(() => ripple.remove(), 450);
 }
 
 function removeAnnotationOverlay() {
   document.getElementById('__bc_annotate_overlay__')?.remove();
+}
+
+// Every visual-feedback injection (cursor/highlight/ripple/overlay) used to
+// go through a bare chrome.debugger.sendCommand(..., resolve) that ignored
+// the result entirely — if the injected code threw (or the command itself
+// failed), we'd silently move on with no visual effect and zero trace of
+// why. Route them all through here so failures show up in the extension's
+// own service worker console (chrome://extensions → "service worker" link)
+// instead of just quietly not happening.
+function evalOnPage(target: chrome.debugger.Debuggee, expression: string, awaitPromise = false): Promise<void> {
+  return new Promise((resolve) => {
+    chrome.debugger.sendCommand(target, 'Runtime.evaluate', { expression, awaitPromise }, (result: any) => {
+      if (chrome.runtime.lastError) {
+        console.error('[browsercontrol] visual feedback command failed:', chrome.runtime.lastError.message);
+      } else if (result?.exceptionDetails) {
+        console.error('[browsercontrol] visual feedback script threw:', result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
+      }
+      resolve();
+    });
+  });
+}
+
+// backendDOMNodeId is only stable within one page's DOM — it's meaningless
+// after a fresh navigate, which makes raw-id replay unreliable (see
+// replay.ts). role+name (the same fields browser_snapshot returns) stay
+// meaningful across a reload, since they reflect the page's actual visible
+// content rather than an internal id Chrome happens to assign. Attaching
+// them to every click/type response lets replay re-resolve "the button
+// named X" against a fresh snapshot instead of trusting a stale id.
+function getAxInfoForNode(target: chrome.debugger.Debuggee, backendNodeId: number): Promise<{ role?: string; name?: string }> {
+  return new Promise((resolve) => {
+    chrome.debugger.sendCommand(target, 'Accessibility.queryAXTree', { backendNodeId }, (result: any) => {
+      const node = result?.nodes?.[0];
+      resolve({ role: node?.role?.value, name: node?.name?.value });
+    });
+  });
+}
+
+// Native CDP highlight instead of injected DOM — drawn by Chrome's own
+// inspector-overlay compositor layer (the same mechanism as DevTools'
+// "Inspect Element" hover box), so it's rendered above the page entirely
+// outside its DOM/CSS. Immune to whatever the page does with transforms,
+// z-index, stacking contexts, or CSP — none of that applies here.
+function showNativeHighlight(
+  target: chrome.debugger.Debuggee,
+  box: { x: number; y: number; w: number; h: number },
+  rgb: { r: number; g: number; b: number },
+): Promise<void> {
+  return new Promise((resolve) => {
+    chrome.debugger.sendCommand(target, 'Overlay.highlightRect', {
+      x: Math.round(box.x), y: Math.round(box.y), width: Math.round(box.w), height: Math.round(box.h),
+      color: { r: rgb.r, g: rgb.g, b: rgb.b, a: 0.2 },
+      outlineColor: { r: rgb.r, g: rgb.g, b: rgb.b, a: 0.9 },
+    }, () => resolve());
+  });
+}
+
+function hideNativeHighlight(target: chrome.debugger.Debuggee): void {
+  chrome.debugger.sendCommand(target, 'Overlay.hideHighlight', {}, () => {});
 }
 
 function ensureConnected(): void {
@@ -275,15 +350,17 @@ async function attachDebuggerIfNeeded(tabId: number) {
       chrome.debugger.attach({ tabId }, '1.3', () => resolve());
     });
     isDebuggerAttached = true;
-    // These 4 domains are independent of each other — enabling them
-    // concurrently costs ~1 round-trip instead of 4 sequential ones.
+    // These domains are independent of each other — enabling them
+    // concurrently costs ~1 round-trip instead of 5 sequential ones.
     // Page: lets us auto-handle dialogs. DOM: required by getBoxModel.
     // Network: request/response collection. CSS: matched/computed styles.
+    // Overlay: native highlight rendering, immune to the page's own CSS.
     await Promise.all([
       new Promise<void>((resolve) => chrome.debugger.sendCommand({ tabId }, 'Page.enable', {}, () => resolve())),
       new Promise<void>((resolve) => chrome.debugger.sendCommand({ tabId }, 'DOM.enable', {}, () => resolve())),
       new Promise<void>((resolve) => chrome.debugger.sendCommand({ tabId }, 'Network.enable', {}, () => resolve())),
       new Promise<void>((resolve) => chrome.debugger.sendCommand({ tabId }, 'CSS.enable', {}, () => resolve())),
+      new Promise<void>((resolve) => chrome.debugger.sendCommand({ tabId }, 'Overlay.enable', {}, () => resolve())),
     ]);
   }
 }
@@ -400,21 +477,13 @@ async function dispatchCommand(data: any): Promise<any> {
       });
     })));
 
-    await new Promise((resolve) => {
-      chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
-        expression: `(${drawAnnotationOverlay.toString()})(${JSON.stringify(boxes)})`,
-      }, resolve);
-    });
+    await evalOnPage(target, `(${drawAnnotationOverlay.toString()})(${JSON.stringify(boxes)})`);
 
     const shot: any = await new Promise((resolve) => {
       chrome.debugger.sendCommand(target, 'Page.captureScreenshot', { format: 'jpeg', quality: 80 }, resolve);
     });
 
-    await new Promise((resolve) => {
-      chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
-        expression: `(${removeAnnotationOverlay.toString()})()`,
-      }, resolve);
-    });
+    await evalOnPage(target, `(${removeAnnotationOverlay.toString()})()`);
 
     if (!shot?.data) {
       return { error: 'Failed to capture annotated screenshot', hint: 'The page or debugger session may be in a bad state; try navigating again.' };
@@ -449,21 +518,23 @@ async function dispatchCommand(data: any): Promise<any> {
       const y = box.y + box.h / 2;
 
       // Glide the cursor there first, then highlight — visible movement
-      // instead of a highlight teleporting straight to the target.
-      await new Promise((r) => chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
-        expression: `(${moveCursorTo.toString()})(${x}, ${y})`,
-        awaitPromise: true,
-      }, r));
-      await new Promise((r) => chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
-        expression: `(${flashElementHighlight.toString()})(${JSON.stringify(box)}, '#22c55e')`,
-      }, r));
+      // instead of a highlight teleporting straight to the target. Fetch
+      // role/name concurrently — independent of the animation, needed for
+      // replay to re-resolve this element by identity instead of stale id.
+      const [, axInfo] = await Promise.all([
+        evalOnPage(target, `(${moveCursorTo.toString()})(${x}, ${y})`, true),
+        getAxInfoForNode(target, data.nodeId),
+      ]);
+      await showNativeHighlight(target, box, { r: 34, g: 197, b: 94 });
 
       // Dispatch mousedown and mouseup
       await new Promise(r => chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 }, r));
+      void evalOnPage(target, `(${showClickRipple.toString()})(${x}, ${y}, '#22c55e')`);
       await new Promise(r => chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 }, r));
       await waitForStableDom(target);
+      setTimeout(() => hideNativeHighlight(target), 400);
 
-      return { success: true, message: `Clicked at (${x}, ${y})` };
+      return { success: true, message: `Clicked at (${x}, ${y})`, role: axInfo.role, name: axInfo.name };
     }
     return { error: "Failed to resolve node bounds", hint: "The node id may be stale (page navigated/re-rendered since the last snapshot). Take a fresh snapshot and retry." };
   }
@@ -471,6 +542,7 @@ async function dispatchCommand(data: any): Promise<any> {
   // 4. Type (focus + insertText)
   if (cmd === 'type') {
     if (!data.text) return { error: "Missing text" };
+    let axInfo: { role?: string; name?: string } = {};
     if (data.nodeId) {
       await new Promise((r) => chrome.debugger.sendCommand(target, 'DOM.scrollIntoViewIfNeeded', { backendNodeId: data.nodeId }, r));
 
@@ -481,20 +553,20 @@ async function dispatchCommand(data: any): Promise<any> {
         return { error: `Failed to focus node: ${focusResult.error.message}`, hint: "The node id may be stale, or the element isn't focusable (e.g. a div, not an input). Take a fresh snapshot and confirm it's an input/textbox node." };
       }
 
-      const boxModel: any = await new Promise((resolve) => {
-        chrome.debugger.sendCommand(target, 'DOM.getBoxModel', { backendNodeId: data.nodeId }, resolve);
-      });
+      const [boxModel, resolvedAxInfo]: [any, { role?: string; name?: string }] = await Promise.all([
+        new Promise((resolve) => {
+          chrome.debugger.sendCommand(target, 'DOM.getBoxModel', { backendNodeId: data.nodeId }, resolve);
+        }),
+        getAxInfoForNode(target, data.nodeId),
+      ]);
+      axInfo = resolvedAxInfo;
       if (boxModel?.model?.content) {
         const box = quadToBox(boxModel.model.content);
         const cx = box.x + box.w / 2;
         const cy = box.y + box.h / 2;
-        await new Promise((r) => chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
-          expression: `(${moveCursorTo.toString()})(${cx}, ${cy})`,
-          awaitPromise: true,
-        }, r));
-        await new Promise((r) => chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
-          expression: `(${flashElementHighlight.toString()})(${JSON.stringify(box)}, '#3b82f6')`,
-        }, r));
+        await evalOnPage(target, `(${moveCursorTo.toString()})(${cx}, ${cy})`, true);
+        await showNativeHighlight(target, box, { r: 59, g: 130, b: 246 });
+        setTimeout(() => hideNativeHighlight(target), 600);
       }
     }
     // Input.insertText types into whichever element currently has focus, so
@@ -502,7 +574,7 @@ async function dispatchCommand(data: any): Promise<any> {
     // something already being focused (e.g. right after a click).
     await new Promise(r => chrome.debugger.sendCommand(target, 'Input.insertText', { text: data.text }, r));
     await waitForStableDom(target);
-    return { success: true, message: `Typed "${data.text}"` };
+    return { success: true, message: `Typed "${data.text}"`, role: axInfo.role, name: axInfo.name };
   }
 
   // 5. Scroll
@@ -657,34 +729,68 @@ async function handleNavigate(url: string): Promise<any> {
   const groups = await chrome.tabGroups.query({ title: GROUP_NAME });
   let groupId: number | null = null;
 
-  if (!activeTabId) {
+  let windowId: number | undefined;
+  // activeTabId is in-memory extension state; it goes stale the moment the
+  // tab it points at is closed (by the user, or previous testing), and the
+  // service worker has no way to notice that on its own — it just keeps the
+  // old id until something tries to use it. Fall back to creating a fresh
+  // tab instead of hard-failing the whole navigate.
+  let existingTabIsValid = false;
+  if (activeTabId) {
+    try {
+      await chrome.tabs.get(activeTabId);
+      existingTabIsValid = true;
+    } catch {
+      console.log(`Stale activeTabId ${activeTabId} (tab no longer exists) — creating a new tab.`);
+      activeTabId = null;
+      isDebuggerAttached = false;
+    }
+  }
+
+  if (!existingTabIsValid) {
     const newTab = await chrome.tabs.create({ url: url, active: true });
     activeTabId = newTab.id!;
+    windowId = newTab.windowId;
   } else {
-    await chrome.tabs.update(activeTabId, { url: url, active: true });
+    const updatedTab = await chrome.tabs.update(activeTabId!, { url: url, active: true });
+    windowId = updatedTab?.windowId;
+  }
+  // Capture as a definite non-null local — activeTabId is module state that
+  // TS can't narrow through the async control flow above, but by this point
+  // it's always set (either just-created or confirmed-valid).
+  const tabId: number = activeTabId!;
+
+  // Making the tab "active" only matters within Chrome — if the Chrome
+  // window itself isn't focused at the OS level (e.g. a terminal is in
+  // front), the click/type cursor and highlight animations run but nobody
+  // is looking at them. Bring the window forward too.
+  if (windowId !== undefined) {
+    chrome.windows.update(windowId, { focused: true }, () => {
+      if (chrome.runtime.lastError) console.log('Could not focus window:', chrome.runtime.lastError.message);
+    });
   }
 
   if (groups.length > 0) {
     groupId = groups[0].id;
-    await chrome.tabs.group({ tabIds: activeTabId, groupId: groupId });
+    await chrome.tabs.group({ tabIds: tabId, groupId: groupId });
   } else {
-    groupId = await chrome.tabs.group({ tabIds: activeTabId });
+    groupId = await chrome.tabs.group({ tabIds: tabId });
     await chrome.tabGroups.update(groupId, { title: GROUP_NAME, color: 'red' });
   }
 
   // Wait for the browser-level load event, then let the page's own JS settle
   // (SPA hydration, redirects) instead of guessing with a fixed sleep.
   await new Promise<void>((resolve) => {
-    chrome.tabs.onUpdated.addListener(function listener(tabId, info) {
-      if (tabId === activeTabId && info.status === 'complete') {
+    chrome.tabs.onUpdated.addListener(function listener(updatedTabId, info) {
+      if (updatedTabId === tabId && info.status === 'complete') {
         chrome.tabs.onUpdated.removeListener(listener);
         resolve();
       }
     });
   });
 
-  await attachDebuggerIfNeeded(activeTabId);
-  await waitForStableDom({ tabId: activeTabId }, { timeoutMs: 3000 });
+  await attachDebuggerIfNeeded(tabId);
+  await waitForStableDom({ tabId }, { timeoutMs: 3000 });
 
   return { success: true, message: `Navigated to ${url}` };
 }

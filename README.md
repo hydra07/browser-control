@@ -57,8 +57,10 @@ changes automatically.
 | Tool | Description |
 |---|---|
 | `browser_navigate` | Navigate to a URL |
-| `browser_snapshot` | Text list of interactive elements (id, role, name, value) |
-| `browser_visual_snapshot` | Same, plus a screenshot with a numbered box over every interactive element |
+| `browser_snapshot` | Flat, deduplicated text list of interactive elements (id, role, name, value) |
+| `browser_query_region` | Same idea, scoped to a CSS selector, returned as a nested tree so a field and its label are siblings |
+| `browser_visual_snapshot` | Whole-page snapshot plus a screenshot with a numbered box over every interactive element |
+| `browser_inspect_element` | Deep detail on one element: outerHTML, matched CSS rules, computed style, event listeners |
 | `browser_click` | Click an element by id — real, trusted mouse event |
 | `browser_type` | Focus an element by id and type — real, trusted key events |
 | `browser_scroll` | Scroll by a pixel delta |
@@ -69,9 +71,34 @@ changes automatically.
 | `browser_evaluate` | Run arbitrary JS — for reading state/setup, not for simulating clicks/typing |
 
 `browser_click`/`browser_type` glide a visible cursor to the target and flash
-a colored outline before acting, so a human watching the tab can follow what
-the agent is doing. Screenshots are also saved to `screenshots/` on disk as a
-fallback for MCP clients that can't render inline image content.
+a corner-bracket highlight before acting, so a human watching the tab can
+follow what the agent is doing. Screenshots are off the inline-image path by
+default and saved to `screenshots/` on disk instead — see
+`BROWSERCONTROL_INLINE_IMAGES` below.
+
+## Observability
+
+- **Session flow warnings**: the daemon tracks recent tool-call history and
+  attaches a `_flowWarning` to the response when it detects a known-bad
+  pattern (`browser_evaluate` used to simulate clicks, screenshot spam,
+  acting without a snapshot, the same node clicked twice in a row) — a live
+  nudge instead of relying solely on `instructions` read once at session
+  start.
+- **Tool-call logging**: every call is logged to `logs/session-<ts>.jsonl`
+  (`cmd`, `args`, `durationMs`, `approxTokens`, `hasImage`) so token cost can
+  be audited from real data. `mise run replay:list` lists recorded sessions.
+- **Replay**: `mise run replay -- logs/session-xxx.jsonl` re-runs a recorded
+  session's exact tool calls against the live daemon — reproduce a bug or a
+  demo without an LLM agent re-deriving the flow. Requires the daemon
+  already running with the extension connected. Add `--continue` to replay
+  through errors, `--delay 500` to slow it down for watching.
+
+Set `BROWSERCONTROL_INLINE_IMAGES=true` to have `browser_screenshot`/
+`browser_visual_snapshot` include the image inline in the tool response, in
+addition to the file on disk. Off by default — some MCP clients can't handle
+inline image content from MCP servers, and a mishandled screenshot risks
+landing in the model's context as raw base64 text (a single ~700KB PNG is
+roughly 230k tokens that way).
 
 ## Known limitations
 

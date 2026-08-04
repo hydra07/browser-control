@@ -37,26 +37,68 @@ const LOGS_DIR = join(import.meta.dir, "..", "logs");
 try { mkdirSync(LOGS_DIR, { recursive: true }); } catch {}
 const LOG_FILE = join(LOGS_DIR, `session-${Date.now()}.jsonl`);
 
+const PREVIEW_CHARS = 300;
+
+function writeCallLog(entry: { ts: string; cmd: string; args: any; durationMs: number; approxChars: number; approxTokens: number; hasImage: boolean; isError: boolean; source: string; preview: string; elementRole?: string; elementName?: string }): void {
+  try { appendFileSync(LOG_FILE, JSON.stringify(entry) + "\n"); } catch {}
+  console.error(`[tool:${entry.source}] ${entry.cmd} ${entry.durationMs}ms ~${entry.approxTokens}tok${entry.hasImage ? ' [image]' : ''}${entry.isError ? ' ERROR' : ''}`);
+}
+
 function logToolCall(name: string, args: any, response: any, durationMs: number): void {
   let approxChars = 0;
   let hasImage = false;
+  let text = "";
   for (const item of response?.content ?? []) {
-    if (item.type === "text") approxChars += item.text?.length ?? 0;
+    if (item.type === "text") { approxChars += item.text?.length ?? 0; text += item.text ?? ""; }
     if (item.type === "image") { approxChars += item.data?.length ?? 0; hasImage = true; }
   }
-  const approxTokens = Math.round(approxChars / 4);
-  const entry = {
+  // click/type responses carry {role, name} (see background.ts's
+  // getAxInfoForNode) so replay can re-resolve "the button named X" against
+  // a fresh snapshot instead of trusting a backendDOMNodeId that's already
+  // stale the moment the page reloads. Best-effort parse since `text` here
+  // is whatever JSON.stringify produced for the raw command result.
+  let elementRole: string | undefined, elementName: string | undefined;
+  try {
+    const parsed = JSON.parse(text);
+    elementRole = parsed?.role;
+    elementName = parsed?.name;
+  } catch {}
+  writeCallLog({
     ts: new Date().toISOString(),
     cmd: name,
     args,
     durationMs,
     approxChars,
-    approxTokens,
+    approxTokens: Math.round(approxChars / 4),
     hasImage,
     isError: !!response?.isError,
-  };
-  try { appendFileSync(LOG_FILE, JSON.stringify(entry) + "\n"); } catch {}
-  console.error(`[tool] ${name} ${durationMs}ms ~${approxTokens}tok${hasImage ? ' [image]' : ''}${response?.isError ? ' ERROR' : ''}`);
+    source: "mcp",
+    preview: text.slice(0, PREVIEW_CHARS),
+    elementRole,
+    elementName,
+  });
+}
+
+// /execute (used by replay.ts and any other direct HTTP caller) bypasses the
+// MCP layer entirely, so without this it was invisible to logs/ — the first
+// investigation of "why didn't replay show up in any log file" traced back
+// to exactly this gap.
+function logDirectCall(cmd: string, args: any, response: any, durationMs: number): void {
+  const json = JSON.stringify(response ?? {});
+  writeCallLog({
+    ts: new Date().toISOString(),
+    cmd,
+    args,
+    durationMs,
+    approxChars: json.length,
+    approxTokens: Math.round(json.length / 4),
+    hasImage: false,
+    elementRole: response?.data?.role,
+    elementName: response?.data?.name,
+    isError: response?.type === "error" || !!response?.error,
+    source: "execute",
+    preview: json.slice(0, PREVIEW_CHARS),
+  });
 }
 
 let extensionSocket: ServerWebSocket<unknown> | null = null;
@@ -78,17 +120,21 @@ const httpServer = serve({
       }
 
       return req.json().then(body => {
+        const start = Date.now();
         return new Promise<Response>((resolve) => {
           const reqId = crypto.randomUUID();
           const timeout = setTimeout(() => {
             if (pendingRequests.has(reqId)) {
               pendingRequests.delete(reqId);
-              resolve(new Response(JSON.stringify({ error: "Timeout", hint: "The page may be stuck on a slow load or an unhandled dialog. Try again or navigate to a simpler page." }), { status: 504 }));
+              const timeoutBody = { error: "Timeout", hint: "The page may be stuck on a slow load or an unhandled dialog. Try again or navigate to a simpler page." };
+              logDirectCall(body?.cmd, body, timeoutBody, Date.now() - start);
+              resolve(new Response(JSON.stringify(timeoutBody), { status: 504 }));
             }
           }, 15000);
 
           pendingRequests.set(reqId, (extResponse) => {
             clearTimeout(timeout);
+            logDirectCall(body?.cmd, body, extResponse, Date.now() - start);
             resolve(new Response(JSON.stringify(extResponse), { headers: { "Content-Type": "application/json" } }));
           });
 

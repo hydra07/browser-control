@@ -1,3 +1,15 @@
 [tools]
 bun = "latest"
 node = "latest"
+
+[tasks.replay]
+description = "Replay a recorded logs/session-*.jsonl against the live daemon. Usage: mise run replay -- logs/session-xxx.jsonl [--continue] [--delay 500]"
+run = "bun run src/replay.ts"
+
+[tasks."replay:list"]
+description = "List recorded session logs available to replay"
+run = "bun run src/replay.ts --list"
+
+[tasks."check:daemon"]
+description = "Syntax-check daemon.ts without running it (tsc doesn't cover this file — see tsconfig.json)"
+run = "bun build src/daemon.ts --target=bun --outdir=.tmp-check && rm -rf .tmp-check"
