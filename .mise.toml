@@ -4,12 +4,12 @@ node = "latest"
 
 [tasks.replay]
 description = "Replay a recorded logs/session-*.jsonl against the live daemon. Usage: mise run replay -- logs/session-xxx.jsonl [--continue] [--delay 500]"
-run = "bun run src/replay.ts"
+run = "bun run src/server/replay.ts"
 
 [tasks."replay:list"]
 description = "List recorded session logs available to replay"
-run = "bun run src/replay.ts --list"
+run = "bun run src/server/replay.ts --list"
 
 [tasks."check:daemon"]
-description = "Syntax-check daemon.ts without running it (tsc doesn't cover this file — see tsconfig.json)"
-run = "bun build src/daemon.ts --target=bun --outdir=.tmp-check && rm -rf .tmp-check"
+description = "Type-check the server (daemon.ts, replay.ts, shared/) — these run directly via Bun and are never tsc-built, so this is their only real type-check."
+run = "bun run check:server"

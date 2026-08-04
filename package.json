@@ -1,12 +1,16 @@
 {
   "name": "browsercontrol",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Chrome extension + local MCP server for driving your everyday Chrome browser via CDP",
   "scripts": {
-    "build": "tsc"
+    "build": "tsc && bun run copy:assets",
+    "copy:assets": "bun -e \"await Bun.write('dist/extension/offscreen.html', await Bun.file('src/extension/offscreen.html').text())\"",
+    "check:server": "tsc -p tsconfig.server.json"
   },
   "devDependencies": {
+    "@types/bun": "^1.3.14",
     "@types/chrome": "^0.0.263",
+    "devtools-protocol": "^0.0.1672245",
     "typescript": "^5.4.5"
   },
   "dependencies": {

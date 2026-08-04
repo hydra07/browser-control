@@ -1,3 +1,5 @@
+import type { Protocol } from 'devtools-protocol';
+
 export interface NetworkEntry {
   requestId: string;
   url: string;
@@ -34,39 +36,43 @@ function evictIfNeeded(): void {
 }
 
 export function installNetworkCollector(getActiveTabId: () => number | null): void {
-  chrome.debugger.onEvent.addListener((source, method, params: any) => {
+  chrome.debugger.onEvent.addListener((source, method, params) => {
     if (!source.tabId || source.tabId !== getActiveTabId()) return;
 
     if (method === 'Network.requestWillBeSent') {
-      entries.set(params.requestId, {
-        requestId: params.requestId,
-        url: params.request.url,
-        method: params.request.method,
-        resourceType: params.type ?? 'Other',
-        requestHeaders: params.request.headers,
-        postData: params.request.postData,
+      const p = params as Protocol.Network.RequestWillBeSentEvent;
+      entries.set(p.requestId, {
+        requestId: p.requestId,
+        url: p.request.url,
+        method: p.request.method,
+        resourceType: p.type ?? 'Other',
+        requestHeaders: p.request.headers,
+        postData: p.request.postData,
         timestamp: Date.now(),
       });
       evictIfNeeded();
     } else if (method === 'Network.responseReceived') {
-      const entry = entries.get(params.requestId);
+      const p = params as Protocol.Network.ResponseReceivedEvent;
+      const entry = entries.get(p.requestId);
       if (entry) {
-        entry.status = params.response.status;
-        entry.statusText = params.response.statusText;
-        entry.mimeType = params.response.mimeType;
-        entry.responseHeaders = params.response.headers;
+        entry.status = p.response.status;
+        entry.statusText = p.response.statusText;
+        entry.mimeType = p.response.mimeType;
+        entry.responseHeaders = p.response.headers;
       }
     } else if (method === 'Network.loadingFailed') {
-      const entry = entries.get(params.requestId);
+      const p = params as Protocol.Network.LoadingFailedEvent;
+      const entry = entries.get(p.requestId);
       if (entry) {
         entry.failed = true;
-        entry.errorText = params.errorText;
+        entry.errorText = p.errorText;
         entry.durationMs = Date.now() - entry.timestamp;
       }
     } else if (method === 'Network.loadingFinished') {
-      const entry = entries.get(params.requestId);
+      const p = params as Protocol.Network.LoadingFinishedEvent;
+      const entry = entries.get(p.requestId);
       if (entry) {
-        entry.sizeBytes = params.encodedDataLength;
+        entry.sizeBytes = p.encodedDataLength;
         entry.durationMs = Date.now() - entry.timestamp;
       }
     }
@@ -106,14 +112,15 @@ export function listNetworkRequests(
 export async function getNetworkRequestDetail(
   target: chrome.debugger.Debuggee,
   requestId: string,
-): Promise<any> {
+): Promise<Record<string, unknown>> {
   const entry = entries.get(requestId);
   if (!entry) {
     return { error: 'Unknown requestId', hint: 'Call browser_network_requests again — the buffer may have rotated it out, or it belongs to a request from before the last navigate/network_clear.' };
   }
 
-  const bodyResult: any = await new Promise((resolve) => {
-    chrome.debugger.sendCommand(target, 'Network.getResponseBody', { requestId }, resolve);
+  type BodyResult = Protocol.Network.GetResponseBodyResponse & { error?: { message: string } };
+  const bodyResult = await new Promise<BodyResult | undefined>((resolve) => {
+    chrome.debugger.sendCommand(target, 'Network.getResponseBody', { requestId }, (result) => resolve(result as unknown as BodyResult | undefined));
   });
 
   let body: string | undefined = bodyResult?.body;

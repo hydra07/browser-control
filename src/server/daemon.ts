@@ -3,9 +3,23 @@ import type { ServerWebSocket } from "bun";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolRequest } from "@modelcontextprotocol/sdk/types.js";
 import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { recordAndCheckFlow } from "./lib/sessionFlow.js";
+import type { ExtensionResponse } from "../shared/protocol.js";
+
+// The daemon never validates a tool's `arguments` against a schema beyond
+// what the MCP SDK already does — logging/forwarding code just needs "some
+// JSON-serializable object", not the exact shape, so `unknown` (not a typed
+// union) is the honest type here.
+type ToolArgs = Record<string, unknown> | undefined;
+// executeCommand's return is whatever background.ts's dispatchCommand
+// returned for that cmd (see the BrowserCommand-keyed branches in
+// background.ts) — a different shape per command, so callers narrow with
+// optional chaining rather than this being `any`.
+type CommandResult = Record<string, unknown>;
+type ToolCallResponse = { content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>; isError?: boolean };
 
 // Redirect all console output to stderr to prevent corrupting MCP JSON-RPC over stdout
 console.log = console.error;
@@ -19,7 +33,7 @@ console.info = console.error;
 // clients (e.g. Claude Code) known to handle image content blocks properly.
 const INLINE_IMAGES = process.env.BROWSERCONTROL_INLINE_IMAGES === "true";
 
-const SCREENSHOTS_DIR = join(import.meta.dir, "..", "screenshots");
+const SCREENSHOTS_DIR = join(import.meta.dir, "..", "..", "screenshots");
 try { mkdirSync(SCREENSHOTS_DIR, { recursive: true }); } catch {}
 
 function saveScreenshotToFile(dataBase64: string, format: string): string {
@@ -33,18 +47,18 @@ function saveScreenshotToFile(dataBase64: string, format: string): string {
 // call burned the tokens", instead of guessing from a pasted transcript
 // after the fact. One JSONL file per daemon process (= roughly one MCP
 // client session), so a session's calls are easy to isolate and grep.
-const LOGS_DIR = join(import.meta.dir, "..", "logs");
+const LOGS_DIR = join(import.meta.dir, "..", "..", "logs");
 try { mkdirSync(LOGS_DIR, { recursive: true }); } catch {}
 const LOG_FILE = join(LOGS_DIR, `session-${Date.now()}.jsonl`);
 
 const PREVIEW_CHARS = 300;
 
-function writeCallLog(entry: { ts: string; cmd: string; args: any; durationMs: number; approxChars: number; approxTokens: number; hasImage: boolean; isError: boolean; source: string; preview: string; elementRole?: string; elementName?: string }): void {
+function writeCallLog(entry: { ts: string; cmd: string; args: ToolArgs; durationMs: number; approxChars: number; approxTokens: number; hasImage: boolean; isError: boolean; source: string; preview: string; elementRole?: string; elementName?: string }): void {
   try { appendFileSync(LOG_FILE, JSON.stringify(entry) + "\n"); } catch {}
   console.error(`[tool:${entry.source}] ${entry.cmd} ${entry.durationMs}ms ~${entry.approxTokens}tok${entry.hasImage ? ' [image]' : ''}${entry.isError ? ' ERROR' : ''}`);
 }
 
-function logToolCall(name: string, args: any, response: any, durationMs: number): void {
+function logToolCall(name: string, args: ToolArgs, response: ToolCallResponse, durationMs: number): void {
   let approxChars = 0;
   let hasImage = false;
   let text = "";
@@ -59,7 +73,7 @@ function logToolCall(name: string, args: any, response: any, durationMs: number)
   // is whatever JSON.stringify produced for the raw command result.
   let elementRole: string | undefined, elementName: string | undefined;
   try {
-    const parsed = JSON.parse(text);
+    const parsed = JSON.parse(text) as { role?: string; name?: string };
     elementRole = parsed?.role;
     elementName = parsed?.name;
   } catch {}
@@ -83,18 +97,23 @@ function logToolCall(name: string, args: any, response: any, durationMs: number)
 // MCP layer entirely, so without this it was invisible to logs/ — the first
 // investigation of "why didn't replay show up in any log file" traced back
 // to exactly this gap.
-function logDirectCall(cmd: string, args: any, response: any, durationMs: number): void {
+// Covers both shapes this actually receives: a real ExtensionResponse
+// relayed from the extension, and an ad-hoc {error, hint} object built
+// locally on timeout — hence the loose Record rather than ExtensionResponse
+// itself.
+function logDirectCall(cmd: string | undefined, args: ToolArgs, response: Record<string, unknown> | undefined, durationMs: number): void {
   const json = JSON.stringify(response ?? {});
+  const data = response?.data as { role?: string; name?: string } | undefined;
   writeCallLog({
     ts: new Date().toISOString(),
-    cmd,
+    cmd: cmd ?? "unknown",
     args,
     durationMs,
     approxChars: json.length,
     approxTokens: Math.round(json.length / 4),
     hasImage: false,
-    elementRole: response?.data?.role,
-    elementName: response?.data?.name,
+    elementRole: data?.role,
+    elementName: data?.name,
     isError: response?.type === "error" || !!response?.error,
     source: "execute",
     preview: json.slice(0, PREVIEW_CHARS),
@@ -102,7 +121,7 @@ function logDirectCall(cmd: string, args: any, response: any, durationMs: number
 }
 
 let extensionSocket: ServerWebSocket<unknown> | null = null;
-const pendingRequests = new Map<string, (val: any) => void>();
+const pendingRequests = new Map<string, (val: ExtensionResponse) => void>();
 
 // --- WebSocket & HTTP Server ---
 const httpServer = serve({
@@ -119,7 +138,7 @@ const httpServer = serve({
         return new Response(JSON.stringify({ error: "Extension not connected", hint: "Open chrome://extensions, make sure BrowserControl Agent is enabled, and reload it." }), { status: 503 });
       }
 
-      return req.json().then(body => {
+      return req.json().then((body: { cmd?: string } & Record<string, unknown>) => {
         const start = Date.now();
         return new Promise<Response>((resolve) => {
           const reqId = crypto.randomUUID();
@@ -134,7 +153,7 @@ const httpServer = serve({
 
           pendingRequests.set(reqId, (extResponse) => {
             clearTimeout(timeout);
-            logDirectCall(body?.cmd, body, extResponse, Date.now() - start);
+            logDirectCall(body?.cmd, body, extResponse as unknown as Record<string, unknown>, Date.now() - start);
             resolve(new Response(JSON.stringify(extResponse), { headers: { "Content-Type": "application/json" } }));
           });
 
@@ -152,7 +171,7 @@ const httpServer = serve({
     },
     message(ws, message) {
       try {
-        const data = JSON.parse(message as string);
+        const data = JSON.parse(message as string) as ExtensionResponse;
         if (data.id && pendingRequests.has(data.id)) {
           const resolve = pendingRequests.get(data.id)!;
           resolve(data);
@@ -172,7 +191,7 @@ const httpServer = serve({
 console.error(`🚀 BrowserControl HTTP/WS Daemon running at http://localhost:${httpServer.port}`);
 
 // --- Helper to execute via WebSocket ---
-async function executeCommand(cmd: string, args: any = {}): Promise<any> {
+async function executeCommand(cmd: string, args: Record<string, unknown> = {}): Promise<CommandResult> {
   if (!extensionSocket) throw new Error("Extension not connected to Daemon. Open chrome://extensions and reload BrowserControl Agent.");
 
   const flowWarning = recordAndCheckFlow(cmd, args);
@@ -187,7 +206,10 @@ async function executeCommand(cmd: string, args: any = {}): Promise<any> {
     pendingRequests.set(reqId, (extResponse) => {
       clearTimeout(timeout);
       if (extResponse.type === 'error') reject(new Error(extResponse.error));
-      else resolve(flowWarning ? { ...extResponse.data, _flowWarning: flowWarning } : extResponse.data);
+      else {
+        const data = (extResponse.data ?? {}) as CommandResult;
+        resolve(flowWarning ? { ...data, _flowWarning: flowWarning } : data);
+      }
     });
 
     extensionSocket!.send(JSON.stringify({ id: reqId, cmd, ...args }));
@@ -197,7 +219,7 @@ async function executeCommand(cmd: string, args: any = {}): Promise<any> {
 // --- MCP Server Setup ---
 const mcpServer = new Server({
   name: "browsercontrol",
-  version: "1.6.0",
+  version: "1.7.0",
 }, {
   capabilities: { tools: {} },
   instructions: `
@@ -390,10 +412,10 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
   };
 });
 
-async function handleToolCall(request: any): Promise<any> {
+async function handleToolCall(request: CallToolRequest): Promise<ToolCallResponse> {
   const { name, arguments: args } = request.params;
   try {
-    let result: any;
+    let result: CommandResult | string;
     switch (name) {
       case "browser_navigate":
         result = await executeCommand("navigate", { url: args?.url });
@@ -412,10 +434,10 @@ async function handleToolCall(request: any): Promise<any> {
             isError: true,
           };
         }
-        const snapFilePath = saveScreenshotToFile(snap.dataBase64, 'jpeg');
+        const snapFilePath = saveScreenshotToFile(snap.dataBase64 as string, 'jpeg');
         return {
           content: [
-            ...(INLINE_IMAGES ? [{ type: "image" as const, data: snap.dataBase64, mimeType: 'image/jpeg' }] : []),
+            ...(INLINE_IMAGES ? [{ type: "image" as const, data: snap.dataBase64 as string, mimeType: 'image/jpeg' }] : []),
             { type: "text", text: `${snap.message}\nScreenshot saved to ${snapFilePath}${INLINE_IMAGES ? " (also shown above)" : " — open it to see the annotated boxes; inline image content is off by default (see BROWSERCONTROL_INLINE_IMAGES)"}.${snap._flowWarning ? `\n\n[${snap._flowWarning}]` : ''}\n\n${JSON.stringify(snap.nodes, null, 2)}` },
           ],
         };
@@ -456,10 +478,10 @@ async function handleToolCall(request: any): Promise<any> {
             isError: true,
           };
         }
-        const shotFilePath = saveScreenshotToFile(shot.dataBase64, shot.format);
+        const shotFilePath = saveScreenshotToFile(shot.dataBase64 as string, shot.format as string);
         return {
           content: [
-            ...(INLINE_IMAGES ? [{ type: "image" as const, data: shot.dataBase64, mimeType: shot.format === 'png' ? 'image/png' : 'image/jpeg' }] : []),
+            ...(INLINE_IMAGES ? [{ type: "image" as const, data: shot.dataBase64 as string, mimeType: shot.format === 'png' ? 'image/png' : 'image/jpeg' }] : []),
             { type: "text", text: `Captured ${shot.format} screenshot (${args?.fullPage ? 'full page' : 'viewport'}). Saved to ${shotFilePath}${INLINE_IMAGES ? " (also shown above)" : " — open it to view; inline image content is off by default (see BROWSERCONTROL_INLINE_IMAGES)"}.${shot._flowWarning ? `\n\n[${shot._flowWarning}]` : ''}` },
           ],
         };
@@ -471,9 +493,9 @@ async function handleToolCall(request: any): Promise<any> {
     return {
       content: [{ type: "text", text: typeof result === 'string' ? result : JSON.stringify(result, null, 2) }]
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     return {
-      content: [{ type: "text", text: `Error: ${error.message}` }],
+      content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
       isError: true
     };
   }

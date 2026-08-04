@@ -7,8 +7,9 @@
 //   bun run src/replay.ts logs/session-1785812707974.jsonl [--continue] [--delay 500]
 //
 // Requires the daemon to already be running (spawned by an MCP client, or
-// `bun run src/daemon.ts` in another terminal) with the extension connected
-// — this talks to its existing /execute HTTP endpoint, it doesn't start one.
+// `bun run src/server/daemon.ts` in another terminal) with the extension
+// connected — this talks to its existing /execute HTTP endpoint, it doesn't
+// start one.
 //
 // Node id resolution: backendDOMNodeId is only stable within one page's
 // DOM — a fresh navigate reassigns them all. For logs recorded after
@@ -24,9 +25,31 @@
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import type { ExtensionResponse } from "../shared/protocol.js";
 
-const LOGS_DIR = join(import.meta.dir, "..", "logs");
+const LOGS_DIR = join(import.meta.dir, "..", "..", "logs");
 const DAEMON_URL = "http://127.0.0.1:8765/execute";
+
+// A logged JSONL line from daemon.ts's writeCallLog — replay only reads
+// these four fields, everything else in a real log entry is ignored.
+interface LogEntry {
+  cmd: string;
+  args?: Record<string, unknown>;
+  elementRole?: string;
+  elementName?: string;
+}
+
+// The compact shape browser_snapshot/browser_visual_snapshot return per
+// element (see background.ts's toCompactEntry) — i=nodeId, r=role, n=name.
+interface SnapshotNode {
+  i?: number;
+  r?: string;
+  n?: string;
+}
+
+function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
 
 function listSessions(): void {
   let files: string[];
@@ -54,13 +77,13 @@ function listSessions(): void {
   }
 }
 
-async function execute(cmd: string, args: any): Promise<any> {
+async function execute(cmd: string, args: Record<string, unknown>): Promise<Partial<ExtensionResponse>> {
   const res = await fetch(DAEMON_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ cmd, ...args }),
   });
-  return res.json();
+  return res.json() as Promise<Partial<ExtensionResponse>>;
 }
 
 // backendDOMNodeId only means something within one page's DOM — a fresh
@@ -72,9 +95,10 @@ async function execute(cmd: string, args: any): Promise<any> {
 // recorded id.
 async function resolveNodeIdByIdentity(role: string, name: string): Promise<{ nodeId: number; ambiguous: boolean } | null> {
   const snap = await execute("snapshot", {});
-  const nodes: any[] = snap?.data?.nodes ?? [];
+  const data = snap?.data as { nodes?: SnapshotNode[] } | undefined;
+  const nodes = data?.nodes ?? [];
   const candidates = nodes.filter((n) => n.r === role && n.n === name);
-  if (candidates.length === 0) return null;
+  if (candidates.length === 0 || candidates[0].i == null) return null;
   return { nodeId: candidates[0].i, ambiguous: candidates.length > 1 };
 }
 
@@ -94,15 +118,15 @@ async function replay(
 
   let failures = 0;
   for (let i = 0; i < lines.length; i++) {
-    const entry = JSON.parse(lines[i]);
+    const entry = JSON.parse(lines[i]) as LogEntry;
     // Logged cmd is the MCP tool name (browser_click); the daemon's HTTP
     // relay expects the internal extension command (click) — every tool
     // maps to its internal command by dropping the "browser_" prefix 1:1,
     // with args passed through unchanged (see daemon.ts's handleToolCall).
     const cmd = String(entry.cmd).replace(/^browser_/, "");
-    let args = entry.args ?? {};
+    let args: Record<string, unknown> = entry.args ?? {};
 
-    if ((cmd === "click" || cmd === "type") && args.nodeId && entry.elementRole) {
+    if ((cmd === "click" || cmd === "type") && args.nodeId && entry.elementRole && entry.elementName) {
       try {
         const resolved = await resolveNodeIdByIdentity(entry.elementRole, entry.elementName);
         if (resolved) {
@@ -116,8 +140,8 @@ async function replay(
         } else {
           console.log(`  (WARNING: no element matched ${entry.elementRole} "${entry.elementName}" on the current page — falling back to logged id ${args.nodeId}, likely stale)`);
         }
-      } catch (e: any) {
-        console.log(`  (identity resolution failed: ${e.message} — falling back to logged id ${args.nodeId})`);
+      } catch (e: unknown) {
+        console.log(`  (identity resolution failed: ${errorMessage(e)} — falling back to logged id ${args.nodeId})`);
       }
     }
 
@@ -130,7 +154,7 @@ async function replay(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cmd, ...args }),
       });
-      const data = await res.json();
+      const data = await res.json() as Partial<ExtensionResponse> & { data?: { error?: string } };
       // The extension always wraps its response as {id, type, data}. A
       // WebSocket-level failure (dispatchCommand threw) shows up as
       // type:"error" with a top-level `error` string. A *handled* failure
@@ -154,11 +178,11 @@ async function replay(
       } else {
         console.log("ok");
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       failures++;
-      console.log(`FAILED (connection error: ${e.message})`);
+      console.log(`FAILED (connection error: ${errorMessage(e)})`);
       console.log(
-        "Is the daemon running with the extension connected? (bun run src/daemon.ts)",
+        "Is the daemon running with the extension connected? (bun run src/server/daemon.ts)",
       );
       if (!opts.continueOnError) process.exit(1);
     }

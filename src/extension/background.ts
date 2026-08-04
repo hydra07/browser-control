@@ -1,8 +1,10 @@
+import type { Protocol } from 'devtools-protocol';
+import type { BrowserCommand } from '../shared/protocol.js';
 import { waitForStableDom } from './lib/wait.js';
 import { installDialogAutoHandler } from './lib/dialog.js';
 import { installNetworkCollector, listNetworkRequests, getNetworkRequestDetail, clearNetworkRequests } from './lib/network.js';
+import { sendCommand, errorMessage } from './lib/cdp.js';
 
-const WS_URL = 'ws://127.0.0.1:8765';
 const GROUP_NAME = '🤖 AI Workspace';
 // Single source of truth is manifest.json — bump its "version" whenever
 // background.ts changes, so a stale loaded extension is easy to spot instead
@@ -10,13 +12,15 @@ const GROUP_NAME = '🤖 AI Workspace';
 // source but were never reloaded into Chrome.
 const EXTENSION_VERSION = chrome.runtime.getManifest().version;
 
-let ws: WebSocket | null = null;
 let activeTabId: number | null = null;
 let isDebuggerAttached = false;
 
+type AXNode = Protocol.Accessibility.AXNode;
+type SnapshotEntry = { i?: number; r?: string; n?: string; v?: string; children?: SnapshotEntry[] };
+
 const INTERACTIVE_ROLES = new Set(['button', 'link', 'textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'menuitem', 'treeitem', 'tab', 'slider']);
 
-function isMeaningfulAxNode(node: any): boolean {
+function isMeaningfulAxNode(node: AXNode): boolean {
   const role = node.role?.value;
   if (!role) return false;
   // Keep interactive elements, but only if they resolve to a real DOM node —
@@ -34,7 +38,7 @@ function isMeaningfulAxNode(node: any): boolean {
 // </button> → button "詳細" AND StaticText "詳細"). The parent's own `name`
 // already carries that text, so keeping the child too is pure duplication.
 // childIds reference AXNode.nodeId (the AX-tree id), not backendDOMNodeId.
-function computeRedundantTextAxIds(byAxId: Map<string, any>, meaningfulAxIds: Set<string>): Set<string> {
+function computeRedundantTextAxIds(byAxId: Map<string, AXNode>, meaningfulAxIds: Set<string>): Set<string> {
   const redundant = new Set<string>();
   function mark(axId: string) {
     for (const childId of byAxId.get(axId)?.childIds ?? []) {
@@ -49,7 +53,7 @@ function computeRedundantTextAxIds(byAxId: Map<string, any>, meaningfulAxIds: Se
   return redundant;
 }
 
-function toCompactEntry(node: any): { i: number; r: string; n: string; v?: string } {
+function toCompactEntry(node: AXNode): SnapshotEntry {
   return {
     // backendDOMNodeId (DOM domain), NOT nodeId (Accessibility-tree-only id).
     // click/type resolve elements via DOM.getBoxModel, which only accepts
@@ -59,17 +63,17 @@ function toCompactEntry(node: any): { i: number; r: string; n: string; v?: strin
     i: node.backendDOMNodeId,
     r: node.role?.value,
     n: node.name?.value,
-    ...(node.value?.value ? { v: node.value.value } : {}),
+    ...(node.value?.value ? { v: String(node.value.value) } : {}),
   };
 }
 
-function buildSnapshotNodes(nodes: any[]) {
+function buildSnapshotNodes(nodes: AXNode[]): SnapshotEntry[] {
   const kept = nodes.filter(isMeaningfulAxNode);
-  const byAxId = new Map<string, any>(nodes.map((n: any) => [n.nodeId, n]));
-  const redundantTextAxIds = computeRedundantTextAxIds(byAxId, new Set(kept.map((n: any) => n.nodeId)));
+  const byAxId = new Map<string, AXNode>(nodes.map((n) => [n.nodeId, n]));
+  const redundantTextAxIds = computeRedundantTextAxIds(byAxId, new Set(kept.map((n) => n.nodeId)));
 
   return kept
-    .filter((node: any) => node.role?.value !== 'StaticText' || !redundantTextAxIds.has(node.nodeId))
+    .filter((node) => node.role?.value !== 'StaticText' || !redundantTextAxIds.has(node.nodeId))
     .map(toCompactEntry);
 }
 
@@ -81,17 +85,17 @@ function buildSnapshotNodes(nodes: any[]) {
 // is already small (a form/panel), not for a full-page snapshot.
 const MAX_REGION_NODES = 150;
 
-function buildRegionTree(nodes: any[]): { tree: any[]; truncated: boolean } {
+function buildRegionTree(nodes: AXNode[]): { tree: SnapshotEntry[]; truncated: boolean } {
   if (nodes.length === 0) return { tree: [], truncated: false };
 
-  const byAxId = new Map<string, any>(nodes.map((n: any) => [n.nodeId, n]));
-  const meaningfulAxIds = new Set(nodes.filter(isMeaningfulAxNode).map((n: any) => n.nodeId));
+  const byAxId = new Map<string, AXNode>(nodes.map((n) => [n.nodeId, n]));
+  const meaningfulAxIds = new Set(nodes.filter(isMeaningfulAxNode).map((n) => n.nodeId));
   const redundantTextAxIds = computeRedundantTextAxIds(byAxId, meaningfulAxIds);
   let emitted = 0;
   let truncated = false;
 
-  function buildChildren(axId: string): any[] {
-    const result: any[] = [];
+  function buildChildren(axId: string): SnapshotEntry[] {
+    const result: SnapshotEntry[] = [];
     for (const childId of byAxId.get(axId)?.childIds ?? []) {
       if (emitted >= MAX_REGION_NODES) {
         truncated = true;
@@ -105,7 +109,7 @@ function buildRegionTree(nodes: any[]): { tree: any[]; truncated: boolean } {
 
       if (meaningfulAxIds.has(childId)) {
         emitted++;
-        const entry: any = toCompactEntry(child);
+        const entry = toCompactEntry(child);
         const grandChildren = buildChildren(childId);
         if (grandChildren.length > 0) entry.children = grandChildren;
         result.push(entry);
@@ -123,10 +127,10 @@ function buildRegionTree(nodes: any[]): { tree: any[]; truncated: boolean } {
   // anyone else's child — more robust than assuming array order.
   const referencedAsChild = new Set<string>();
   for (const n of nodes) for (const c of n.childIds ?? []) referencedAsChild.add(c);
-  const root = nodes.find((n: any) => !referencedAsChild.has(n.nodeId)) ?? nodes[0];
+  const root = nodes.find((n) => !referencedAsChild.has(n.nodeId)) ?? nodes[0];
 
   if (meaningfulAxIds.has(root.nodeId)) {
-    const entry: any = toCompactEntry(root);
+    const entry = toCompactEntry(root);
     const children = buildChildren(root.nodeId);
     if (children.length > 0) entry.children = children;
     return { tree: [entry], truncated };
@@ -134,7 +138,7 @@ function buildRegionTree(nodes: any[]): { tree: any[]; truncated: boolean } {
   return { tree: buildChildren(root.nodeId), truncated };
 }
 
-function countTreeNodes(entries: any[]): number {
+function countTreeNodes(entries: SnapshotEntry[]): number {
   let count = 0;
   for (const entry of entries) {
     count += 1;
@@ -163,7 +167,7 @@ function drawAnnotationOverlay(boxes: Array<{ id: number; x: number; y: number; 
   }
 }
 
-function quadToBox(quad: number[]): { x: number; y: number; w: number; h: number } {
+function quadToBox(quad: Protocol.DOM.Quad): { x: number; y: number; w: number; h: number } {
   const xs = [quad[0], quad[2], quad[4], quad[6]];
   const ys = [quad[1], quad[3], quad[5], quad[7]];
   const x = Math.min(...xs);
@@ -238,11 +242,12 @@ function removeAnnotationOverlay() {
 // instead of just quietly not happening.
 function evalOnPage(target: chrome.debugger.Debuggee, expression: string, awaitPromise = false): Promise<void> {
   return new Promise((resolve) => {
-    chrome.debugger.sendCommand(target, 'Runtime.evaluate', { expression, awaitPromise }, (result: any) => {
+    chrome.debugger.sendCommand(target, 'Runtime.evaluate', { expression, awaitPromise }, (result) => {
+      const evalResult = result as Protocol.Runtime.EvaluateResponse | undefined;
       if (chrome.runtime.lastError) {
         console.error('[browsercontrol] visual feedback command failed:', chrome.runtime.lastError.message);
-      } else if (result?.exceptionDetails) {
-        console.error('[browsercontrol] visual feedback script threw:', result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
+      } else if (evalResult?.exceptionDetails) {
+        console.error('[browsercontrol] visual feedback script threw:', evalResult.exceptionDetails.exception?.description ?? evalResult.exceptionDetails.text);
       }
       resolve();
     });
@@ -256,13 +261,10 @@ function evalOnPage(target: chrome.debugger.Debuggee, expression: string, awaitP
 // content rather than an internal id Chrome happens to assign. Attaching
 // them to every click/type response lets replay re-resolve "the button
 // named X" against a fresh snapshot instead of trusting a stale id.
-function getAxInfoForNode(target: chrome.debugger.Debuggee, backendNodeId: number): Promise<{ role?: string; name?: string }> {
-  return new Promise((resolve) => {
-    chrome.debugger.sendCommand(target, 'Accessibility.queryAXTree', { backendNodeId }, (result: any) => {
-      const node = result?.nodes?.[0];
-      resolve({ role: node?.role?.value, name: node?.name?.value });
-    });
-  });
+async function getAxInfoForNode(target: chrome.debugger.Debuggee, backendNodeId: number): Promise<{ role?: string; name?: string }> {
+  const result = await sendCommand<Protocol.Accessibility.QueryAXTreeResponse>(target, 'Accessibility.queryAXTree', { backendNodeId });
+  const node = result?.nodes?.[0];
+  return { role: node?.role?.value, name: node?.name?.value };
 }
 
 // Native CDP highlight instead of injected DOM — drawn by Chrome's own
@@ -270,17 +272,15 @@ function getAxInfoForNode(target: chrome.debugger.Debuggee, backendNodeId: numbe
 // "Inspect Element" hover box), so it's rendered above the page entirely
 // outside its DOM/CSS. Immune to whatever the page does with transforms,
 // z-index, stacking contexts, or CSP — none of that applies here.
-function showNativeHighlight(
+async function showNativeHighlight(
   target: chrome.debugger.Debuggee,
   box: { x: number; y: number; w: number; h: number },
   rgb: { r: number; g: number; b: number },
 ): Promise<void> {
-  return new Promise((resolve) => {
-    chrome.debugger.sendCommand(target, 'Overlay.highlightRect', {
-      x: Math.round(box.x), y: Math.round(box.y), width: Math.round(box.w), height: Math.round(box.h),
-      color: { r: rgb.r, g: rgb.g, b: rgb.b, a: 0.2 },
-      outlineColor: { r: rgb.r, g: rgb.g, b: rgb.b, a: 0.9 },
-    }, () => resolve());
+  await sendCommand(target, 'Overlay.highlightRect', {
+    x: Math.round(box.x), y: Math.round(box.y), width: Math.round(box.w), height: Math.round(box.h),
+    color: { r: rgb.r, g: rgb.g, b: rgb.b, a: 0.2 },
+    outlineColor: { r: rgb.r, g: rgb.g, b: rgb.b, a: 0.9 },
   });
 }
 
@@ -288,61 +288,48 @@ function hideNativeHighlight(target: chrome.debugger.Debuggee): void {
   chrome.debugger.sendCommand(target, 'Overlay.hideHighlight', {}, () => {});
 }
 
-function ensureConnected(): void {
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-    return;
-  }
-  connect();
+// The WebSocket to the daemon lives in the offscreen document, not here —
+// chrome.debugger (used by everything below) isn't available there, so the
+// split is: offscreen holds the transport, the service worker does the CDP
+// work, connected by chrome.runtime.sendMessage. This also sidesteps the old
+// problem entirely: an offscreen document isn't killed after ~30s idle the
+// way this service worker is, so the WS connection no longer needs a
+// periodic alarm to notice and repair itself after Chrome suspends us.
+// chrome.offscreen.createDocument's url resolves relative to the extension
+// root (the directory containing manifest.json), NOT relative to this
+// script's own location — so this must be the full path from the build
+// output root, matching wherever tsc/copy:assets actually put offscreen.html.
+const OFFSCREEN_DOCUMENT_PATH = 'dist/extension/offscreen.html';
+
+async function ensureOffscreenDocument(): Promise<void> {
+  if (await chrome.offscreen.hasDocument()) return;
+  await chrome.offscreen.createDocument({
+    url: OFFSCREEN_DOCUMENT_PATH,
+    // No Reason in the enum is a perfect fit for "hold a WebSocket" — WORKERS
+    // is the closest justifiable one and, unlike AUDIO_PLAYBACK, has no
+    // auto-close timer.
+    reasons: ['WORKERS' as chrome.offscreen.Reason],
+    justification: 'Holds a persistent WebSocket connection to the local BrowserControl daemon. chrome.debugger is unavailable in offscreen documents, so this is transport only — the service worker still performs all CDP commands.',
+  });
 }
 
-function connect(): void {
-  ws = new WebSocket(WS_URL);
-
-  ws.onopen = () => {
-    console.log(`🟢 Connected to BrowserControl Daemon (extension v${EXTENSION_VERSION})`);
-  };
-
-  ws.onmessage = async (event: MessageEvent) => {
-    let data: any;
-    try {
-      data = JSON.parse(event.data);
-    } catch (e: any) {
-      console.error('Received malformed message:', e);
-      return;
-    }
-    try {
-      const result = await dispatchCommand(data);
-      ws?.send(JSON.stringify({ id: data.id, type: 'result', data: result }));
-    } catch (e: any) {
-      console.error('Error handling message:', e);
-      ws?.send(JSON.stringify({ id: data.id, type: 'error', error: e.toString() }));
-    }
-  };
-
-  ws.onclose = () => {
-    console.log('🔴 Disconnected from Daemon. Will retry on next keepalive tick.');
-    // Best-effort immediate retry (works if the service worker is still alive
-    // right now). The alarm below is the real safety net if it isn't.
-    ensureConnected();
-  };
-
-  ws.onerror = () => ws?.close();
+interface RelayMessage {
+  target: 'background';
+  payload: BrowserCommand & { id: string };
 }
 
-// MV3 service workers are killed by Chrome after ~30s idle, which silently
-// drops the WebSocket with no event the extension can react to later (the
-// timer just never fires again). A periodic alarm wakes the worker back up so
-// it can notice the dead connection and reconnect. 1 minute is the practical
-// floor for periodic alarms in a packed/production extension.
-chrome.alarms.create('keepalive', { periodInMinutes: 1 });
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'keepalive') ensureConnected();
+chrome.runtime.onMessage.addListener((message: RelayMessage, _sender, sendResponse) => {
+  if (message?.target !== 'background') return;
+  dispatchCommand(message.payload)
+    .then(sendResponse)
+    .catch((e: unknown) => sendResponse({ error: errorMessage(e) }));
+  return true; // keep the message channel open for the async response
 });
-chrome.runtime.onStartup.addListener(ensureConnected);
 
 installDialogAutoHandler();
 installNetworkCollector(() => activeTabId);
-ensureConnected();
+ensureOffscreenDocument();
+chrome.runtime.onStartup.addListener(ensureOffscreenDocument);
 
 async function attachDebuggerIfNeeded(tabId: number) {
   if (!isDebuggerAttached) {
@@ -355,12 +342,13 @@ async function attachDebuggerIfNeeded(tabId: number) {
     // Page: lets us auto-handle dialogs. DOM: required by getBoxModel.
     // Network: request/response collection. CSS: matched/computed styles.
     // Overlay: native highlight rendering, immune to the page's own CSS.
+    const target = { tabId };
     await Promise.all([
-      new Promise<void>((resolve) => chrome.debugger.sendCommand({ tabId }, 'Page.enable', {}, () => resolve())),
-      new Promise<void>((resolve) => chrome.debugger.sendCommand({ tabId }, 'DOM.enable', {}, () => resolve())),
-      new Promise<void>((resolve) => chrome.debugger.sendCommand({ tabId }, 'Network.enable', {}, () => resolve())),
-      new Promise<void>((resolve) => chrome.debugger.sendCommand({ tabId }, 'CSS.enable', {}, () => resolve())),
-      new Promise<void>((resolve) => chrome.debugger.sendCommand({ tabId }, 'Overlay.enable', {}, () => resolve())),
+      sendCommand(target, 'Page.enable'),
+      sendCommand(target, 'DOM.enable'),
+      sendCommand(target, 'Network.enable'),
+      sendCommand(target, 'CSS.enable'),
+      sendCommand(target, 'Overlay.enable'),
     ]);
   }
 }
@@ -374,7 +362,12 @@ const RELEVANT_STYLE_PROPS = new Set([
   'z-index', 'overflow', 'flex-direction', 'justify-content', 'align-items',
 ]);
 
-async function dispatchCommand(data: any): Promise<any> {
+// A CDP command that failed at the protocol level (not a chrome.debugger
+// connection issue) — chrome.debugger's callback delivers these inline on
+// the result object rather than via chrome.runtime.lastError.
+type CdpResult<T> = T & { error?: { message: string } };
+
+async function dispatchCommand(data: BrowserCommand & { id?: string }): Promise<Record<string, unknown>> {
   const cmd = data.cmd;
 
   // 1. Session Initialization (navigate)
@@ -394,9 +387,7 @@ async function dispatchCommand(data: any): Promise<any> {
 
   // 2. Snapshot
   if (cmd === 'snapshot') {
-    const axTreeResult: any = await new Promise((resolve) => {
-      chrome.debugger.sendCommand(target, 'Accessibility.getFullAXTree', {}, resolve);
-    });
+    const axTreeResult = await sendCommand<Protocol.Accessibility.GetFullAXTreeResponse>(target, 'Accessibility.getFullAXTree', {});
 
     const nodes = axTreeResult?.nodes || [];
     const filteredNodes = buildSnapshotNodes(nodes);
@@ -417,30 +408,22 @@ async function dispatchCommand(data: any): Promise<any> {
   if (cmd === 'query_region') {
     if (!data.selector) return { error: "Missing selector", hint: "Pass a CSS selector for the container to scope into, e.g. 'form' or '.search-panel'." };
 
-    const docResult: any = await new Promise((resolve) => {
-      chrome.debugger.sendCommand(target, 'DOM.getDocument', { depth: 0 }, resolve);
-    });
+    const docResult = await sendCommand<Protocol.DOM.GetDocumentResponse>(target, 'DOM.getDocument', { depth: 0 });
     const rootNodeId = docResult?.root?.nodeId;
     if (!rootNodeId) return { error: "Failed to get document root", hint: "The page may still be loading; try again." };
 
-    const queryResult: any = await new Promise((resolve) => {
-      chrome.debugger.sendCommand(target, 'DOM.querySelector', { nodeId: rootNodeId, selector: data.selector }, resolve);
-    });
+    const queryResult = await sendCommand<Protocol.DOM.QuerySelectorResponse>(target, 'DOM.querySelector', { nodeId: rootNodeId, selector: data.selector });
     if (!queryResult?.nodeId) {
       return { error: `No element matched selector "${data.selector}"`, hint: "Check the selector against the page source, or use browser_snapshot first to find a container to scope into." };
     }
 
-    const describeResult: any = await new Promise((resolve) => {
-      chrome.debugger.sendCommand(target, 'DOM.describeNode', { nodeId: queryResult.nodeId }, resolve);
-    });
+    const describeResult = await sendCommand<Protocol.DOM.DescribeNodeResponse>(target, 'DOM.describeNode', { nodeId: queryResult.nodeId });
     const backendNodeId = describeResult?.node?.backendNodeId;
     if (!backendNodeId) {
       return { error: "Failed to resolve matched element", hint: "Try a more specific selector." };
     }
 
-    const axResult: any = await new Promise((resolve) => {
-      chrome.debugger.sendCommand(target, 'Accessibility.getPartialAXTree', { backendNodeId, fetchRelatives: false }, resolve);
-    });
+    const axResult = await sendCommand<Protocol.Accessibility.GetPartialAXTreeResponse>(target, 'Accessibility.getPartialAXTree', { backendNodeId, fetchRelatives: false });
     const { tree, truncated } = buildRegionTree(axResult?.nodes || []);
     const nodeCount = countTreeNodes(tree);
 
@@ -456,32 +439,26 @@ async function dispatchCommand(data: any): Promise<any> {
   // boxes drawn over every interactive element so an id can be grounded to a
   // position on screen before clicking, instead of guessing from text alone.
   if (cmd === 'visual_snapshot') {
-    const axTreeResult: any = await new Promise((resolve) => {
-      chrome.debugger.sendCommand(target, 'Accessibility.getFullAXTree', {}, resolve);
-    });
+    const axTreeResult = await sendCommand<Protocol.Accessibility.GetFullAXTreeResponse>(target, 'Accessibility.getFullAXTree', {});
     const nodes = axTreeResult?.nodes || [];
     const filteredNodes = buildSnapshotNodes(nodes);
 
     const MAX_ANNOTATED = 40;
-    const toAnnotate = filteredNodes.filter((n: any) => n.i != null).slice(0, MAX_ANNOTATED);
+    const toAnnotate = filteredNodes.filter((n) => n.i != null).slice(0, MAX_ANNOTATED);
 
     const boxes: Array<{ id: number; x: number; y: number; w: number; h: number }> = [];
-    await Promise.all(toAnnotate.map((node: any) => new Promise<void>((resolve) => {
-      chrome.debugger.sendCommand(target, 'DOM.getBoxModel', { backendNodeId: node.i }, (boxModel: any) => {
-        const quad = boxModel?.model?.content;
-        if (quad) {
-          const box = quadToBox(quad);
-          if (box.w > 0 && box.h > 0) boxes.push({ id: node.i, ...box });
-        }
-        resolve();
-      });
-    })));
+    await Promise.all(toAnnotate.map(async (node) => {
+      const boxModel = await sendCommand<Protocol.DOM.GetBoxModelResponse>(target, 'DOM.getBoxModel', { backendNodeId: node.i });
+      const quad = boxModel?.model?.content;
+      if (quad) {
+        const box = quadToBox(quad);
+        if (box.w > 0 && box.h > 0) boxes.push({ id: node.i!, ...box });
+      }
+    }));
 
     await evalOnPage(target, `(${drawAnnotationOverlay.toString()})(${JSON.stringify(boxes)})`);
 
-    const shot: any = await new Promise((resolve) => {
-      chrome.debugger.sendCommand(target, 'Page.captureScreenshot', { format: 'jpeg', quality: 80 }, resolve);
-    });
+    const shot = await sendCommand<Protocol.Page.CaptureScreenshotResponse>(target, 'Page.captureScreenshot', { format: 'jpeg', quality: 80 });
 
     await evalOnPage(target, `(${removeAnnotationOverlay.toString()})()`);
 
@@ -505,12 +482,10 @@ async function dispatchCommand(data: any): Promise<any> {
     // the element is scrolled out of view, those coordinates land outside
     // the visible area — the click misses (or hits whatever else is there)
     // and the cursor/highlight animate somewhere invisible.
-    await new Promise((r) => chrome.debugger.sendCommand(target, 'DOM.scrollIntoViewIfNeeded', { backendNodeId: data.nodeId }, r));
+    await sendCommand(target, 'DOM.scrollIntoViewIfNeeded', { backendNodeId: data.nodeId });
 
     // Get Box Model to find coordinates
-    const boxModel: any = await new Promise((resolve) => {
-      chrome.debugger.sendCommand(target, 'DOM.getBoxModel', { backendNodeId: data.nodeId }, resolve);
-    });
+    const boxModel = await sendCommand<Protocol.DOM.GetBoxModelResponse>(target, 'DOM.getBoxModel', { backendNodeId: data.nodeId });
 
     if (boxModel && boxModel.model) {
       const box = quadToBox(boxModel.model.content);
@@ -528,9 +503,9 @@ async function dispatchCommand(data: any): Promise<any> {
       await showNativeHighlight(target, box, { r: 34, g: 197, b: 94 });
 
       // Dispatch mousedown and mouseup
-      await new Promise(r => chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 }, r));
+      await sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
       void evalOnPage(target, `(${showClickRipple.toString()})(${x}, ${y}, '#22c55e')`);
-      await new Promise(r => chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 }, r));
+      await sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
       await waitForStableDom(target);
       setTimeout(() => hideNativeHighlight(target), 400);
 
@@ -544,19 +519,15 @@ async function dispatchCommand(data: any): Promise<any> {
     if (!data.text) return { error: "Missing text" };
     let axInfo: { role?: string; name?: string } = {};
     if (data.nodeId) {
-      await new Promise((r) => chrome.debugger.sendCommand(target, 'DOM.scrollIntoViewIfNeeded', { backendNodeId: data.nodeId }, r));
+      await sendCommand(target, 'DOM.scrollIntoViewIfNeeded', { backendNodeId: data.nodeId });
 
-      const focusResult: any = await new Promise((resolve) => {
-        chrome.debugger.sendCommand(target, 'DOM.focus', { backendNodeId: data.nodeId }, resolve);
-      });
+      const focusResult = await sendCommand<CdpResult<{}>>(target, 'DOM.focus', { backendNodeId: data.nodeId });
       if (focusResult?.error) {
         return { error: `Failed to focus node: ${focusResult.error.message}`, hint: "The node id may be stale, or the element isn't focusable (e.g. a div, not an input). Take a fresh snapshot and confirm it's an input/textbox node." };
       }
 
-      const [boxModel, resolvedAxInfo]: [any, { role?: string; name?: string }] = await Promise.all([
-        new Promise((resolve) => {
-          chrome.debugger.sendCommand(target, 'DOM.getBoxModel', { backendNodeId: data.nodeId }, resolve);
-        }),
+      const [boxModel, resolvedAxInfo] = await Promise.all([
+        sendCommand<Protocol.DOM.GetBoxModelResponse>(target, 'DOM.getBoxModel', { backendNodeId: data.nodeId }),
         getAxInfoForNode(target, data.nodeId),
       ]);
       axInfo = resolvedAxInfo;
@@ -572,7 +543,7 @@ async function dispatchCommand(data: any): Promise<any> {
     // Input.insertText types into whichever element currently has focus, so
     // focusing first (above) is required — without a nodeId this relies on
     // something already being focused (e.g. right after a click).
-    await new Promise(r => chrome.debugger.sendCommand(target, 'Input.insertText', { text: data.text }, r));
+    await sendCommand(target, 'Input.insertText', { text: data.text });
     await waitForStableDom(target);
     return { success: true, message: `Typed "${data.text}"`, role: axInfo.role, name: axInfo.name };
   }
@@ -582,7 +553,7 @@ async function dispatchCommand(data: any): Promise<any> {
     const deltaX = data.deltaX || 0;
     const deltaY = data.deltaY || 0;
     // Note: scroll needs x,y coordinates to apply the wheel event. We just use center screen.
-    await new Promise(r => chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mouseWheel', x: 500, y: 500, deltaX, deltaY }, r));
+    await sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mouseWheel', x: 500, y: 500, deltaX, deltaY });
     await waitForStableDom(target);
     return { success: true, message: `Scrolled by (${deltaX}, ${deltaY})` };
   }
@@ -590,13 +561,11 @@ async function dispatchCommand(data: any): Promise<any> {
   // 6. Screenshot
   if (cmd === 'screenshot') {
     const format = data.format === 'png' ? 'png' : 'jpeg';
-    const params: any = { format };
+    const params: Protocol.Page.CaptureScreenshotRequest = { format };
     if (format === 'jpeg') params.quality = data.quality ?? 80;
 
     if (data.fullPage) {
-      const metrics: any = await new Promise((resolve) => {
-        chrome.debugger.sendCommand(target, 'Page.getLayoutMetrics', {}, resolve);
-      });
+      const metrics = await sendCommand<Protocol.Page.GetLayoutMetricsResponse>(target, 'Page.getLayoutMetrics', {});
       const contentSize = metrics?.cssContentSize ?? metrics?.contentSize;
       if (contentSize) {
         params.clip = { x: 0, y: 0, width: contentSize.width, height: contentSize.height, scale: 1 };
@@ -604,9 +573,7 @@ async function dispatchCommand(data: any): Promise<any> {
       }
     }
 
-    const res: any = await new Promise((resolve) => {
-      chrome.debugger.sendCommand(target, 'Page.captureScreenshot', params, resolve);
-    });
+    const res = await sendCommand<Protocol.Page.CaptureScreenshotResponse>(target, 'Page.captureScreenshot', params);
     if (!res?.data) {
       return { error: 'Failed to capture screenshot', hint: 'The page or debugger session may be in a bad state; try navigating again.' };
     }
@@ -621,11 +588,11 @@ async function dispatchCommand(data: any): Promise<any> {
     // Wave 1: these 4 calls only need backendNodeId, so they're independent
     // of each other — run concurrently instead of paying for 4 sequential
     // round-trips.
-    const [describeResult, outerHTMLResult, pushResult, resolveResult]: any[] = await Promise.all([
-      new Promise((resolve) => chrome.debugger.sendCommand(target, 'DOM.describeNode', { backendNodeId }, resolve)),
-      new Promise((resolve) => chrome.debugger.sendCommand(target, 'DOM.getOuterHTML', { backendNodeId }, resolve)),
-      new Promise((resolve) => chrome.debugger.sendCommand(target, 'DOM.pushNodesByBackendIdsToFrontend', { backendNodeIds: [backendNodeId] }, resolve)),
-      new Promise((resolve) => chrome.debugger.sendCommand(target, 'DOM.resolveNode', { backendNodeId }, resolve)),
+    const [describeResult, outerHTMLResult, pushResult, resolveResult] = await Promise.all([
+      sendCommand<CdpResult<Protocol.DOM.DescribeNodeResponse>>(target, 'DOM.describeNode', { backendNodeId }),
+      sendCommand<Protocol.DOM.GetOuterHTMLResponse>(target, 'DOM.getOuterHTML', { backendNodeId }),
+      sendCommand<Protocol.DOM.PushNodesByBackendIdsToFrontendResponse>(target, 'DOM.pushNodesByBackendIdsToFrontend', { backendNodeIds: [backendNodeId] }),
+      sendCommand<Protocol.DOM.ResolveNodeResponse>(target, 'DOM.resolveNode', { backendNodeId }),
     ]);
 
     if (describeResult?.error || !describeResult?.node) {
@@ -646,19 +613,19 @@ async function dispatchCommand(data: any): Promise<any> {
     const nodeId = pushResult?.nodeIds?.[0];
     const objectId = resolveResult?.object?.objectId;
 
-    const [matchedResult, computedResult, listenersResult]: any[] = await Promise.all([
-      nodeId ? new Promise((resolve) => chrome.debugger.sendCommand(target, 'CSS.getMatchedStylesForNode', { nodeId }, resolve)) : Promise.resolve(null),
-      nodeId ? new Promise((resolve) => chrome.debugger.sendCommand(target, 'CSS.getComputedStyleForNode', { nodeId }, resolve)) : Promise.resolve(null),
-      objectId ? new Promise((resolve) => chrome.debugger.sendCommand(target, 'DOMDebugger.getEventListeners', { objectId }, resolve)) : Promise.resolve(null),
+    const [matchedResult, computedResult, listenersResult] = await Promise.all([
+      nodeId != null ? sendCommand<Protocol.CSS.GetMatchedStylesForNodeResponse>(target, 'CSS.getMatchedStylesForNode', { nodeId }) : Promise.resolve(null),
+      nodeId != null ? sendCommand<Protocol.CSS.GetComputedStyleForNodeResponse>(target, 'CSS.getComputedStyleForNode', { nodeId }) : Promise.resolve(null),
+      objectId ? sendCommand<Protocol.DOMDebugger.GetEventListenersResponse>(target, 'DOMDebugger.getEventListeners', { objectId }) : Promise.resolve(null),
     ]);
 
-    const matchedRules = (matchedResult?.matchedCSSRules || []).slice(0, 15).map((m: any) => ({
+    const matchedRules = (matchedResult?.matchedCSSRules || []).slice(0, 15).map((m) => ({
       selector: m.rule?.selectorList?.text,
       origin: m.rule?.origin,
       properties: Object.fromEntries(
         (m.rule?.style?.cssProperties || [])
-          .filter((p: any) => !p.disabled)
-          .map((p: any) => [p.name, p.value]),
+          .filter((p) => !p.disabled)
+          .map((p) => [p.name, p.value]),
       ),
     }));
 
@@ -667,7 +634,7 @@ async function dispatchCommand(data: any): Promise<any> {
       if (RELEVANT_STYLE_PROPS.has(prop.name)) computedStyle[prop.name] = prop.value;
     }
 
-    const eventListeners = (listenersResult?.listeners || []).map((l: any) => ({
+    const eventListeners = (listenersResult?.listeners || []).map((l) => ({
       type: l.type,
       useCapture: l.useCapture,
       passive: l.passive,
@@ -709,9 +676,7 @@ async function dispatchCommand(data: any): Promise<any> {
 
   // 9. Evaluate JS
   if (cmd === 'evaluate') {
-    const res: any = await new Promise((resolve) => {
-      chrome.debugger.sendCommand(target, 'Runtime.evaluate', { expression: data.expression, returnByValue: true }, resolve);
-    });
+    const res = await sendCommand<Protocol.Runtime.EvaluateResponse>(target, 'Runtime.evaluate', { expression: data.expression, returnByValue: true });
     if (res?.exceptionDetails) {
       return { error: res.exceptionDetails.text, hint: "The expression threw. Check for syntax errors or references to elements that don't exist yet." };
     }
@@ -724,7 +689,7 @@ async function dispatchCommand(data: any): Promise<any> {
   };
 }
 
-async function handleNavigate(url: string): Promise<any> {
+async function handleNavigate(url: string): Promise<Record<string, unknown>> {
   clearNetworkRequests();
   const groups = await chrome.tabGroups.query({ title: GROUP_NAME });
   let groupId: number | null = null;

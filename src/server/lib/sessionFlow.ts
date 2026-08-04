@@ -6,7 +6,7 @@
 
 interface HistoryEntry {
   cmd: string;
-  args: any;
+  args: Record<string, unknown>;
 }
 
 const HISTORY_LIMIT = 15;
@@ -26,7 +26,7 @@ function lastOfType(cmd: string, count: number): HistoryEntry[] {
   return history.filter((h) => h.cmd === cmd).slice(-count);
 }
 
-export function recordAndCheckFlow(cmd: string, args: any): string | undefined {
+export function recordAndCheckFlow(cmd: string, args: Record<string, unknown>): string | undefined {
   history.push({ cmd, args });
   while (history.length > HISTORY_LIMIT) history.shift();
 

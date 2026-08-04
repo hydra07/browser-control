@@ -12,14 +12,26 @@ sessions are already there.
 MCP client (Claude Code / agy / ...)
         │ stdio (MCP protocol)
         ▼
-   src/daemon.ts  ── Bun HTTP/WS server (127.0.0.1:8765)
+   src/server/daemon.ts  ── Bun HTTP/WS server (127.0.0.1:8765)
         │ WebSocket
         ▼
-   Chrome extension (src/background.ts)
-        │ chrome.debugger (CDP)
+   src/extension/offscreen.ts  ── holds the WS, survives SW suspension
+        │ chrome.runtime.sendMessage
+        ▼
+   src/extension/background.ts  ── chrome.debugger (CDP)
         ▼
    Your actual Chrome tab, grouped as "🤖 AI Workspace"
 ```
+
+`src/` is split by runtime, since the extension (browser) and the server
+(Bun/Node) only ever talk to each other over the WebSocket/HTTP wire, never
+by importing each other's code:
+- `src/extension/` — the Chrome extension (background service worker,
+  offscreen document, content script), built by `tsc` into `dist/`.
+- `src/server/` — the daemon and replay CLI, run directly via Bun (never
+  built; `bun run check:server` type-checks them without emitting).
+- `src/shared/` — the wire-protocol types both sides import (`import type`
+  only, so it doesn't pull runtime code across the boundary).
 
 `daemon.ts` is spawned directly by the MCP client over stdio and, in the same
 process, runs a WebSocket/HTTP server the extension connects out to. There's
@@ -31,14 +43,14 @@ no separate step to "start the server" beyond the MCP client launching it.
 2. Build the extension: `bun run build`
 3. Load unpacked: `chrome://extensions` → enable Developer Mode → *Load
    unpacked* → select this folder.
-4. Point your MCP client at `src/daemon.ts`:
+4. Point your MCP client at `src/server/daemon.ts`:
 
 ```json
 {
   "mcpServers": {
     "browsercontrol": {
       "command": "bun",
-      "args": ["run", "/absolute/path/to/browsercontrol/src/daemon.ts"]
+      "args": ["run", "/absolute/path/to/browsercontrol/src/server/daemon.ts"]
     }
   }
 }
@@ -48,9 +60,9 @@ Use an **absolute path to `bun.exe`** instead of the bare `bun` command if
 your MCP client spawns processes without your shell's PATH (common on
 Windows with version managers like `mise`/`nvm`).
 
-Whenever you change `src/background.ts` or `manifest.json`, you must reload
-the extension in `chrome://extensions` — MV3 extensions never pick up source
-changes automatically.
+Whenever you change anything under `src/extension/` or `manifest.json`, you
+must reload the extension in `chrome://extensions` — MV3 extensions never
+pick up source changes automatically.
 
 ## Tools
 
