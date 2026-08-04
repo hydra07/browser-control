@@ -3,16 +3,22 @@ import type { ServerWebSocket } from "bun";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
+import { recordAndCheckFlow } from "./lib/sessionFlow.js";
 
 // Redirect all console output to stderr to prevent corrupting MCP JSON-RPC over stdout
 console.log = console.error;
 console.info = console.error;
 
-// Not all MCP clients render inline image content blocks (some Antigravity
-// CLI versions can't handle images from MCP servers at all and error out).
-// Always also save to disk and return the path as a guaranteed fallback.
+// Not all MCP clients render inline image content blocks — some Antigravity
+// CLI versions can't handle images from MCP servers at all, and when they
+// can't, the base64 payload risks being dumped into the model's context as
+// raw text instead of being discarded (a single ~700KB PNG is ~230k tokens
+// that way). Default to file-only; set BROWSERCONTROL_INLINE_IMAGES=true for
+// clients (e.g. Claude Code) known to handle image content blocks properly.
+const INLINE_IMAGES = process.env.BROWSERCONTROL_INLINE_IMAGES === "true";
+
 const SCREENSHOTS_DIR = join(import.meta.dir, "..", "screenshots");
 try { mkdirSync(SCREENSHOTS_DIR, { recursive: true }); } catch {}
 
@@ -21,6 +27,36 @@ function saveScreenshotToFile(dataBase64: string, format: string): string {
   const filePath = join(SCREENSHOTS_DIR, `screenshot-${Date.now()}.${ext}`);
   writeFileSync(filePath, Buffer.from(dataBase64, "base64"));
   return filePath;
+}
+
+// Every tool call gets logged here — this is what actually answers "which
+// call burned the tokens", instead of guessing from a pasted transcript
+// after the fact. One JSONL file per daemon process (= roughly one MCP
+// client session), so a session's calls are easy to isolate and grep.
+const LOGS_DIR = join(import.meta.dir, "..", "logs");
+try { mkdirSync(LOGS_DIR, { recursive: true }); } catch {}
+const LOG_FILE = join(LOGS_DIR, `session-${Date.now()}.jsonl`);
+
+function logToolCall(name: string, args: any, response: any, durationMs: number): void {
+  let approxChars = 0;
+  let hasImage = false;
+  for (const item of response?.content ?? []) {
+    if (item.type === "text") approxChars += item.text?.length ?? 0;
+    if (item.type === "image") { approxChars += item.data?.length ?? 0; hasImage = true; }
+  }
+  const approxTokens = Math.round(approxChars / 4);
+  const entry = {
+    ts: new Date().toISOString(),
+    cmd: name,
+    args,
+    durationMs,
+    approxChars,
+    approxTokens,
+    hasImage,
+    isError: !!response?.isError,
+  };
+  try { appendFileSync(LOG_FILE, JSON.stringify(entry) + "\n"); } catch {}
+  console.error(`[tool] ${name} ${durationMs}ms ~${approxTokens}tok${hasImage ? ' [image]' : ''}${response?.isError ? ' ERROR' : ''}`);
 }
 
 let extensionSocket: ServerWebSocket<unknown> | null = null;
@@ -93,19 +129,21 @@ console.error(`🚀 BrowserControl HTTP/WS Daemon running at http://localhost:${
 async function executeCommand(cmd: string, args: any = {}): Promise<any> {
   if (!extensionSocket) throw new Error("Extension not connected to Daemon. Open chrome://extensions and reload BrowserControl Agent.");
 
+  const flowWarning = recordAndCheckFlow(cmd, args);
+
   const reqId = crypto.randomUUID();
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       pendingRequests.delete(reqId);
       reject(new Error("Timeout waiting for Chrome. The page may be stuck on a slow load or an unhandled dialog."));
     }, 15000);
-    
+
     pendingRequests.set(reqId, (extResponse) => {
       clearTimeout(timeout);
       if (extResponse.type === 'error') reject(new Error(extResponse.error));
-      else resolve(extResponse.data);
+      else resolve(flowWarning ? { ...extResponse.data, _flowWarning: flowWarning } : extResponse.data);
     });
-    
+
     extensionSocket!.send(JSON.stringify({ id: reqId, cmd, ...args }));
   });
 }
@@ -173,12 +211,34 @@ verified UI behavior:
   that color/spacing, what its computed layout is, whether it has a click/
   change listener attached — call browser_inspect_element on its id instead
   of trying to infer it from the snapshot or re-reading source files blind.
+- browser_query_region: the middle tier between browser_snapshot (whole
+  page, flat, cheap, but a form field's label can be 50 unrelated elements
+  away in the list) and browser_inspect_element (one element, no surrounding
+  context). Pass a CSS selector for the containing form/panel/row and get
+  back a nested tree of just what's inside it — a label and its field are
+  siblings in the same "children" array, so the association is structural,
+  not something you infer from ordering. Prefer this over browser_snapshot
+  when you're specifically trying to fill out or verify one form/section,
+  and especially when browser_snapshot showed you fields with an empty name
+  (no accessible label) that you need to correctly associate.
 
-Both browser_screenshot and browser_visual_snapshot return the image inline
-AND save it to a file on disk (path given in the text output). Some MCP
-clients (notably some Antigravity CLI versions) don't render inline image
-content from MCP servers at all. If the image doesn't show up in your
-client, read the saved file path instead of assuming the tool failed.
+Both browser_screenshot and browser_visual_snapshot save the image to a file
+on disk and give you the path in the text output. Inline image content is
+OFF by default (set BROWSERCONTROL_INLINE_IMAGES=true to enable) because
+some MCP clients — notably some Antigravity CLI versions — can't handle
+image content from MCP servers, and a mishandled screenshot risks landing in
+your context as raw base64 text: a single ~700KB PNG is roughly 230k tokens
+that way. This is not hypothetical — it has burned a large chunk of a 5-hour
+usage window in practice. Concretely:
+- Never pass format:"png" unless you specifically need pixel-exact color
+  values — it is 3-5x larger than the jpeg default for no benefit in
+  routine "let me see the page" checks.
+- Don't call browser_screenshot / browser_visual_snapshot on every step.
+  Use browser_snapshot (cheap, text-only) as your default; reach for a
+  screenshot only when you actually need to visually confirm layout/styling
+  or ground an ambiguous click target.
+- If your client doesn't render inline images, read the saved file path
+  rather than re-requesting the screenshot hoping it renders differently.
 
 Inspecting the network call behind a submit/action button (like the DevTools
 Network tab):
@@ -208,13 +268,18 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "browser_snapshot",
-        description: "Get the interactive elements on the page as a text list (filtered to save quota): id, role, name, value. Fast and cheap, but you can't see WHERE on screen an id is. If you're not confident which id to click, use browser_visual_snapshot instead.",
+        description: "Get the interactive elements on the page as a text list, filtered and deduplicated to save tokens. Each entry is {i, r, n, v?}: i=node id (pass to browser_click/browser_type/browser_inspect_element), r=role, n=accessible name, v=current value (omitted when empty). Fast and cheap, but you can't see WHERE on screen an id is. If you're not confident which id to click, use browser_visual_snapshot instead.",
         inputSchema: { type: "object", properties: {} }
       },
       {
         name: "browser_visual_snapshot",
         description: "Like browser_snapshot, but also returns a screenshot with a numbered box drawn over every interactive element — the number is the same id you pass to browser_click/browser_type. Use this before clicking anything you're not 100% sure about (custom dropdowns, icon-only buttons, ambiguous labels), since guessing from the text list alone is how wrong-element clicks happen.",
         inputSchema: { type: "object", properties: {} }
+      },
+      {
+        name: "browser_query_region",
+        description: "Scoped version of browser_snapshot: pass a CSS selector for a container (a form, a panel, a table row — whatever you can identify from the page source) and get back a nested tree (not a flat list) of just the elements inside it. Because it's nested, a field's label is literally its sibling in the same `children` array — you don't have to guess the association from position in a long flat list like with browser_snapshot. Capped at 150 elements; narrow the selector further if truncated.",
+        inputSchema: { type: "object", properties: { selector: { type: "string", description: "CSS selector for the container to scope into" } }, required: ["selector"] }
       },
       {
         name: "browser_click",
@@ -270,7 +335,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             fullPage: { type: "boolean", description: "Capture the full scrollable page instead of just the viewport" },
-            format: { type: "string", enum: ["jpeg", "png"], description: "Defaults to jpeg (much smaller); use png only if you need lossless detail" },
+            format: { type: "string", enum: ["jpeg", "png"], description: "Leave unset (defaults to jpeg). PNG is 3-5x larger for typical UI screenshots and is almost never worth it — only pass 'png' if you specifically need pixel-exact color values, not for routine 'let me see the page' checks." },
             quality: { type: "number", description: "JPEG quality 0-100, default 80" }
           }
         }
@@ -279,7 +344,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
   };
 });
 
-mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
+async function handleToolCall(request: any): Promise<any> {
   const { name, arguments: args } = request.params;
   try {
     let result: any;
@@ -289,6 +354,9 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case "browser_snapshot":
         result = await executeCommand("snapshot");
+        break;
+      case "browser_query_region":
+        result = await executeCommand("query_region", { selector: args?.selector });
         break;
       case "browser_visual_snapshot": {
         const snap = await executeCommand("visual_snapshot");
@@ -301,8 +369,8 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
         const snapFilePath = saveScreenshotToFile(snap.dataBase64, 'jpeg');
         return {
           content: [
-            { type: "image", data: snap.dataBase64, mimeType: 'image/jpeg' },
-            { type: "text", text: `${snap.message}\nSaved to ${snapFilePath} (open this if the image above didn't render).\n\n${JSON.stringify(snap.nodes, null, 2)}` },
+            ...(INLINE_IMAGES ? [{ type: "image" as const, data: snap.dataBase64, mimeType: 'image/jpeg' }] : []),
+            { type: "text", text: `${snap.message}\nScreenshot saved to ${snapFilePath}${INLINE_IMAGES ? " (also shown above)" : " — open it to see the annotated boxes; inline image content is off by default (see BROWSERCONTROL_INLINE_IMAGES)"}.${snap._flowWarning ? `\n\n[${snap._flowWarning}]` : ''}\n\n${JSON.stringify(snap.nodes, null, 2)}` },
           ],
         };
       }
@@ -345,8 +413,8 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
         const shotFilePath = saveScreenshotToFile(shot.dataBase64, shot.format);
         return {
           content: [
-            { type: "image", data: shot.dataBase64, mimeType: shot.format === 'png' ? 'image/png' : 'image/jpeg' },
-            { type: "text", text: `Captured ${shot.format} screenshot (${args?.fullPage ? 'full page' : 'viewport'}). Saved to ${shotFilePath} (open this if the image above didn't render).` },
+            ...(INLINE_IMAGES ? [{ type: "image" as const, data: shot.dataBase64, mimeType: shot.format === 'png' ? 'image/png' : 'image/jpeg' }] : []),
+            { type: "text", text: `Captured ${shot.format} screenshot (${args?.fullPage ? 'full page' : 'viewport'}). Saved to ${shotFilePath}${INLINE_IMAGES ? " (also shown above)" : " — open it to view; inline image content is off by default (see BROWSERCONTROL_INLINE_IMAGES)"}.${shot._flowWarning ? `\n\n[${shot._flowWarning}]` : ''}` },
           ],
         };
       }
@@ -363,6 +431,13 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
       isError: true
     };
   }
+}
+
+mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const start = Date.now();
+  const response = await handleToolCall(request);
+  logToolCall(request.params.name, request.params.arguments, response, Date.now() - start);
+  return response;
 });
 
 async function runMcp() {

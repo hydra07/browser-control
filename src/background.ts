@@ -16,31 +16,131 @@ let isDebuggerAttached = false;
 
 const INTERACTIVE_ROLES = new Set(['button', 'link', 'textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'menuitem', 'treeitem', 'tab', 'slider']);
 
-function buildSnapshotNodes(nodes: any[]) {
-  return nodes.filter((node: any) => {
-    const role = node.role?.value;
-    if (!role) return false;
+function isMeaningfulAxNode(node: any): boolean {
+  const role = node.role?.value;
+  if (!role) return false;
+  // Keep interactive elements, but only if they resolve to a real DOM node —
+  // otherwise click/type would receive an id they can never use.
+  if (INTERACTIVE_ROLES.has(role)) return !!node.backendDOMNodeId;
+  if (role === 'StaticText' || role === 'heading' || role === 'paragraph') {
+    const text = node.name?.value?.trim();
+    return !!text && text.length > 0;
+  }
+  return false;
+}
 
-    // Keep interactive elements, but only if they resolve to a real DOM
-    // node — otherwise click/type would receive an id they can never use.
-    if (INTERACTIVE_ROLES.has(role)) return !!node.backendDOMNodeId;
-
-    // Keep text nodes if they have content
-    if (role === 'StaticText' || role === 'heading' || role === 'paragraph') {
-      const text = node.name?.value?.trim();
-      return text && text.length > 0;
+// A button/link/heading's inner label commonly shows up a second time as a
+// StaticText child with the exact same text (e.g. <button><span>詳細</span>
+// </button> → button "詳細" AND StaticText "詳細"). The parent's own `name`
+// already carries that text, so keeping the child too is pure duplication.
+// childIds reference AXNode.nodeId (the AX-tree id), not backendDOMNodeId.
+function computeRedundantTextAxIds(byAxId: Map<string, any>, meaningfulAxIds: Set<string>): Set<string> {
+  const redundant = new Set<string>();
+  function mark(axId: string) {
+    for (const childId of byAxId.get(axId)?.childIds ?? []) {
+      if (redundant.has(childId)) continue;
+      redundant.add(childId);
+      mark(childId);
     }
+  }
+  for (const axId of meaningfulAxIds) {
+    if (byAxId.get(axId)?.role?.value !== 'StaticText') mark(axId);
+  }
+  return redundant;
+}
 
-    return false;
-  }).map((node: any) => ({
+function toCompactEntry(node: any): { i: number; r: string; n: string; v?: string } {
+  return {
     // backendDOMNodeId (DOM domain), NOT nodeId (Accessibility-tree-only id).
     // click/type resolve elements via DOM.getBoxModel, which only accepts
     // the former; passing the latter silently targets the wrong element.
-    id: node.backendDOMNodeId,
-    role: node.role?.value,
-    name: node.name?.value,
-    value: node.value?.value,
-  }));
+    // Keys are shortened (i/r/n/v) since this can run into the hundreds of
+    // entries on data-heavy pages.
+    i: node.backendDOMNodeId,
+    r: node.role?.value,
+    n: node.name?.value,
+    ...(node.value?.value ? { v: node.value.value } : {}),
+  };
+}
+
+function buildSnapshotNodes(nodes: any[]) {
+  const kept = nodes.filter(isMeaningfulAxNode);
+  const byAxId = new Map<string, any>(nodes.map((n: any) => [n.nodeId, n]));
+  const redundantTextAxIds = computeRedundantTextAxIds(byAxId, new Set(kept.map((n: any) => n.nodeId)));
+
+  return kept
+    .filter((node: any) => node.role?.value !== 'StaticText' || !redundantTextAxIds.has(node.nodeId))
+    .map(toCompactEntry);
+}
+
+// Unlike buildSnapshotNodes (flat list, whole page), this keeps parent-child
+// nesting — a label's StaticText and its sibling input end up as entries in
+// the SAME children array, so which label belongs to which field is visible
+// from structure instead of having to guess from position in a flat list of
+// hundreds. Only worth the extra shape for browser_query_region, where scope
+// is already small (a form/panel), not for a full-page snapshot.
+const MAX_REGION_NODES = 150;
+
+function buildRegionTree(nodes: any[]): { tree: any[]; truncated: boolean } {
+  if (nodes.length === 0) return { tree: [], truncated: false };
+
+  const byAxId = new Map<string, any>(nodes.map((n: any) => [n.nodeId, n]));
+  const meaningfulAxIds = new Set(nodes.filter(isMeaningfulAxNode).map((n: any) => n.nodeId));
+  const redundantTextAxIds = computeRedundantTextAxIds(byAxId, meaningfulAxIds);
+  let emitted = 0;
+  let truncated = false;
+
+  function buildChildren(axId: string): any[] {
+    const result: any[] = [];
+    for (const childId of byAxId.get(axId)?.childIds ?? []) {
+      if (emitted >= MAX_REGION_NODES) {
+        truncated = true;
+        break;
+      }
+      const child = byAxId.get(childId);
+      if (!child) continue;
+      const childRole = child.role?.value;
+      const isText = childRole === 'StaticText' || childRole === 'heading' || childRole === 'paragraph';
+      if (isText && redundantTextAxIds.has(childId)) continue;
+
+      if (meaningfulAxIds.has(childId)) {
+        emitted++;
+        const entry: any = toCompactEntry(child);
+        const grandChildren = buildChildren(childId);
+        if (grandChildren.length > 0) entry.children = grandChildren;
+        result.push(entry);
+      } else {
+        // Not meaningful itself (a plain wrapper div, a <span> with no role,
+        // etc.) — splice its meaningful descendants into this level instead
+        // of adding a content-free nesting layer for every wrapper div.
+        result.push(...buildChildren(childId));
+      }
+    }
+    return result;
+  }
+
+  // The requested element is whichever returned node isn't referenced as
+  // anyone else's child — more robust than assuming array order.
+  const referencedAsChild = new Set<string>();
+  for (const n of nodes) for (const c of n.childIds ?? []) referencedAsChild.add(c);
+  const root = nodes.find((n: any) => !referencedAsChild.has(n.nodeId)) ?? nodes[0];
+
+  if (meaningfulAxIds.has(root.nodeId)) {
+    const entry: any = toCompactEntry(root);
+    const children = buildChildren(root.nodeId);
+    if (children.length > 0) entry.children = children;
+    return { tree: [entry], truncated };
+  }
+  return { tree: buildChildren(root.nodeId), truncated };
+}
+
+function countTreeNodes(entries: any[]): number {
+  let count = 0;
+  for (const entry of entries) {
+    count += 1;
+    if (entry.children) count += countTreeNodes(entry.children);
+  }
+  return count;
 }
 
 // Self-contained: gets serialized via .toString() and injected into the page,
@@ -175,20 +275,16 @@ async function attachDebuggerIfNeeded(tabId: number) {
       chrome.debugger.attach({ tabId }, '1.3', () => resolve());
     });
     isDebuggerAttached = true;
+    // These 4 domains are independent of each other — enabling them
+    // concurrently costs ~1 round-trip instead of 4 sequential ones.
     // Page: lets us auto-handle dialogs. DOM: required by getBoxModel.
-    await new Promise<void>((resolve) => {
-      chrome.debugger.sendCommand({ tabId }, 'Page.enable', {}, () => resolve());
-    });
-    await new Promise<void>((resolve) => {
-      chrome.debugger.sendCommand({ tabId }, 'DOM.enable', {}, () => resolve());
-    });
-    await new Promise<void>((resolve) => {
-      chrome.debugger.sendCommand({ tabId }, 'Network.enable', {}, () => resolve());
-    });
-    // CSS: required by getMatchedStylesForNode / getComputedStyleForNode.
-    await new Promise<void>((resolve) => {
-      chrome.debugger.sendCommand({ tabId }, 'CSS.enable', {}, () => resolve());
-    });
+    // Network: request/response collection. CSS: matched/computed styles.
+    await Promise.all([
+      new Promise<void>((resolve) => chrome.debugger.sendCommand({ tabId }, 'Page.enable', {}, () => resolve())),
+      new Promise<void>((resolve) => chrome.debugger.sendCommand({ tabId }, 'DOM.enable', {}, () => resolve())),
+      new Promise<void>((resolve) => chrome.debugger.sendCommand({ tabId }, 'Network.enable', {}, () => resolve())),
+      new Promise<void>((resolve) => chrome.debugger.sendCommand({ tabId }, 'CSS.enable', {}, () => resolve())),
+    ]);
   }
 }
 
@@ -236,6 +332,49 @@ async function dispatchCommand(data: any): Promise<any> {
     };
   }
 
+  // 2c. Query region: scoped snapshot of just the subtree under a CSS
+  // selector — the middle tier between whole-page snapshot (broad, noisy)
+  // and inspect_element (one node, no surrounding structure). Useful for
+  // seeing which label sits next to which field: the same flat id/role/name
+  // list as snapshot, but small enough that adjacency alone tells you that.
+  if (cmd === 'query_region') {
+    if (!data.selector) return { error: "Missing selector", hint: "Pass a CSS selector for the container to scope into, e.g. 'form' or '.search-panel'." };
+
+    const docResult: any = await new Promise((resolve) => {
+      chrome.debugger.sendCommand(target, 'DOM.getDocument', { depth: 0 }, resolve);
+    });
+    const rootNodeId = docResult?.root?.nodeId;
+    if (!rootNodeId) return { error: "Failed to get document root", hint: "The page may still be loading; try again." };
+
+    const queryResult: any = await new Promise((resolve) => {
+      chrome.debugger.sendCommand(target, 'DOM.querySelector', { nodeId: rootNodeId, selector: data.selector }, resolve);
+    });
+    if (!queryResult?.nodeId) {
+      return { error: `No element matched selector "${data.selector}"`, hint: "Check the selector against the page source, or use browser_snapshot first to find a container to scope into." };
+    }
+
+    const describeResult: any = await new Promise((resolve) => {
+      chrome.debugger.sendCommand(target, 'DOM.describeNode', { nodeId: queryResult.nodeId }, resolve);
+    });
+    const backendNodeId = describeResult?.node?.backendNodeId;
+    if (!backendNodeId) {
+      return { error: "Failed to resolve matched element", hint: "Try a more specific selector." };
+    }
+
+    const axResult: any = await new Promise((resolve) => {
+      chrome.debugger.sendCommand(target, 'Accessibility.getPartialAXTree', { backendNodeId, fetchRelatives: false }, resolve);
+    });
+    const { tree, truncated } = buildRegionTree(axResult?.nodes || []);
+    const nodeCount = countTreeNodes(tree);
+
+    return {
+      message: `Scoped to "${data.selector}" (${describeResult.node.nodeName}): ${nodeCount} element(s), nested by DOM structure — a field's label is its sibling in the same "children" array.${truncated ? ` Truncated at ${MAX_REGION_NODES} elements; use a narrower selector to see the rest.` : ''} Use these ids with browser_click/browser_type/browser_inspect_element.`,
+      selector: data.selector,
+      truncated,
+      tree,
+    };
+  }
+
   // 2b. Visual snapshot: same as snapshot, plus a screenshot with numbered
   // boxes drawn over every interactive element so an id can be grounded to a
   // position on screen before clicking, instead of guessing from text alone.
@@ -247,15 +386,15 @@ async function dispatchCommand(data: any): Promise<any> {
     const filteredNodes = buildSnapshotNodes(nodes);
 
     const MAX_ANNOTATED = 40;
-    const toAnnotate = filteredNodes.filter((n: any) => n.id != null).slice(0, MAX_ANNOTATED);
+    const toAnnotate = filteredNodes.filter((n: any) => n.i != null).slice(0, MAX_ANNOTATED);
 
     const boxes: Array<{ id: number; x: number; y: number; w: number; h: number }> = [];
     await Promise.all(toAnnotate.map((node: any) => new Promise<void>((resolve) => {
-      chrome.debugger.sendCommand(target, 'DOM.getBoxModel', { backendNodeId: node.id }, (boxModel: any) => {
+      chrome.debugger.sendCommand(target, 'DOM.getBoxModel', { backendNodeId: node.i }, (boxModel: any) => {
         const quad = boxModel?.model?.content;
         if (quad) {
           const box = quadToBox(quad);
-          if (box.w > 0 && box.h > 0) boxes.push({ id: node.id, ...box });
+          if (box.w > 0 && box.h > 0) boxes.push({ id: node.i, ...box });
         }
         resolve();
       });
@@ -407,16 +546,20 @@ async function dispatchCommand(data: any): Promise<any> {
     if (!data.nodeId) return { error: "Missing nodeId", hint: "Call snapshot or visual_snapshot first and pass one of the returned node ids." };
     const backendNodeId = data.nodeId;
 
-    const describeResult: any = await new Promise((resolve) => {
-      chrome.debugger.sendCommand(target, 'DOM.describeNode', { backendNodeId }, resolve);
-    });
+    // Wave 1: these 4 calls only need backendNodeId, so they're independent
+    // of each other — run concurrently instead of paying for 4 sequential
+    // round-trips.
+    const [describeResult, outerHTMLResult, pushResult, resolveResult]: any[] = await Promise.all([
+      new Promise((resolve) => chrome.debugger.sendCommand(target, 'DOM.describeNode', { backendNodeId }, resolve)),
+      new Promise((resolve) => chrome.debugger.sendCommand(target, 'DOM.getOuterHTML', { backendNodeId }, resolve)),
+      new Promise((resolve) => chrome.debugger.sendCommand(target, 'DOM.pushNodesByBackendIdsToFrontend', { backendNodeIds: [backendNodeId] }, resolve)),
+      new Promise((resolve) => chrome.debugger.sendCommand(target, 'DOM.resolveNode', { backendNodeId }, resolve)),
+    ]);
+
     if (describeResult?.error || !describeResult?.node) {
       return { error: 'Failed to resolve node', hint: 'The node id may be stale (page navigated/re-rendered since the last snapshot). Take a fresh snapshot and retry.' };
     }
 
-    const outerHTMLResult: any = await new Promise((resolve) => {
-      chrome.debugger.sendCommand(target, 'DOM.getOuterHTML', { backendNodeId }, resolve);
-    });
     let outerHTML: string | undefined = outerHTMLResult?.outerHTML;
     let outerHTMLTruncated = false;
     const MAX_HTML_CHARS = 5000;
@@ -425,55 +568,40 @@ async function dispatchCommand(data: any): Promise<any> {
       outerHTMLTruncated = true;
     }
 
-    // CSS domain methods need a session-scoped nodeId, not backendNodeId.
-    const pushResult: any = await new Promise((resolve) => {
-      chrome.debugger.sendCommand(target, 'DOM.pushNodesByBackendIdsToFrontend', { backendNodeIds: [backendNodeId] }, resolve);
-    });
+    // CSS domain methods need a session-scoped nodeId (from wave 1's push),
+    // not backendNodeId. DOMDebugger needs the objectId from resolveNode.
+    // These 3 are independent of each other too — wave 2.
     const nodeId = pushResult?.nodeIds?.[0];
-
-    let matchedRules: any[] = [];
-    let computedStyle: Record<string, string> = {};
-    if (nodeId) {
-      const matchedResult: any = await new Promise((resolve) => {
-        chrome.debugger.sendCommand(target, 'CSS.getMatchedStylesForNode', { nodeId }, resolve);
-      });
-      matchedRules = (matchedResult?.matchedCSSRules || []).slice(0, 15).map((m: any) => ({
-        selector: m.rule?.selectorList?.text,
-        origin: m.rule?.origin,
-        properties: Object.fromEntries(
-          (m.rule?.style?.cssProperties || [])
-            .filter((p: any) => !p.disabled)
-            .map((p: any) => [p.name, p.value]),
-        ),
-      }));
-
-      const computedResult: any = await new Promise((resolve) => {
-        chrome.debugger.sendCommand(target, 'CSS.getComputedStyleForNode', { nodeId }, resolve);
-      });
-      for (const prop of computedResult?.computedStyle || []) {
-        if (RELEVANT_STYLE_PROPS.has(prop.name)) computedStyle[prop.name] = prop.value;
-      }
-    }
-
-    // Event listeners: DOMDebugger works on a Runtime remote object, not a
-    // DOM node id, so resolve one and release it when done.
-    let eventListeners: any[] = [];
-    const resolveResult: any = await new Promise((resolve) => {
-      chrome.debugger.sendCommand(target, 'DOM.resolveNode', { backendNodeId }, resolve);
-    });
     const objectId = resolveResult?.object?.objectId;
-    if (objectId) {
-      const listenersResult: any = await new Promise((resolve) => {
-        chrome.debugger.sendCommand(target, 'DOMDebugger.getEventListeners', { objectId }, resolve);
-      });
-      eventListeners = (listenersResult?.listeners || []).map((l: any) => ({
-        type: l.type,
-        useCapture: l.useCapture,
-        passive: l.passive,
-        once: l.once,
-      }));
-      chrome.debugger.sendCommand(target, 'Runtime.releaseObject', { objectId }, () => {});
+
+    const [matchedResult, computedResult, listenersResult]: any[] = await Promise.all([
+      nodeId ? new Promise((resolve) => chrome.debugger.sendCommand(target, 'CSS.getMatchedStylesForNode', { nodeId }, resolve)) : Promise.resolve(null),
+      nodeId ? new Promise((resolve) => chrome.debugger.sendCommand(target, 'CSS.getComputedStyleForNode', { nodeId }, resolve)) : Promise.resolve(null),
+      objectId ? new Promise((resolve) => chrome.debugger.sendCommand(target, 'DOMDebugger.getEventListeners', { objectId }, resolve)) : Promise.resolve(null),
+    ]);
+
+    const matchedRules = (matchedResult?.matchedCSSRules || []).slice(0, 15).map((m: any) => ({
+      selector: m.rule?.selectorList?.text,
+      origin: m.rule?.origin,
+      properties: Object.fromEntries(
+        (m.rule?.style?.cssProperties || [])
+          .filter((p: any) => !p.disabled)
+          .map((p: any) => [p.name, p.value]),
+      ),
+    }));
+
+    const computedStyle: Record<string, string> = {};
+    for (const prop of computedResult?.computedStyle || []) {
+      if (RELEVANT_STYLE_PROPS.has(prop.name)) computedStyle[prop.name] = prop.value;
     }
+
+    const eventListeners = (listenersResult?.listeners || []).map((l: any) => ({
+      type: l.type,
+      useCapture: l.useCapture,
+      passive: l.passive,
+      once: l.once,
+    }));
+    if (objectId) chrome.debugger.sendCommand(target, 'Runtime.releaseObject', { objectId }, () => {});
 
     return {
       nodeName: describeResult.node.nodeName,
