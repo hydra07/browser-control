@@ -76,6 +76,8 @@ pick up source changes automatically.
 | `browser_click` | Click an element by id — real, trusted mouse event |
 | `browser_type` | Focus an element by id and type — real, trusted key events |
 | `browser_press_key` | Press Enter/Tab/Escape/arrows/etc — submits a search/form after `browser_type`, which never does on its own |
+| `browser_run_flow` | Run a list of click/type/press_key/wait_for/assert_text/scroll steps in ONE call instead of one round trip per step |
+| `browser_explore_flow` | Same engine as `browser_run_flow`, but returns a snapshot after every step — for validating a best-guess flow once before committing to the leaner `browser_run_flow` |
 | `browser_scroll` | Scroll by a pixel delta |
 | `browser_screenshot` | Viewport or full-page screenshot |
 | `browser_network_requests` | List XHR/Fetch/Document/WebSocket requests since the last navigate/clear |
@@ -87,8 +89,26 @@ pick up source changes automatically.
 the target, pause, then act with a ripple + highlight — a multi-step,
 several-second animation so a human watching the tab can actually follow
 what the agent is doing instead of it jumping instantly between fields.
-Screenshots are off the inline-image path by default and saved to
-`screenshots/` on disk instead — see `BROWSERCONTROL_INLINE_IMAGES` below.
+Flow steps (`browser_run_flow`/`browser_explore_flow`) use a faster, lighter
+version of the same animation so a multi-step script doesn't take
+unreasonably long. Screenshots are off the inline-image path by default and
+saved to `screenshots/` on disk instead — see `BROWSERCONTROL_INLINE_IMAGES`
+below.
+
+**Batch flow scripting**: `browser_run_flow` takes a list of steps
+referencing elements by `role`+`name` (from a prior snapshot) or a CSS
+`selector`, resolved fresh against the live page at execution time — never a
+pre-known node id, since a script is written before the steps that create
+later DOM state have run. It stops at the first step that doesn't resolve or
+fails, and returns a compact report plus a final snapshot. A step whose
+target's accessible name looks destructive/irreversible (delete, cancel,
+sign out, pay, confirm, ...) is **blocked by default**; re-send that step
+with `confirmRisky: true` — after confirming with the user — to proceed.
+`browser_explore_flow` runs the exact same engine but returns a snapshot
+after every step instead of just the last one, meant to validate a
+best-guess sequence once before committing to the leaner `browser_run_flow`
+for repeat runs. Both have real side effects — there is no safe way to
+preview a later step without actually executing the earlier ones.
 
 ## Observability
 

@@ -1,5 +1,5 @@
 import type { Protocol } from 'devtools-protocol';
-import type { BrowserCommand } from '../shared/protocol.js';
+import type { BrowserCommand, FlowStep } from '../shared/protocol.js';
 import { waitForStableDom } from './lib/wait.js';
 import { installDialogAutoHandler } from './lib/dialog.js';
 import { installNetworkCollector, listNetworkRequests, getNetworkRequestDetail, clearNetworkRequests } from './lib/network.js';
@@ -193,7 +193,11 @@ function quadToBox(quad: Protocol.DOM.Quad): { x: number; y: number; w: number; 
 // watching can actually track where the action is headed. Returns a Promise
 // so the caller can await via Runtime.evaluate's awaitPromise, keeping the
 // real click/type in sync with the animation instead of racing ahead of it.
-function moveCursorTo(x: number, y: number): Promise<void> {
+// `fast` shortens the glide for run_flow/explore_flow steps (background.ts's
+// pageDelay-based aim-pause is also skipped by callers in fast mode) so a
+// multi-step script finishes well inside the daemon's fixed command timeout
+// — same visual style, just compressed, not a different look.
+function moveCursorTo(x: number, y: number, fast?: boolean): Promise<void> {
   return new Promise((resolve) => {
     // Diagnostic: open DevTools (F12) on the page itself and watch for this
     // — if it never appears, the injected code isn't running at all (page
@@ -202,13 +206,14 @@ function moveCursorTo(x: number, y: number): Promise<void> {
     // most likely a page-level CSS ancestor with transform/filter/perspective,
     // which makes position:fixed descendants position relative to THAT
     // ancestor's box instead of the real viewport, not this code.
-    console.log('[browsercontrol] moveCursorTo', x, y);
+    console.log('[browsercontrol] moveCursorTo', x, y, fast);
     if (!document.getElementById('__bc_cursor_style__')) {
       const style = document.createElement('style');
       style.id = '__bc_cursor_style__';
       style.textContent = '@keyframes __bc_halo__ { 0%,100% { transform: scale(0.82); opacity: .55; } 50% { transform: scale(1.15); opacity: .9; } }';
       document.documentElement.appendChild(style);
     }
+    const durationS = fast ? 0.22 : 0.85;
     // documentElement (<html>) instead of body: fewer real-world apps put a
     // transform/filter on <html> than on <body> or a layout wrapper div, so
     // appending here is less likely to get silently clipped/repositioned by
@@ -217,12 +222,6 @@ function moveCursorTo(x: number, y: number): Promise<void> {
     if (!cursor) {
       cursor = document.createElement('div');
       cursor.id = '__bc_cursor__';
-      // width/height 0 so children (positioned at left:0/top:0 with their
-      // own negative margins) sit exactly on the point this transition
-      // drives — only left/top need to animate, not each child separately.
-      // Slight overshoot easing (back-out) reads as a more natural glide
-      // than linear/ease — same idea as native OS pointer/spring animations.
-      cursor.style.cssText = 'all:initial;position:fixed;width:0;height:0;z-index:2147483647;pointer-events:none;left:-100px;top:-100px;transition:left 0.85s cubic-bezier(0.22,1,0.36,1),top 0.85s cubic-bezier(0.22,1,0.36,1);';
       // A soft pulsing halo (signals "an AI is actively in control here")
       // behind a small solid gradient dot marking the exact point — glassy/
       // glowing rather than the old flat white-dot-with-black-border look.
@@ -234,12 +233,20 @@ function moveCursorTo(x: number, y: number): Promise<void> {
         '<div data-bc-dot style="position:absolute;left:0;top:0;width:11px;height:11px;margin:-5.5px 0 0 -5.5px;border-radius:50%;background:linear-gradient(135deg,#a78bfa,#6366f1);box-shadow:0 0 0 3px rgba(255,255,255,0.95),0 3px 10px rgba(99,102,241,0.55);transition:transform 0.15s ease;"></div>';
       document.documentElement.appendChild(cursor);
     }
+    // width/height 0 so children (positioned at left:0/top:0 with their own
+    // negative margins) sit exactly on the point this transition drives —
+    // only left/top need to animate, not each child separately. Slight
+    // overshoot easing (back-out) reads as a more natural glide than linear/
+    // ease — same idea as native OS pointer/spring animations. Set on every
+    // call (not just creation) so a step can switch speed from the previous
+    // one — e.g. a fast flow step followed by a normal standalone click.
+    cursor.style.cssText = `all:initial;position:fixed;width:0;height:0;z-index:2147483647;pointer-events:none;left:${cursor.style.left || '-100px'};top:${cursor.style.top || '-100px'};transition:left ${durationS}s cubic-bezier(0.22,1,0.36,1),top ${durationS}s cubic-bezier(0.22,1,0.36,1);`;
     // Force a layout flush so the transition animates from the cursor's
     // current position instead of jumping straight to the new one.
     void cursor.offsetWidth;
     cursor.style.left = `${x}px`;
     cursor.style.top = `${y}px`;
-    setTimeout(resolve, 900);
+    setTimeout(resolve, fast ? 260 : 900);
   });
 }
 
@@ -257,9 +264,12 @@ function pulseCursorPress(pressed: boolean) {
 // highlight (which marks the element), this marks the precise pixel the
 // input event fired at, the same "tap feedback" pattern as native touch/
 // click UIs. `kind` picks the brand color: violet for click, cyan for type,
-// matching the accent used by the corresponding native CDP highlight.
-function showClickRipple(x: number, y: number, kind: 'click' | 'type') {
-  console.log('[browsercontrol] showClickRipple', x, y, kind);
+// matching the accent used by the corresponding native CDP highlight. This
+// is fire-and-forget (never awaited by callers) so it never affects how
+// long a click/type/flow-step takes to resolve — `fast` only trims it down
+// for a calmer look during run_flow/explore_flow, not for speed.
+function showClickRipple(x: number, y: number, kind: 'click' | 'type', fast?: boolean) {
+  console.log('[browsercontrol] showClickRipple', x, y, kind, fast);
   if (!document.getElementById('__bc_ripple_style__')) {
     const style = document.createElement('style');
     style.id = '__bc_ripple_style__';
@@ -270,17 +280,19 @@ function showClickRipple(x: number, y: number, kind: 'click' | 'type') {
   const wrap = document.createElement('div');
   wrap.style.cssText = `all:initial;position:fixed;left:${x}px;top:${y}px;width:0;height:0;z-index:2147483647;pointer-events:none;`;
   document.documentElement.appendChild(wrap);
-  // Two staggered rings expanding+fading, plus a small solid core — reads
-  // as a richer "pulse" than a single flat circle growing and fading.
-  for (let i = 0; i < 3; i++) {
+  // Two/three staggered rings expanding+fading, plus a small solid core —
+  // reads as a richer "pulse" than a single flat circle growing and fading.
+  const ringCount = fast ? 1 : 3;
+  const ringDurationS = fast ? 0.4 : 0.9;
+  for (let i = 0; i < ringCount; i++) {
     const ring = document.createElement('div');
-    ring.style.cssText = `position:absolute;left:0;top:0;width:46px;height:46px;margin:-23px 0 0 -23px;border-radius:50%;border:2px solid ${a};box-shadow:0 0 14px 1px ${b}55;opacity:0;animation:__bc_ring__ 0.9s ease-out ${i * 0.18}s forwards;`;
+    ring.style.cssText = `position:absolute;left:0;top:0;width:46px;height:46px;margin:-23px 0 0 -23px;border-radius:50%;border:2px solid ${a};box-shadow:0 0 14px 1px ${b}55;opacity:0;animation:__bc_ring__ ${ringDurationS}s ease-out ${i * 0.18}s forwards;`;
     wrap.appendChild(ring);
   }
   const core = document.createElement('div');
   core.style.cssText = `position:absolute;left:0;top:0;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;background:linear-gradient(135deg,${a},${b});box-shadow:0 0 10px 3px ${b}aa;`;
   wrap.appendChild(core);
-  setTimeout(() => wrap.remove(), 1300);
+  setTimeout(() => wrap.remove(), fast ? 500 : 1300);
 }
 
 function removeAnnotationOverlay() {
@@ -457,6 +469,365 @@ const KEY_DEFS: Record<string, { key: string; code: string; keyCode: number; tex
   PageDown: { key: 'PageDown', code: 'PageDown', keyCode: 34 },
 };
 
+type AxInfo = { role?: string; name?: string };
+type ActionResult = { success: true; message: string; role?: string; name?: string; _riskWarning?: string } | { error: string; hint?: string };
+
+// Flags a target whose accessible name suggests a destructive/irreversible
+// action. Standalone browser_click/browser_type attach this as a non-
+// blocking `_riskWarning` (the AI was explicitly told to act on this one
+// element, so it's advisory only); run_flow/explore_flow use it to BLOCK a
+// step by default (see runFlowSteps) since those steps come from the AI's
+// own guess at a flow rather than a direct instruction, and are exactly the
+// case the guard is meant to catch.
+const RISKY_NAME_PATTERN = /delete|remove|uninstall|deactivate|cancel|unsubscribe|sign\s*out|log\s*out|pay|purchase|confirm|permanently/i;
+
+function isRiskyTarget(axInfo: AxInfo): boolean {
+  return !!axInfo.name && RISKY_NAME_PATTERN.test(axInfo.name);
+}
+
+function withRiskWarning(result: ActionResult, axInfo: AxInfo, verb: string): ActionResult {
+  if ('success' in result && isRiskyTarget(axInfo)) {
+    result._riskWarning = `This ${verb} ${axInfo.role ?? 'element'} "${axInfo.name}", which looks potentially destructive/irreversible.`;
+  }
+  return result;
+}
+
+// The shared implementation behind both the standalone `click` command and
+// run_flow/explore_flow's 'click' steps — `opts.fast` trims the animation
+// (shorter cursor glide, no aim-pause, shorter ripple/highlight) so a
+// multi-step flow finishes well inside the daemon's fixed command timeout,
+// without changing the standalone command's current (slower, more
+// demoable) timing at all.
+async function performClick(target: chrome.debugger.Debuggee, backendNodeId: number, opts: { fast: boolean }): Promise<ActionResult> {
+  // getBoxModel returns coordinates relative to the CURRENT viewport. If the
+  // element is scrolled out of view, those coordinates land outside the
+  // visible area — the click misses (or hits whatever else is there) and
+  // the cursor/highlight animate somewhere invisible.
+  await sendCommand(target, 'DOM.scrollIntoViewIfNeeded', { backendNodeId });
+  const boxModel = await sendCommand<Protocol.DOM.GetBoxModelResponse>(target, 'DOM.getBoxModel', { backendNodeId });
+  if (!boxModel?.model) {
+    return { error: "Failed to resolve node bounds", hint: "The node id may be stale (page navigated/re-rendered since the last snapshot). Take a fresh snapshot and retry." };
+  }
+  const box = quadToBox(boxModel.model.content);
+  const x = box.x + box.w / 2;
+  const y = box.y + box.h / 2;
+
+  // Glide the cursor there first, then highlight — visible movement instead
+  // of a highlight teleporting straight to the target. Fetch role/name
+  // concurrently — independent of the animation, needed for replay to
+  // re-resolve this element by identity instead of stale id.
+  const [, axInfo] = await Promise.all([
+    evalOnPage(target, `(${moveCursorTo.toString()})(${x}, ${y}, ${opts.fast})`, true),
+    getAxInfoForNode(target, backendNodeId),
+  ]);
+  await showNativeHighlight(target, box, { r: 99, g: 102, b: 241 });
+  // Brief "aim" pause with the cursor arrived and the target highlighted but
+  // before anything fires — without this the glide finishing and the actual
+  // click were visually simultaneous, reading as one instant blip instead of
+  // separate, followable steps. Skipped in fast mode.
+  if (!opts.fast) await pageDelay(target, 350);
+
+  // Dispatch mousedown and mouseup, with a visible press/release squish on
+  // the cursor dot so the moment of contact is its own beat.
+  void evalOnPage(target, `(${pulseCursorPress.toString()})(true)`);
+  await sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+  void evalOnPage(target, `(${showClickRipple.toString()})(${x}, ${y}, 'click', ${opts.fast})`);
+  if (!opts.fast) await pageDelay(target, 130);
+  void evalOnPage(target, `(${pulseCursorPress.toString()})(false)`);
+  await sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+  await waitForStableDom(target);
+  // Hold the highlight visible for a beat after the click lands instead of
+  // snapping it away the instant the DOM settles — gives the eye time to
+  // register "this is what got clicked" before it disappears.
+  setTimeout(() => hideNativeHighlight(target), opts.fast ? 350 : 1200);
+
+  return withRiskWarning({ success: true, message: `Clicked at (${x}, ${y})`, role: axInfo.role, name: axInfo.name }, axInfo, 'clicked');
+}
+
+// Shared implementation behind `type` and flow 'type' steps. `backendNodeId`
+// is optional — without one this relies on something already being focused
+// (e.g. right after a click), matching the standalone command's behavior.
+async function performType(target: chrome.debugger.Debuggee, backendNodeId: number | undefined, text: string, opts: { fast: boolean }): Promise<ActionResult> {
+  let axInfo: AxInfo = {};
+  if (backendNodeId != null) {
+    await sendCommand(target, 'DOM.scrollIntoViewIfNeeded', { backendNodeId });
+
+    const focusResult = await sendCommand<CdpResult<{}>>(target, 'DOM.focus', { backendNodeId });
+    if (focusResult?.error) {
+      return { error: `Failed to focus node: ${focusResult.error.message}`, hint: "The node id may be stale, or the element isn't focusable (e.g. a div, not an input). Take a fresh snapshot and confirm it's an input/textbox node." };
+    }
+
+    const [boxModel, resolvedAxInfo] = await Promise.all([
+      sendCommand<Protocol.DOM.GetBoxModelResponse>(target, 'DOM.getBoxModel', { backendNodeId }),
+      getAxInfoForNode(target, backendNodeId),
+    ]);
+    axInfo = resolvedAxInfo;
+    if (boxModel?.model?.content) {
+      const box = quadToBox(boxModel.model.content);
+      const cx = box.x + box.w / 2;
+      const cy = box.y + box.h / 2;
+      await evalOnPage(target, `(${moveCursorTo.toString()})(${cx}, ${cy}, ${opts.fast})`, true);
+      await showNativeHighlight(target, box, { r: 6, g: 182, b: 212 });
+      // Same "arrived, about to act" beat as click — see the comment there.
+      if (!opts.fast) await pageDelay(target, 350);
+      void evalOnPage(target, `(${showClickRipple.toString()})(${cx}, ${cy}, 'type', ${opts.fast})`);
+      setTimeout(() => hideNativeHighlight(target), opts.fast ? 350 : 1200);
+    }
+  }
+
+  // Input.insertText types into whichever element currently has focus, so
+  // focusing first (above) is required. Outside fast mode, typed one
+  // character at a time rather than as one bulk insertText call, so it
+  // reads as an actual typing motion instead of the whole string just
+  // appearing at once — Array.from (not a plain index loop) so multi-byte
+  // characters aren't split across surrogate pairs, and the per-character
+  // delay shrinks for longer strings so a whole paragraph doesn't turn into
+  // a multi-second wait. Fast mode (flow steps) skips the per-character
+  // animation entirely and inserts the whole string in one call — flow
+  // steps favor throughput over the typing demo.
+  if (opts.fast) {
+    await sendCommand(target, 'Input.insertText', { text });
+  } else {
+    const chars = Array.from(text);
+    const perCharDelayMs = chars.length > 40 ? 15 : 35;
+    for (const ch of chars) {
+      await sendCommand(target, 'Input.insertText', { text: ch });
+      if (perCharDelayMs > 0) await pageDelay(target, perCharDelayMs);
+    }
+  }
+  await waitForStableDom(target);
+
+  return withRiskWarning({ success: true, message: `Typed "${text}"`, role: axInfo.role, name: axInfo.name }, axInfo, 'typed into');
+}
+
+// Shared implementation behind `press_key` and flow 'press_key' steps.
+async function performPressKey(target: chrome.debugger.Debuggee, key: string, backendNodeId: number | undefined, opts: { fast: boolean }): Promise<ActionResult> {
+  const def = KEY_DEFS[key];
+  if (!def) return { error: `Unsupported key: "${key}"`, hint: `Supported keys: ${Object.keys(KEY_DEFS).join(', ')}.` };
+
+  let axInfo: AxInfo = {};
+  if (backendNodeId != null) {
+    await sendCommand(target, 'DOM.scrollIntoViewIfNeeded', { backendNodeId });
+    const focusResult = await sendCommand<CdpResult<{}>>(target, 'DOM.focus', { backendNodeId });
+    if (focusResult?.error) {
+      return { error: `Failed to focus node: ${focusResult.error.message}`, hint: "The node id may be stale, or the element isn't focusable. Take a fresh snapshot and retry." };
+    }
+    const [boxModel, resolvedAxInfo] = await Promise.all([
+      sendCommand<Protocol.DOM.GetBoxModelResponse>(target, 'DOM.getBoxModel', { backendNodeId }),
+      getAxInfoForNode(target, backendNodeId),
+    ]);
+    axInfo = resolvedAxInfo;
+    if (boxModel?.model?.content) {
+      const box = quadToBox(boxModel.model.content);
+      const cx = box.x + box.w / 2;
+      const cy = box.y + box.h / 2;
+      await evalOnPage(target, `(${moveCursorTo.toString()})(${cx}, ${cy}, ${opts.fast})`, true);
+      await showNativeHighlight(target, box, { r: 6, g: 182, b: 212 });
+      if (!opts.fast) await pageDelay(target, 250);
+      void evalOnPage(target, `(${showClickRipple.toString()})(${cx}, ${cy}, 'type', ${opts.fast})`);
+      setTimeout(() => hideNativeHighlight(target), opts.fast ? 300 : 900);
+    }
+  }
+
+  // rawKeyDown+keyUp always fire; the synthesized `char` event in between is
+  // what actually inserts a character for keys like Space — Enter/Tab/
+  // arrows/Escape have no `text` and so only fire key events, matching a
+  // real browser's behavior for non-printing keys.
+  await sendCommand(target, 'Input.dispatchKeyEvent', { type: 'rawKeyDown', windowsVirtualKeyCode: def.keyCode, nativeVirtualKeyCode: def.keyCode, key: def.key, code: def.code });
+  if (def.text) {
+    await sendCommand(target, 'Input.dispatchKeyEvent', { type: 'char', text: def.text, unmodifiedText: def.text });
+  }
+  await sendCommand(target, 'Input.dispatchKeyEvent', { type: 'keyUp', windowsVirtualKeyCode: def.keyCode, nativeVirtualKeyCode: def.keyCode, key: def.key, code: def.code });
+  await waitForStableDom(target);
+  return { success: true, message: `Pressed ${key}`, role: axInfo.role, name: axInfo.name };
+}
+
+type ResolvedStepTarget = {
+  backendNodeId: number;
+  matched: { role?: string; name?: string } | { selector: string };
+  // Always populated regardless of how the step matched (role+name directly,
+  // or a selector followed by an AX lookup) so isRiskyTarget has one
+  // consistent shape to check, instead of a selector match having no name.
+  axInfo: AxInfo;
+  ambiguous?: boolean;
+}
+
+// Resolves a flow step's target against the LIVE page at execution time —
+// never a nodeId, since a script is written before the steps that create
+// later DOM state have even run. role+name matching mirrors what
+// replay.ts's resolveNodeIdByIdentity already does server-side (role/name
+// survive a DOM re-render the way a backendDOMNodeId never does); doing it
+// here instead means a flow doesn't pay a round trip per step to resolve.
+async function resolveStepTarget(target: chrome.debugger.Debuggee, step: FlowStep): Promise<ResolvedStepTarget | null> {
+  if (step.selector) {
+    const docResult = await sendCommand<Protocol.DOM.GetDocumentResponse>(target, 'DOM.getDocument', { depth: 0 });
+    const rootNodeId = docResult?.root?.nodeId;
+    if (!rootNodeId) return null;
+    const queryResult = await sendCommand<Protocol.DOM.QuerySelectorResponse>(target, 'DOM.querySelector', { nodeId: rootNodeId, selector: step.selector });
+    if (!queryResult?.nodeId) return null;
+    const describeResult = await sendCommand<Protocol.DOM.DescribeNodeResponse>(target, 'DOM.describeNode', { nodeId: queryResult.nodeId });
+    const backendNodeId = describeResult?.node?.backendNodeId;
+    if (!backendNodeId) return null;
+    const axInfo = await getAxInfoForNode(target, backendNodeId);
+    return { backendNodeId, matched: { selector: step.selector }, axInfo };
+  }
+  if (step.role && step.name) {
+    const axTreeResult = await sendCommand<Protocol.Accessibility.GetFullAXTreeResponse>(target, 'Accessibility.getFullAXTree', {});
+    const nodes = axTreeResult?.nodes || [];
+    const candidates = nodes.filter((n) => n.role?.value === step.role && n.name?.value === step.name && n.backendDOMNodeId != null);
+    if (candidates.length === 0) return null;
+    return {
+      backendNodeId: candidates[0].backendDOMNodeId!,
+      matched: { role: step.role, name: step.name },
+      axInfo: { role: step.role, name: step.name },
+      ambiguous: candidates.length > 1,
+    };
+  }
+  return null;
+}
+
+function describeStepTarget(step: FlowStep): string {
+  if (step.selector) return `selector "${step.selector}"`;
+  if (step.role || step.name) return `${step.role ?? 'element'} "${step.name ?? ''}"`;
+  return 'the currently focused element';
+}
+
+type FlowStepResult = {
+  index: number;
+  action: string;
+  matched?: { role?: string; name?: string } | { selector: string };
+  ambiguous?: boolean;
+  success: boolean;
+  error?: string;
+  snapshot?: SnapshotEntry[];
+}
+
+type FlowReport = {
+  success: boolean;
+  stoppedAtStep?: number;
+  reason?: 'too_many_steps' | 'not_found' | 'risky_action_blocked' | 'action_failed' | 'assert_failed' | 'timeout';
+  message?: string;
+  steps: FlowStepResult[];
+  finalSnapshot?: SnapshotEntry[];
+}
+
+const MAX_FLOW_STEPS = 20;
+const WAIT_FOR_POLL_MS = 250;
+const WAIT_FOR_DEFAULT_TIMEOUT_MS = 3000;
+
+async function takeFlowSnapshot(target: chrome.debugger.Debuggee): Promise<SnapshotEntry[]> {
+  const axTreeResult = await sendCommand<Protocol.Accessibility.GetFullAXTreeResponse>(target, 'Accessibility.getFullAXTree', {});
+  return buildSnapshotNodes(axTreeResult?.nodes || []);
+}
+
+// The shared engine behind run_flow (opts.captureEachStep: false — one
+// compact report + a final snapshot) and explore_flow (opts.captureEachStep:
+// true — a snapshot after every step, for validating a best-guess sequence
+// before committing to the leaner run_flow). Both have REAL side effects —
+// there's no way to preview a later step's UI without actually executing
+// the earlier ones (submitting a form, following a link) — explore_flow
+// just reports more about what happened.
+//
+// Stops at the first step that doesn't resolve, fails, or is blocked as
+// risky — deliberately no partial-credit "keep going and see" behavior,
+// since a script auto-generated from a snapshot is exactly the kind of
+// "blind" probing that should stop and report rather than compound a wrong
+// guess into several more wrong actions.
+async function runFlowSteps(target: chrome.debugger.Debuggee, steps: FlowStep[], opts: { captureEachStep: boolean }): Promise<FlowReport> {
+  if (steps.length > MAX_FLOW_STEPS) {
+    return { success: false, reason: 'too_many_steps', message: `Flow has ${steps.length} steps; max is ${MAX_FLOW_STEPS} per call. Split into multiple browser_run_flow/browser_explore_flow calls.`, steps: [] };
+  }
+
+  const results: FlowStepResult[] = [];
+
+  const stop = (index: number, reason: FlowReport['reason'], message: string): FlowReport =>
+    ({ success: false, stoppedAtStep: index, reason, message, steps: results });
+
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    const needsTarget = step.action !== 'scroll' && !(step.action === 'press_key' && !step.role && !step.selector);
+
+    let resolved: ResolvedStepTarget | null = null;
+
+    if (needsTarget) {
+      if (step.action === 'wait_for') {
+        const timeoutMs = step.timeoutMs ?? WAIT_FOR_DEFAULT_TIMEOUT_MS;
+        const deadline = Date.now() + timeoutMs;
+        do {
+          resolved = await resolveStepTarget(target, step);
+          if (resolved || Date.now() >= deadline) break;
+          await pageDelay(target, WAIT_FOR_POLL_MS);
+        } while (true);
+        if (!resolved) {
+          results.push({ index: i, action: step.action, success: false, error: `Timed out after ${timeoutMs}ms` });
+          return stop(i, 'timeout', `Step ${i} (wait_for) timed out after ${timeoutMs}ms waiting for ${describeStepTarget(step)}.`);
+        }
+      } else {
+        resolved = await resolveStepTarget(target, step);
+        if (!resolved) {
+          results.push({ index: i, action: step.action, success: false, error: 'not_found' });
+          return stop(i, 'not_found', `Step ${i} (${step.action}) found no element matching ${describeStepTarget(step)}. Stopped before continuing — take a fresh browser_snapshot/browser_explore_flow and correct this step.`);
+        }
+      }
+
+      if (isRiskyTarget(resolved.axInfo) && !step.confirmRisky) {
+        results.push({ index: i, action: step.action, matched: resolved.matched, ambiguous: resolved.ambiguous, success: false, error: 'risky_action_blocked' });
+        return stop(i, 'risky_action_blocked', `Step ${i} (${step.action}) targets ${describeStepTarget(step)} (${resolved.axInfo.role ?? 'element'} "${resolved.axInfo.name ?? ''}"), which looks potentially destructive/irreversible. Confirm this is intended with your user, then re-run with steps[${i}].confirmRisky:true.`);
+      }
+    }
+
+    let actionResult: ActionResult;
+    switch (step.action) {
+      case 'click':
+        actionResult = await performClick(target, resolved!.backendNodeId, { fast: true });
+        break;
+      case 'type':
+        actionResult = await performType(target, resolved?.backendNodeId, step.text ?? '', { fast: true });
+        break;
+      case 'press_key':
+        actionResult = await performPressKey(target, step.key ?? '', resolved?.backendNodeId, { fast: true });
+        break;
+      case 'scroll': {
+        const deltaX = step.deltaX || 0;
+        const deltaY = step.deltaY || 0;
+        await sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mouseWheel', x: 500, y: 500, deltaX, deltaY });
+        await waitForStableDom(target);
+        actionResult = { success: true, message: `Scrolled by (${deltaX}, ${deltaY})` };
+        break;
+      }
+      case 'wait_for':
+        actionResult = { success: true, message: `Found ${describeStepTarget(step)}` };
+        break;
+      case 'assert_text': {
+        const text = resolved!.axInfo.name ?? '';
+        actionResult = step.contains && text.includes(step.contains)
+          ? { success: true, message: `"${step.contains}" found in "${text}"` }
+          : { error: `Expected text containing "${step.contains ?? ''}", found "${text}"` };
+        break;
+      }
+    }
+
+    const success = 'success' in actionResult;
+    const errorMessage = 'error' in actionResult ? actionResult.error : undefined;
+    results.push({
+      index: i,
+      action: step.action,
+      matched: resolved?.matched,
+      ambiguous: resolved?.ambiguous,
+      success,
+      error: errorMessage,
+    });
+    if (opts.captureEachStep) results[results.length - 1].snapshot = await takeFlowSnapshot(target);
+
+    if (!success) {
+      return stop(i, step.action === 'assert_text' ? 'assert_failed' : 'action_failed', `Step ${i} (${step.action}) failed: ${errorMessage}`);
+    }
+  }
+
+  const finalSnapshot = opts.captureEachStep ? results[results.length - 1]?.snapshot : await takeFlowSnapshot(target);
+  return { success: true, steps: results, finalSnapshot };
+}
+
 async function dispatchCommand(data: BrowserCommand & { id?: string }): Promise<Record<string, unknown>> {
   const cmd = data.cmd;
 
@@ -567,101 +938,13 @@ async function dispatchCommand(data: BrowserCommand & { id?: string }): Promise<
   // 3. Click (by nodeId)
   if (cmd === 'click') {
     if (!data.nodeId) return { error: "Missing nodeId", hint: "Call snapshot first and pass one of the returned node ids." };
-
-    // getBoxModel returns coordinates relative to the CURRENT viewport. If
-    // the element is scrolled out of view, those coordinates land outside
-    // the visible area — the click misses (or hits whatever else is there)
-    // and the cursor/highlight animate somewhere invisible.
-    await sendCommand(target, 'DOM.scrollIntoViewIfNeeded', { backendNodeId: data.nodeId });
-
-    // Get Box Model to find coordinates
-    const boxModel = await sendCommand<Protocol.DOM.GetBoxModelResponse>(target, 'DOM.getBoxModel', { backendNodeId: data.nodeId });
-
-    if (boxModel && boxModel.model) {
-      const box = quadToBox(boxModel.model.content);
-      const x = box.x + box.w / 2;
-      const y = box.y + box.h / 2;
-
-      // Glide the cursor there first, then highlight — visible movement
-      // instead of a highlight teleporting straight to the target. Fetch
-      // role/name concurrently — independent of the animation, needed for
-      // replay to re-resolve this element by identity instead of stale id.
-      const [, axInfo] = await Promise.all([
-        evalOnPage(target, `(${moveCursorTo.toString()})(${x}, ${y})`, true),
-        getAxInfoForNode(target, data.nodeId),
-      ]);
-      await showNativeHighlight(target, box, { r: 99, g: 102, b: 241 });
-      // Brief "aim" pause with the cursor arrived and the target highlighted
-      // but before anything fires — without this the glide finishing and
-      // the actual click were visually simultaneous, reading as one instant
-      // blip instead of separate, followable steps.
-      await pageDelay(target, 350);
-
-      // Dispatch mousedown and mouseup, with a visible press/release squish
-      // on the cursor dot so the moment of contact is its own beat.
-      void evalOnPage(target, `(${pulseCursorPress.toString()})(true)`);
-      await sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
-      void evalOnPage(target, `(${showClickRipple.toString()})(${x}, ${y}, 'click')`);
-      await pageDelay(target, 130);
-      void evalOnPage(target, `(${pulseCursorPress.toString()})(false)`);
-      await sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
-      await waitForStableDom(target);
-      // Hold the highlight visible for a beat after the click lands instead
-      // of snapping it away the instant the DOM settles — gives the eye time
-      // to register "this is what got clicked" before it disappears.
-      setTimeout(() => hideNativeHighlight(target), 1200);
-
-      return { success: true, message: `Clicked at (${x}, ${y})`, role: axInfo.role, name: axInfo.name };
-    }
-    return { error: "Failed to resolve node bounds", hint: "The node id may be stale (page navigated/re-rendered since the last snapshot). Take a fresh snapshot and retry." };
+    return await performClick(target, data.nodeId, { fast: false });
   }
 
   // 4. Type (focus + insertText)
   if (cmd === 'type') {
     if (!data.text) return { error: "Missing text" };
-    let axInfo: { role?: string; name?: string } = {};
-    if (data.nodeId) {
-      await sendCommand(target, 'DOM.scrollIntoViewIfNeeded', { backendNodeId: data.nodeId });
-
-      const focusResult = await sendCommand<CdpResult<{}>>(target, 'DOM.focus', { backendNodeId: data.nodeId });
-      if (focusResult?.error) {
-        return { error: `Failed to focus node: ${focusResult.error.message}`, hint: "The node id may be stale, or the element isn't focusable (e.g. a div, not an input). Take a fresh snapshot and confirm it's an input/textbox node." };
-      }
-
-      const [boxModel, resolvedAxInfo] = await Promise.all([
-        sendCommand<Protocol.DOM.GetBoxModelResponse>(target, 'DOM.getBoxModel', { backendNodeId: data.nodeId }),
-        getAxInfoForNode(target, data.nodeId),
-      ]);
-      axInfo = resolvedAxInfo;
-      if (boxModel?.model?.content) {
-        const box = quadToBox(boxModel.model.content);
-        const cx = box.x + box.w / 2;
-        const cy = box.y + box.h / 2;
-        await evalOnPage(target, `(${moveCursorTo.toString()})(${cx}, ${cy})`, true);
-        await showNativeHighlight(target, box, { r: 6, g: 182, b: 212 });
-        // Same "arrived, about to act" beat as click — see the comment there.
-        await pageDelay(target, 350);
-        void evalOnPage(target, `(${showClickRipple.toString()})(${cx}, ${cy}, 'type')`);
-        setTimeout(() => hideNativeHighlight(target), 1200);
-      }
-    }
-    // Input.insertText types into whichever element currently has focus, so
-    // focusing first (above) is required — without a nodeId this relies on
-    // something already being focused (e.g. right after a click). Typed one
-    // character at a time rather than as one bulk insertText call, so it
-    // reads as an actual typing motion instead of the whole string just
-    // appearing at once — Array.from (not a plain index loop) so multi-byte
-    // characters aren't split across surrogate pairs. The per-character
-    // delay shrinks for longer strings so a whole paragraph doesn't turn
-    // into a multi-second wait.
-    const chars = Array.from(data.text);
-    const perCharDelayMs = chars.length > 40 ? 15 : 35;
-    for (const ch of chars) {
-      await sendCommand(target, 'Input.insertText', { text: ch });
-      if (perCharDelayMs > 0) await pageDelay(target, perCharDelayMs);
-    }
-    await waitForStableDom(target);
-    return { success: true, message: `Typed "${data.text}"`, role: axInfo.role, name: axInfo.name };
+    return await performType(target, data.nodeId, data.text, { fast: false });
   }
 
   // 4b. Press a single named key (Enter to submit a search/form, Tab, Escape,
@@ -669,44 +952,21 @@ async function dispatchCommand(data: BrowserCommand & { id?: string }): Promise<
   // synthesizes a keypress, so a search box filled via `type` never submits
   // on its own the way a real user's Enter would.
   if (cmd === 'press_key') {
-    const def = KEY_DEFS[data.key];
-    if (!def) return { error: `Unsupported key: "${data.key}"`, hint: `Supported keys: ${Object.keys(KEY_DEFS).join(', ')}.` };
+    return await performPressKey(target, data.key, data.nodeId, { fast: false });
+  }
 
-    let axInfo: { role?: string; name?: string } = {};
-    if (data.nodeId) {
-      await sendCommand(target, 'DOM.scrollIntoViewIfNeeded', { backendNodeId: data.nodeId });
-      const focusResult = await sendCommand<CdpResult<{}>>(target, 'DOM.focus', { backendNodeId: data.nodeId });
-      if (focusResult?.error) {
-        return { error: `Failed to focus node: ${focusResult.error.message}`, hint: "The node id may be stale, or the element isn't focusable. Take a fresh snapshot and retry." };
-      }
-      const [boxModel, resolvedAxInfo] = await Promise.all([
-        sendCommand<Protocol.DOM.GetBoxModelResponse>(target, 'DOM.getBoxModel', { backendNodeId: data.nodeId }),
-        getAxInfoForNode(target, data.nodeId),
-      ]);
-      axInfo = resolvedAxInfo;
-      if (boxModel?.model?.content) {
-        const box = quadToBox(boxModel.model.content);
-        const cx = box.x + box.w / 2;
-        const cy = box.y + box.h / 2;
-        await evalOnPage(target, `(${moveCursorTo.toString()})(${cx}, ${cy})`, true);
-        await showNativeHighlight(target, box, { r: 6, g: 182, b: 212 });
-        await pageDelay(target, 250);
-        void evalOnPage(target, `(${showClickRipple.toString()})(${cx}, ${cy}, 'type')`);
-        setTimeout(() => hideNativeHighlight(target), 900);
-      }
+  // 4c. Batch flow scripting: run a list of steps (click/type/press_key/
+  // wait_for/assert_text/scroll) in one call instead of one round trip per
+  // step. run_flow returns a compact report + final snapshot; explore_flow
+  // (same engine) returns a snapshot after every step, meant to be used
+  // once to validate a best-guess flow before committing to the leaner
+  // run_flow for repeat runs. Both stop at the first step that doesn't
+  // resolve/succeed, or is blocked as looking risky — see runFlowSteps.
+  if (cmd === 'run_flow' || cmd === 'explore_flow') {
+    if (!Array.isArray(data.steps) || data.steps.length === 0) {
+      return { error: "Missing steps", hint: "Pass a non-empty array of flow steps, e.g. [{action:'click', role:'button', name:'Login'}]." };
     }
-
-    // rawKeyDown+keyUp always fire; the synthesized `char` event in between
-    // is what actually inserts a character for keys like Space — Enter/Tab/
-    // arrows/Escape have no `text` and so only fire key events, matching a
-    // real browser's behavior for non-printing keys.
-    await sendCommand(target, 'Input.dispatchKeyEvent', { type: 'rawKeyDown', windowsVirtualKeyCode: def.keyCode, nativeVirtualKeyCode: def.keyCode, key: def.key, code: def.code });
-    if (def.text) {
-      await sendCommand(target, 'Input.dispatchKeyEvent', { type: 'char', text: def.text, unmodifiedText: def.text });
-    }
-    await sendCommand(target, 'Input.dispatchKeyEvent', { type: 'keyUp', windowsVirtualKeyCode: def.keyCode, nativeVirtualKeyCode: def.keyCode, key: def.key, code: def.code });
-    await waitForStableDom(target);
-    return { success: true, message: `Pressed ${data.key}`, role: axInfo.role, name: axInfo.name };
+    return await runFlowSteps(target, data.steps, { captureEachStep: cmd === 'explore_flow' });
   }
 
   // 5. Scroll

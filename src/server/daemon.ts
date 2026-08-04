@@ -255,18 +255,31 @@ Workflow for interacting with a page:
 5. After any action that changes the page (navigation, opening a modal,
    submitting a form), take a fresh snapshot before reusing an id — ids are
    backend DOM node ids and go stale once the page re-renders.
+6. For a KNOWN multi-step flow (login, a multi-field form, a wizard), don't
+   drive it one browser_click/browser_type call at a time — that costs one
+   round trip (and one reasoning pass) per step. Instead, write the whole
+   sequence as steps referencing elements by role+name (from the snapshot)
+   and send it in one browser_run_flow call. If you're not confident about
+   the role/name guesses (unfamiliar UI), validate with browser_explore_flow
+   first — it runs the same steps for real but reports a snapshot after
+   every step, so you can fix a wrong guess before it costs a whole flow
+   run. Both stop at the first step that doesn't resolve or fails, so a
+   flow that goes wrong is never worse than the step-by-step equivalent.
 
 Tool selection — this is important for anything you intend to report as a
 verified UI behavior:
-- browser_click / browser_type / browser_press_key: the ONLY tools that
-  count as testing real user interaction. Prefer them whenever you're
-  checking that a button, link, or form field actually works. Each glides a
-  visible cursor dot to the target and briefly outlines it (violet for
+- browser_click / browser_type / browser_press_key / browser_run_flow /
+  browser_explore_flow: the ONLY tools that count as testing real user
+  interaction. Prefer them whenever you're checking that a button, link, or
+  form field actually works. Standalone click/type/press_key glide a
+  visible cursor dot to the target and briefly outline it (violet for
   click, cyan for type/key) — a multi-step animation (glide, pause, press,
   ripple) that takes a couple of seconds per action — so a human watching
   the tab can actually follow what's happening instead of it jumping
   instantly between fields. This adds real latency; it's intentional, not a
-  bug. browser_evaluate does none of this.
+  bug. Flow steps use a faster, lighter version of the same animation so a
+  multi-step script doesn't take unreasonably long. browser_evaluate does
+  none of this.
 - browser_evaluate: for reading state (localStorage, computed values) or
   test setup/teardown (e.g. seeding an auth token). Do NOT use it to click
   buttons or fill fields as a shortcut — setting element.value via JS does
@@ -324,11 +337,50 @@ Network tab):
    payload sent or the error message returned).
 The network log also auto-clears on every browser_navigate.
 
+browser_run_flow/browser_explore_flow block a step by default if its target's
+accessible name looks destructive/irreversible (delete, remove, cancel, sign
+out, pay, confirm, ...) — the response will have reason:"risky_action_blocked"
+and a message naming the step. This tool has no way to ask your user directly,
+so that's your job: surface the blocked step to your user, and only re-run
+with that step's confirmRisky:true once they've confirmed it's intended.
+Don't set confirmRisky:true reflexively just to get the flow to complete.
+
 If a command times out or errors, check the returned "hint" field before
 retrying blindly — it usually points at the actual cause (stale node id,
 extension not connected, unhandled dialog, etc).
 `.trim(),
 });
+
+// Shared input schema for browser_run_flow/browser_explore_flow — both take
+// the same step list, just report back differently (see runFlowSteps in
+// background.ts, which is the single engine behind both commands).
+const FLOW_STEPS_SCHEMA = {
+  type: "object",
+  properties: {
+    steps: {
+      type: "array",
+      description: "Ordered list of steps to run in one call. Stops at the first step that doesn't resolve or fails.",
+      items: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["click", "type", "press_key", "wait_for", "assert_text", "scroll"] },
+          role: { type: "string", description: "Accessibility role of the target, from a prior browser_snapshot/browser_explore_flow (e.g. 'button', 'textbox')." },
+          name: { type: "string", description: "Accessible name of the target, paired with role." },
+          selector: { type: "string", description: "CSS selector, as an alternative to role+name." },
+          text: { type: "string", description: "Text to type (action: 'type')." },
+          key: { type: "string", description: "Key to press (action: 'press_key') — see browser_press_key for supported names." },
+          contains: { type: "string", description: "Substring the target's accessible name must contain (action: 'assert_text')." },
+          deltaX: { type: "number", description: "Scroll delta (action: 'scroll')." },
+          deltaY: { type: "number", description: "Scroll delta (action: 'scroll')." },
+          timeoutMs: { type: "number", description: "Max time in ms to poll for the target to appear (action: 'wait_for'), default 3000." },
+          confirmRisky: { type: "boolean", description: "Set true to proceed past a step whose target looks destructive/irreversible (delete, cancel, sign out, pay, confirm, ...) — only after confirming with your user that this step is intended." },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  required: ["steps"],
+} as const;
 
 mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
@@ -367,6 +419,16 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "browser_press_key",
         description: "Press a single named key (Enter, Tab, Escape, Backspace, Delete, ArrowUp/Down/Left/Right, Space, Home, End, PageUp, PageDown) — dispatches a real keydown/keyup, distinct from browser_type which only inserts text and never submits anything on its own. Use this after browser_type to submit a search box or form (Enter), or to navigate a custom dropdown/menu (arrows + Enter).",
         inputSchema: { type: "object", properties: { key: { type: "string", description: "One of: Enter, Tab, Escape, Backspace, Delete, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Space, Home, End, PageUp, PageDown" }, nodeId: { type: "number", description: "Element to focus before pressing the key. Omit only if the target is already focused (e.g. right after browser_type)." } }, required: ["key"] }
+      },
+      {
+        name: "browser_run_flow",
+        description: "Run a list of steps (click/type/press_key/wait_for/assert_text/scroll) in ONE call instead of one round trip per step — collapses a multi-step flow (login, a multi-field form, a wizard) that would otherwise cost N separate tool calls into a single one. Steps target elements by role+name (from a prior browser_snapshot/browser_explore_flow) or a CSS selector, resolved fresh against the live page at execution time. Stops at the first step that doesn't resolve or fails, and returns a compact per-step report plus a final snapshot. If you're not confident your step sequence is correct (unfamiliar UI, guessed role/name), use browser_explore_flow first to validate it — running an unvalidated guess directly is how a flow burns a call on a mid-flow failure. A step whose target looks destructive/irreversible (delete, cancel, sign out, pay, confirm, ...) is blocked by default; if that's actually intended, confirm with your user and re-run with that step's confirmRisky:true.",
+        inputSchema: FLOW_STEPS_SCHEMA,
+      },
+      {
+        name: "browser_explore_flow",
+        description: "Same engine as browser_run_flow, but returns a snapshot after EVERY step instead of just a final one — use this ONCE to validate a best-guess sequence of steps against an unfamiliar UI (confirm role/name guesses, see intermediate states) before committing to the leaner browser_run_flow for repeat runs. Important: this is NOT a safe preview — there is no way to know what a later step's UI looks like without actually executing the earlier steps for real (submitting a form, following a link). Every step here has the same real side effects as browser_click/browser_type. The same destructive-action block/confirmRisky mechanism as browser_run_flow applies.",
+        inputSchema: FLOW_STEPS_SCHEMA,
       },
       {
         name: "browser_evaluate",
@@ -459,6 +521,12 @@ async function handleToolCall(request: CallToolRequest): Promise<ToolCallRespons
         break;
       case "browser_press_key":
         result = await executeCommand("press_key", { key: args?.key, nodeId: args?.nodeId });
+        break;
+      case "browser_run_flow":
+        result = await executeCommand("run_flow", { steps: args?.steps });
+        break;
+      case "browser_explore_flow":
+        result = await executeCommand("explore_flow", { steps: args?.steps });
         break;
       case "browser_evaluate":
         result = await executeCommand("evaluate", { expression: args?.expression });
