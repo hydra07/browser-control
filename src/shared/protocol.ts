@@ -12,6 +12,7 @@ export type BrowserCommand =
   | { cmd: 'visual_snapshot' }
   | { cmd: 'click'; nodeId: number }
   | { cmd: 'type'; text: string; nodeId?: number }
+  | { cmd: 'press_key'; key: string; nodeId?: number }
   | { cmd: 'scroll'; deltaX?: number; deltaY?: number }
   | { cmd: 'screenshot'; fullPage?: boolean; format?: 'jpeg' | 'png'; quality?: number }
   | { cmd: 'network_requests'; resourceTypes?: string[]; filter?: string; limit?: number }

@@ -249,20 +249,24 @@ Workflow for interacting with a page:
 3. browser_click / browser_type using the id from the snapshot. These
    dispatch real, trusted input events (same as a physical mouse/keyboard),
    so they exercise the actual event handlers a user would trigger.
-4. After any action that changes the page (navigation, opening a modal,
+4. browser_type only inserts text — it never submits anything on its own.
+   To submit a search box or form, or navigate a custom dropdown, follow it
+   with browser_press_key (Enter, Tab, Escape, arrows, ...).
+5. After any action that changes the page (navigation, opening a modal,
    submitting a form), take a fresh snapshot before reusing an id — ids are
    backend DOM node ids and go stale once the page re-renders.
 
 Tool selection — this is important for anything you intend to report as a
 verified UI behavior:
-- browser_click / browser_type: the ONLY tools that count as testing real
-  user interaction. Prefer them whenever you're checking that a button,
-  link, or form field actually works. Each glides a visible cursor dot to
-  the target and briefly outlines it (green for click, blue for type) —
-  ~700ms of visible motion per action — so a human watching the tab can
-  actually follow what's happening instead of it jumping instantly between
-  fields. This adds real latency; it's intentional, not a bug.
-  browser_evaluate does none of this.
+- browser_click / browser_type / browser_press_key: the ONLY tools that
+  count as testing real user interaction. Prefer them whenever you're
+  checking that a button, link, or form field actually works. Each glides a
+  visible cursor dot to the target and briefly outlines it (violet for
+  click, cyan for type/key) — a multi-step animation (glide, pause, press,
+  ripple) that takes a couple of seconds per action — so a human watching
+  the tab can actually follow what's happening instead of it jumping
+  instantly between fields. This adds real latency; it's intentional, not a
+  bug. browser_evaluate does none of this.
 - browser_evaluate: for reading state (localStorage, computed values) or
   test setup/teardown (e.g. seeding an auth token). Do NOT use it to click
   buttons or fill fields as a shortcut — setting element.value via JS does
@@ -360,6 +364,11 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: { type: "object", properties: { text: { type: "string" }, nodeId: { type: "number", description: "Element to focus before typing. Omit only if the target is already focused." } }, required: ["text"] }
       },
       {
+        name: "browser_press_key",
+        description: "Press a single named key (Enter, Tab, Escape, Backspace, Delete, ArrowUp/Down/Left/Right, Space, Home, End, PageUp, PageDown) — dispatches a real keydown/keyup, distinct from browser_type which only inserts text and never submits anything on its own. Use this after browser_type to submit a search box or form (Enter), or to navigate a custom dropdown/menu (arrows + Enter).",
+        inputSchema: { type: "object", properties: { key: { type: "string", description: "One of: Enter, Tab, Escape, Backspace, Delete, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Space, Home, End, PageUp, PageDown" }, nodeId: { type: "number", description: "Element to focus before pressing the key. Omit only if the target is already focused (e.g. right after browser_type)." } }, required: ["key"] }
+      },
+      {
         name: "browser_evaluate",
         description: "Evaluate arbitrary JavaScript on the page. Use this for reading state (e.g. localStorage, computed values) or for setup/teardown (e.g. seeding auth tokens) — NOT as a shortcut for clicking buttons or filling form fields, which won't verify real user interaction. Use browser_click/browser_type for anything you intend to report as a tested UI behavior.",
         inputSchema: { type: "object", properties: { expression: { type: "string" } }, required: ["expression"] }
@@ -447,6 +456,9 @@ async function handleToolCall(request: CallToolRequest): Promise<ToolCallRespons
         break;
       case "browser_type":
         result = await executeCommand("type", { text: args?.text, nodeId: args?.nodeId });
+        break;
+      case "browser_press_key":
+        result = await executeCommand("press_key", { key: args?.key, nodeId: args?.nodeId });
         break;
       case "browser_evaluate":
         result = await executeCommand("evaluate", { expression: args?.expression });

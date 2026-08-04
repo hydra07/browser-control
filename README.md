@@ -75,6 +75,7 @@ pick up source changes automatically.
 | `browser_inspect_element` | Deep detail on one element: outerHTML, matched CSS rules, computed style, event listeners |
 | `browser_click` | Click an element by id — real, trusted mouse event |
 | `browser_type` | Focus an element by id and type — real, trusted key events |
+| `browser_press_key` | Press Enter/Tab/Escape/arrows/etc — submits a search/form after `browser_type`, which never does on its own |
 | `browser_scroll` | Scroll by a pixel delta |
 | `browser_screenshot` | Viewport or full-page screenshot |
 | `browser_network_requests` | List XHR/Fetch/Document/WebSocket requests since the last navigate/clear |
@@ -82,11 +83,12 @@ pick up source changes automatically.
 | `browser_network_clear` | Clear the network log |
 | `browser_evaluate` | Run arbitrary JS — for reading state/setup, not for simulating clicks/typing |
 
-`browser_click`/`browser_type` glide a visible cursor to the target and flash
-a corner-bracket highlight before acting, so a human watching the tab can
-follow what the agent is doing. Screenshots are off the inline-image path by
-default and saved to `screenshots/` on disk instead — see
-`BROWSERCONTROL_INLINE_IMAGES` below.
+`browser_click`/`browser_type`/`browser_press_key` glide a visible cursor to
+the target, pause, then act with a ripple + highlight — a multi-step,
+several-second animation so a human watching the tab can actually follow
+what the agent is doing instead of it jumping instantly between fields.
+Screenshots are off the inline-image path by default and saved to
+`screenshots/` on disk instead — see `BROWSERCONTROL_INLINE_IMAGES` below.
 
 ## Observability
 

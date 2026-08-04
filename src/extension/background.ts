@@ -148,23 +148,36 @@ function countTreeNodes(entries: SnapshotEntry[]): number {
 }
 
 // Self-contained: gets serialized via .toString() and injected into the page,
-// so it must not reference anything from the extension's closure.
+// so it must not reference anything from the extension's closure — including
+// each other or shared constants. Shared brand palette across every visual-
+// feedback function below: indigo/violet for click, cyan/blue for type —
+// consistent identity so a human watching can tell at a glance which kind of
+// action just fired. Each function's small "inject my own @keyframes if
+// missing" snippet is duplicated (not factored out) for the same reason:
+// there's no shared JS scope across separately toString()'d functions, only
+// string duplication survives serialization.
 function drawAnnotationOverlay(boxes: Array<{ id: number; x: number; y: number; w: number; h: number }>) {
   const old = document.getElementById('__bc_annotate_overlay__');
   if (old) old.remove();
+  if (!document.getElementById('__bc_annotate_style__')) {
+    const style = document.createElement('style');
+    style.id = '__bc_annotate_style__';
+    style.textContent = '@keyframes __bc_pop__ { 0% { transform: scale(0.4); opacity: 0; } 60% { transform: scale(1.08); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }';
+    document.documentElement.appendChild(style);
+  }
   const container = document.createElement('div');
   container.id = '__bc_annotate_overlay__';
-  container.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483647;';
-  document.body.appendChild(container);
-  for (const b of boxes) {
+  container.style.cssText = 'all:initial;position:fixed;inset:0;pointer-events:none;z-index:2147483647;';
+  document.documentElement.appendChild(container);
+  boxes.forEach((b, idx) => {
     const box = document.createElement('div');
-    box.style.cssText = `position:absolute;left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px;border:2px solid #ff3366;box-sizing:border-box;background:rgba(255,51,102,0.08);`;
+    box.style.cssText = `position:absolute;left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px;border:1.5px solid rgba(99,102,241,0.85);border-radius:6px;box-sizing:border-box;background:rgba(99,102,241,0.07);box-shadow:0 0 0 1px rgba(255,255,255,0.5) inset,0 2px 10px rgba(99,102,241,0.25);transform-origin:center;animation:__bc_pop__ 0.22s ease-out ${idx * 0.012}s both;`;
     const label = document.createElement('div');
     label.textContent = String(b.id);
-    label.style.cssText = 'position:absolute;top:-16px;left:-2px;background:#ff3366;color:#fff;font:11px monospace;padding:1px 4px;line-height:1.2;white-space:nowrap;';
+    label.style.cssText = 'position:absolute;top:-10px;left:-10px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:linear-gradient(135deg,#a78bfa,#6366f1);color:#fff;font:600 11px/18px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-align:center;box-shadow:0 2px 6px rgba(99,102,241,0.5),0 0 0 2px #fff;';
     box.appendChild(label);
     container.appendChild(box);
-  }
+  });
 }
 
 function quadToBox(quad: Protocol.DOM.Quad): { x: number; y: number; w: number; h: number } {
@@ -190,6 +203,12 @@ function moveCursorTo(x: number, y: number): Promise<void> {
     // which makes position:fixed descendants position relative to THAT
     // ancestor's box instead of the real viewport, not this code.
     console.log('[browsercontrol] moveCursorTo', x, y);
+    if (!document.getElementById('__bc_cursor_style__')) {
+      const style = document.createElement('style');
+      style.id = '__bc_cursor_style__';
+      style.textContent = '@keyframes __bc_halo__ { 0%,100% { transform: scale(0.82); opacity: .55; } 50% { transform: scale(1.15); opacity: .9; } }';
+      document.documentElement.appendChild(style);
+    }
     // documentElement (<html>) instead of body: fewer real-world apps put a
     // transform/filter on <html> than on <body> or a layout wrapper div, so
     // appending here is less likely to get silently clipped/repositioned by
@@ -198,9 +217,21 @@ function moveCursorTo(x: number, y: number): Promise<void> {
     if (!cursor) {
       cursor = document.createElement('div');
       cursor.id = '__bc_cursor__';
+      // width/height 0 so children (positioned at left:0/top:0 with their
+      // own negative margins) sit exactly on the point this transition
+      // drives — only left/top need to animate, not each child separately.
       // Slight overshoot easing (back-out) reads as a more natural glide
       // than linear/ease — same idea as native OS pointer/spring animations.
-      cursor.style.cssText = 'all:initial;position:fixed;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;background:rgba(255,255,255,0.95);border:2px solid #111;box-shadow:0 0 0 2px rgba(0,0,0,0.2),0 2px 6px rgba(0,0,0,0.35);z-index:2147483647;pointer-events:none;transition:left 0.35s cubic-bezier(0.34,1.56,0.64,1),top 0.35s cubic-bezier(0.34,1.56,0.64,1);left:-100px;top:-100px;';
+      cursor.style.cssText = 'all:initial;position:fixed;width:0;height:0;z-index:2147483647;pointer-events:none;left:-100px;top:-100px;transition:left 0.85s cubic-bezier(0.22,1,0.36,1),top 0.85s cubic-bezier(0.22,1,0.36,1);';
+      // A soft pulsing halo (signals "an AI is actively in control here")
+      // behind a small solid gradient dot marking the exact point — glassy/
+      // glowing rather than the old flat white-dot-with-black-border look.
+      // The dot itself has its own transform transition so a press/release
+      // squish (see pulseCursorPress) reads as a distinct, separate beat
+      // from the glide.
+      cursor.innerHTML =
+        '<div style="position:absolute;left:0;top:0;width:32px;height:32px;margin:-16px 0 0 -16px;border-radius:50%;background:radial-gradient(circle, rgba(139,92,246,0.35) 0%, rgba(139,92,246,0) 72%);animation:__bc_halo__ 1.4s ease-in-out infinite;"></div>' +
+        '<div data-bc-dot style="position:absolute;left:0;top:0;width:11px;height:11px;margin:-5.5px 0 0 -5.5px;border-radius:50%;background:linear-gradient(135deg,#a78bfa,#6366f1);box-shadow:0 0 0 3px rgba(255,255,255,0.95),0 3px 10px rgba(99,102,241,0.55);transition:transform 0.15s ease;"></div>';
       document.documentElement.appendChild(cursor);
     }
     // Force a layout flush so the transition animates from the cursor's
@@ -208,25 +239,48 @@ function moveCursorTo(x: number, y: number): Promise<void> {
     void cursor.offsetWidth;
     cursor.style.left = `${x}px`;
     cursor.style.top = `${y}px`;
-    setTimeout(resolve, 380);
+    setTimeout(resolve, 900);
   });
 }
 
+// Self-contained: injected via .toString(). A quick squish-down/release on
+// the cursor's inner dot, timed to real mousedown/mouseup — makes the
+// moment of contact readable as its own beat instead of the ripple being
+// the only signal that a click actually landed.
+function pulseCursorPress(pressed: boolean) {
+  const dot = document.querySelector('#__bc_cursor__ [data-bc-dot]') as HTMLElement | null;
+  if (dot) dot.style.transform = pressed ? 'scale(0.65)' : 'scale(1)';
+}
+
 // Self-contained: injected via .toString(). A brief ripple at the exact
-// point a click was dispatched — separate from the corner-bracket highlight
-// (which marks the element), this marks the precise pixel the mouse event
-// fired at, the same "tap feedback" pattern as native touch/click UIs.
-function showClickRipple(x: number, y: number, color: string) {
-  console.log('[browsercontrol] showClickRipple', x, y);
-  const ripple = document.createElement('div');
-  ripple.style.cssText = `all:initial;position:fixed;left:${x}px;top:${y}px;width:0;height:0;margin:0;border-radius:50%;background:${color};opacity:0.55;transform:translate(-50%,-50%);z-index:2147483647;pointer-events:none;transition:width 0.4s ease-out,height 0.4s ease-out,opacity 0.4s ease-out;`;
-  document.documentElement.appendChild(ripple);
-  requestAnimationFrame(() => {
-    ripple.style.width = '36px';
-    ripple.style.height = '36px';
-    ripple.style.opacity = '0';
-  });
-  setTimeout(() => ripple.remove(), 450);
+// point a click/type action landed — separate from the corner-bracket
+// highlight (which marks the element), this marks the precise pixel the
+// input event fired at, the same "tap feedback" pattern as native touch/
+// click UIs. `kind` picks the brand color: violet for click, cyan for type,
+// matching the accent used by the corresponding native CDP highlight.
+function showClickRipple(x: number, y: number, kind: 'click' | 'type') {
+  console.log('[browsercontrol] showClickRipple', x, y, kind);
+  if (!document.getElementById('__bc_ripple_style__')) {
+    const style = document.createElement('style');
+    style.id = '__bc_ripple_style__';
+    style.textContent = '@keyframes __bc_ring__ { 0% { transform: scale(0.35); opacity: .85; } 100% { transform: scale(1); opacity: 0; } }';
+    document.documentElement.appendChild(style);
+  }
+  const [a, b] = kind === 'type' ? ['#22d3ee', '#3b82f6'] : ['#a78bfa', '#6366f1'];
+  const wrap = document.createElement('div');
+  wrap.style.cssText = `all:initial;position:fixed;left:${x}px;top:${y}px;width:0;height:0;z-index:2147483647;pointer-events:none;`;
+  document.documentElement.appendChild(wrap);
+  // Two staggered rings expanding+fading, plus a small solid core — reads
+  // as a richer "pulse" than a single flat circle growing and fading.
+  for (let i = 0; i < 3; i++) {
+    const ring = document.createElement('div');
+    ring.style.cssText = `position:absolute;left:0;top:0;width:46px;height:46px;margin:-23px 0 0 -23px;border-radius:50%;border:2px solid ${a};box-shadow:0 0 14px 1px ${b}55;opacity:0;animation:__bc_ring__ 0.9s ease-out ${i * 0.18}s forwards;`;
+    wrap.appendChild(ring);
+  }
+  const core = document.createElement('div');
+  core.style.cssText = `position:absolute;left:0;top:0;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;background:linear-gradient(135deg,${a},${b});box-shadow:0 0 10px 3px ${b}aa;`;
+  wrap.appendChild(core);
+  setTimeout(() => wrap.remove(), 1300);
 }
 
 function removeAnnotationOverlay() {
@@ -252,6 +306,20 @@ function evalOnPage(target: chrome.debugger.Debuggee, expression: string, awaitP
       resolve();
     });
   });
+}
+
+// A bare `await new Promise(r => setTimeout(r, ms))` inside the service
+// worker's own JS realm doesn't count as "pending work" to Chrome's MV3
+// keep-alive heuristic — only in-flight chrome.* API calls do. A raw timer
+// pause here risks the service worker being torn down mid-wait (silently
+// dropping the whole dispatchCommand call, never resolving or rejecting,
+// until the daemon's outer HTTP timeout finally gives up with no useful
+// diagnostic). Routing the same delay through a real Runtime.evaluate
+// round-trip — the same mechanism moveCursorTo already relies on — keeps it
+// inside the "real CDP command in flight" category that's proven reliable
+// throughout this codebase.
+function pageDelay(target: chrome.debugger.Debuggee, ms: number): Promise<void> {
+  return evalOnPage(target, `new Promise((r) => setTimeout(r, ${ms}))`, true);
 }
 
 // backendDOMNodeId is only stable within one page's DOM — it's meaningless
@@ -366,6 +434,28 @@ const RELEVANT_STYLE_PROPS = new Set([
 // connection issue) — chrome.debugger's callback delivers these inline on
 // the result object rather than via chrome.runtime.lastError.
 type CdpResult<T> = T & { error?: { message: string } };
+
+// Input.dispatchKeyEvent needs a real (key, code, Windows virtual key code)
+// triple per key — there's no generic "just send Enter" shortcut in CDP.
+// `text` is only set for keys that should also fire a synthesized `char`
+// event (otherwise React/Vue's onKeyDown fires but no character is typed,
+// which is correct for Enter/Tab/arrows/Escape but wrong for Space).
+const KEY_DEFS: Record<string, { key: string; code: string; keyCode: number; text?: string }> = {
+  Enter: { key: 'Enter', code: 'Enter', keyCode: 13, text: '\r' },
+  Tab: { key: 'Tab', code: 'Tab', keyCode: 9 },
+  Escape: { key: 'Escape', code: 'Escape', keyCode: 27 },
+  Backspace: { key: 'Backspace', code: 'Backspace', keyCode: 8 },
+  Delete: { key: 'Delete', code: 'Delete', keyCode: 46 },
+  ArrowUp: { key: 'ArrowUp', code: 'ArrowUp', keyCode: 38 },
+  ArrowDown: { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40 },
+  ArrowLeft: { key: 'ArrowLeft', code: 'ArrowLeft', keyCode: 37 },
+  ArrowRight: { key: 'ArrowRight', code: 'ArrowRight', keyCode: 39 },
+  Space: { key: ' ', code: 'Space', keyCode: 32, text: ' ' },
+  Home: { key: 'Home', code: 'Home', keyCode: 36 },
+  End: { key: 'End', code: 'End', keyCode: 35 },
+  PageUp: { key: 'PageUp', code: 'PageUp', keyCode: 33 },
+  PageDown: { key: 'PageDown', code: 'PageDown', keyCode: 34 },
+};
 
 async function dispatchCommand(data: BrowserCommand & { id?: string }): Promise<Record<string, unknown>> {
   const cmd = data.cmd;
@@ -500,14 +590,26 @@ async function dispatchCommand(data: BrowserCommand & { id?: string }): Promise<
         evalOnPage(target, `(${moveCursorTo.toString()})(${x}, ${y})`, true),
         getAxInfoForNode(target, data.nodeId),
       ]);
-      await showNativeHighlight(target, box, { r: 34, g: 197, b: 94 });
+      await showNativeHighlight(target, box, { r: 99, g: 102, b: 241 });
+      // Brief "aim" pause with the cursor arrived and the target highlighted
+      // but before anything fires — without this the glide finishing and
+      // the actual click were visually simultaneous, reading as one instant
+      // blip instead of separate, followable steps.
+      await pageDelay(target, 350);
 
-      // Dispatch mousedown and mouseup
+      // Dispatch mousedown and mouseup, with a visible press/release squish
+      // on the cursor dot so the moment of contact is its own beat.
+      void evalOnPage(target, `(${pulseCursorPress.toString()})(true)`);
       await sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
-      void evalOnPage(target, `(${showClickRipple.toString()})(${x}, ${y}, '#22c55e')`);
+      void evalOnPage(target, `(${showClickRipple.toString()})(${x}, ${y}, 'click')`);
+      await pageDelay(target, 130);
+      void evalOnPage(target, `(${pulseCursorPress.toString()})(false)`);
       await sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
       await waitForStableDom(target);
-      setTimeout(() => hideNativeHighlight(target), 400);
+      // Hold the highlight visible for a beat after the click lands instead
+      // of snapping it away the instant the DOM settles — gives the eye time
+      // to register "this is what got clicked" before it disappears.
+      setTimeout(() => hideNativeHighlight(target), 1200);
 
       return { success: true, message: `Clicked at (${x}, ${y})`, role: axInfo.role, name: axInfo.name };
     }
@@ -536,16 +638,75 @@ async function dispatchCommand(data: BrowserCommand & { id?: string }): Promise<
         const cx = box.x + box.w / 2;
         const cy = box.y + box.h / 2;
         await evalOnPage(target, `(${moveCursorTo.toString()})(${cx}, ${cy})`, true);
-        await showNativeHighlight(target, box, { r: 59, g: 130, b: 246 });
-        setTimeout(() => hideNativeHighlight(target), 600);
+        await showNativeHighlight(target, box, { r: 6, g: 182, b: 212 });
+        // Same "arrived, about to act" beat as click — see the comment there.
+        await pageDelay(target, 350);
+        void evalOnPage(target, `(${showClickRipple.toString()})(${cx}, ${cy}, 'type')`);
+        setTimeout(() => hideNativeHighlight(target), 1200);
       }
     }
     // Input.insertText types into whichever element currently has focus, so
     // focusing first (above) is required — without a nodeId this relies on
-    // something already being focused (e.g. right after a click).
-    await sendCommand(target, 'Input.insertText', { text: data.text });
+    // something already being focused (e.g. right after a click). Typed one
+    // character at a time rather than as one bulk insertText call, so it
+    // reads as an actual typing motion instead of the whole string just
+    // appearing at once — Array.from (not a plain index loop) so multi-byte
+    // characters aren't split across surrogate pairs. The per-character
+    // delay shrinks for longer strings so a whole paragraph doesn't turn
+    // into a multi-second wait.
+    const chars = Array.from(data.text);
+    const perCharDelayMs = chars.length > 40 ? 15 : 35;
+    for (const ch of chars) {
+      await sendCommand(target, 'Input.insertText', { text: ch });
+      if (perCharDelayMs > 0) await pageDelay(target, perCharDelayMs);
+    }
     await waitForStableDom(target);
     return { success: true, message: `Typed "${data.text}"`, role: axInfo.role, name: axInfo.name };
+  }
+
+  // 4b. Press a single named key (Enter to submit a search/form, Tab, Escape,
+  // arrows, ...) — separate from `type`, which only inserts text and never
+  // synthesizes a keypress, so a search box filled via `type` never submits
+  // on its own the way a real user's Enter would.
+  if (cmd === 'press_key') {
+    const def = KEY_DEFS[data.key];
+    if (!def) return { error: `Unsupported key: "${data.key}"`, hint: `Supported keys: ${Object.keys(KEY_DEFS).join(', ')}.` };
+
+    let axInfo: { role?: string; name?: string } = {};
+    if (data.nodeId) {
+      await sendCommand(target, 'DOM.scrollIntoViewIfNeeded', { backendNodeId: data.nodeId });
+      const focusResult = await sendCommand<CdpResult<{}>>(target, 'DOM.focus', { backendNodeId: data.nodeId });
+      if (focusResult?.error) {
+        return { error: `Failed to focus node: ${focusResult.error.message}`, hint: "The node id may be stale, or the element isn't focusable. Take a fresh snapshot and retry." };
+      }
+      const [boxModel, resolvedAxInfo] = await Promise.all([
+        sendCommand<Protocol.DOM.GetBoxModelResponse>(target, 'DOM.getBoxModel', { backendNodeId: data.nodeId }),
+        getAxInfoForNode(target, data.nodeId),
+      ]);
+      axInfo = resolvedAxInfo;
+      if (boxModel?.model?.content) {
+        const box = quadToBox(boxModel.model.content);
+        const cx = box.x + box.w / 2;
+        const cy = box.y + box.h / 2;
+        await evalOnPage(target, `(${moveCursorTo.toString()})(${cx}, ${cy})`, true);
+        await showNativeHighlight(target, box, { r: 6, g: 182, b: 212 });
+        await pageDelay(target, 250);
+        void evalOnPage(target, `(${showClickRipple.toString()})(${cx}, ${cy}, 'type')`);
+        setTimeout(() => hideNativeHighlight(target), 900);
+      }
+    }
+
+    // rawKeyDown+keyUp always fire; the synthesized `char` event in between
+    // is what actually inserts a character for keys like Space — Enter/Tab/
+    // arrows/Escape have no `text` and so only fire key events, matching a
+    // real browser's behavior for non-printing keys.
+    await sendCommand(target, 'Input.dispatchKeyEvent', { type: 'rawKeyDown', windowsVirtualKeyCode: def.keyCode, nativeVirtualKeyCode: def.keyCode, key: def.key, code: def.code });
+    if (def.text) {
+      await sendCommand(target, 'Input.dispatchKeyEvent', { type: 'char', text: def.text, unmodifiedText: def.text });
+    }
+    await sendCommand(target, 'Input.dispatchKeyEvent', { type: 'keyUp', windowsVirtualKeyCode: def.keyCode, nativeVirtualKeyCode: def.keyCode, key: def.key, code: def.code });
+    await waitForStableDom(target);
+    return { success: true, message: `Pressed ${data.key}`, role: axInfo.role, name: axInfo.name };
   }
 
   // 5. Scroll
