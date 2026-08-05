@@ -4,7 +4,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { CallToolRequest } from "@modelcontextprotocol/sdk/types.js";
-import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, appendFileSync, readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { recordAndCheckFlow } from "./lib/sessionFlow.js";
 import type { ExtensionResponse } from "../shared/protocol.js";
@@ -52,6 +52,125 @@ try { mkdirSync(LOGS_DIR, { recursive: true }); } catch {}
 const LOG_FILE = join(LOGS_DIR, `session-${Date.now()}.jsonl`);
 
 const PREVIEW_CHARS = 300;
+
+// --- Per-domain skills ---
+// A skill is a durable, discoverable record of what the AI already knows
+// about a site (working selectors, role/name pairs, flow sequences) — the
+// point is to pay the exploration cost once (see browser_explore_flow) and
+// reuse it across every future session, instead of re-discovering the same
+// page from scratch every time (which is what happened before this existed:
+// an agent hand-wrote its own walkthrough.md/test-flow.json, which worked
+// but wasn't discoverable by a different session or a different agent).
+// Format deliberately mirrors Claude Code's own SKILL.md convention so it
+// reads the same way to both the user and the AI.
+const SKILLS_DIR = join(import.meta.dir, "..", "..", "skills");
+try { mkdirSync(SKILLS_DIR, { recursive: true }); } catch {}
+
+const SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9-_]*$/;
+const MAX_SKILL_CONTENT_CHARS = 50_000;
+
+interface SkillMeta {
+  name: string;
+  domains: string[];
+  description?: string;
+  path: string;
+}
+
+// The format is entirely self-produced (only browser_save_skill ever writes
+// it), so a small regex parser matching exactly that shape is enough —
+// no need for a real YAML dependency for a frontmatter block this narrow.
+function parseSkillFrontmatter(content: string): { name?: string; domains: string[]; description?: string } {
+  const fm = content.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
+  const domainsBlock = fm.match(/^domains:\s*\n((?:\s*-\s*.+\n?)+)/m)?.[1] ?? "";
+  const domains = domainsBlock
+    .split("\n")
+    .map((l) => l.trim().replace(/^-\s*/, ""))
+    .filter(Boolean);
+  return {
+    name: fm.match(/^name:\s*(.+)$/m)?.[1]?.trim(),
+    description: fm.match(/^description:\s*(.+)$/m)?.[1]?.trim(),
+    domains,
+  };
+}
+
+function listSkills(): SkillMeta[] {
+  let dirs: string[];
+  try {
+    dirs = readdirSync(SKILLS_DIR, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+  } catch {
+    return [];
+  }
+  const skills: SkillMeta[] = [];
+  for (const dir of dirs) {
+    const path = join(SKILLS_DIR, dir, "SKILL.md");
+    try {
+      const content = readFileSync(path, "utf8");
+      const meta = parseSkillFrontmatter(content);
+      skills.push({ name: meta.name ?? dir, domains: meta.domains, description: meta.description, path });
+    } catch {
+      // A manually-broken skill dir (missing/unreadable SKILL.md) shouldn't
+      // crash listing every other valid skill.
+    }
+  }
+  return skills;
+}
+
+function findSkillForHostname(hostname: string): SkillMeta | undefined {
+  return listSkills().find((s) => s.domains.includes(hostname));
+}
+
+function buildSkillFile(name: string, domains: string[], description: string | undefined, content: string): string {
+  const domainsYaml = domains.map((d) => `  - ${d}`).join("\n");
+  const frontmatter = [
+    "---",
+    `name: ${name}`,
+    "domains:",
+    domainsYaml,
+    ...(description ? [`description: ${description}`] : []),
+    "---",
+    "",
+  ].join("\n");
+  return frontmatter + content;
+}
+
+function saveSkill(args: { name?: unknown; domains?: unknown; description?: unknown; content?: unknown }): Record<string, unknown> {
+  const name = typeof args.name === "string" ? args.name : "";
+  if (!SKILL_NAME_PATTERN.test(name)) {
+    return { error: `Invalid skill name: "${name}"`, hint: "Use a lowercase slug (letters, numbers, hyphens, underscores only), e.g. \"github\" or \"mio-fe-admin-inquiries\"." };
+  }
+  const content = typeof args.content === "string" ? args.content : "";
+  if (content.length > MAX_SKILL_CONTENT_CHARS) {
+    return { error: `Skill content too long (${content.length} chars, max ${MAX_SKILL_CONTENT_CHARS})`, hint: "Trim to the essentials — selectors, role/name pairs, flow sequences, gotchas. This isn't meant to hold full page dumps." };
+  }
+
+  const path = join(SKILLS_DIR, name, "SKILL.md");
+  let domains: string[] | undefined = Array.isArray(args.domains) ? args.domains.filter((d): d is string => typeof d === "string") : undefined;
+  let description = typeof args.description === "string" ? args.description : undefined;
+
+  // Preserve existing domains/description on an update rather than
+  // erroring or silently dropping them — only require domains up front
+  // when there's no prior file to inherit them from. A partial update
+  // (content only) shouldn't wipe metadata the caller didn't mean to touch.
+  if ((!domains || domains.length === 0) || description === undefined) {
+    const existing = existsSync(path) ? parseSkillFrontmatter(readFileSync(path, "utf8")) : undefined;
+    if (!domains || domains.length === 0) {
+      if (existing) {
+        domains = existing.domains;
+      } else {
+        return { error: "Missing domains", hint: "New skills need at least one domain (e.g. [\"github.com\"]) so browser_navigate can find them. Omit only when updating a skill that already has domains set." };
+      }
+    }
+    if (description === undefined) description = existing?.description;
+  }
+
+  try {
+    mkdirSync(join(SKILLS_DIR, name), { recursive: true });
+    writeFileSync(path, buildSkillFile(name, domains, description, content));
+  } catch (e) {
+    return { error: `Failed to write skill: ${e instanceof Error ? e.message : String(e)}` };
+  }
+  return { success: true, message: `Saved skill "${name}"`, path, domains };
+}
 
 function writeCallLog(entry: { ts: string; cmd: string; args: ToolArgs; durationMs: number; approxChars: number; approxTokens: number; hasImage: boolean; isError: boolean; source: string; preview: string; elementRole?: string; elementName?: string }): void {
   try { appendFileSync(LOG_FILE, JSON.stringify(entry) + "\n"); } catch {}
@@ -219,7 +338,7 @@ async function executeCommand(cmd: string, args: Record<string, unknown> = {}): 
 // --- MCP Server Setup ---
 const mcpServer = new Server({
   name: "browsercontrol",
-  version: "1.8.0",
+  version: "1.9.0",
 }, {
   capabilities: { tools: {} },
   instructions: `
@@ -249,7 +368,12 @@ have a stale extension, and installing other automation tooling will not
 fix that and may not even be permitted in your environment.
 
 Workflow for interacting with a page:
-1. browser_navigate to the target URL.
+1. browser_navigate to the target URL. If the response includes a
+   skillHint field, a skill already exists for this domain — read that file
+   before doing any exploratory work; it may already have the selectors/
+   flow you're about to spend calls rediscovering. No hint doesn't mean no
+   skill could ever exist here — check browser_list_skills if you're not
+   sure, or if the user mentions a skill by name.
 2. browser_snapshot for a fast text list of interactive elements (id, role,
    name, value). If you're not fully confident which id is the right one
    (custom dropdowns, icon-only buttons, repeated labels), use
@@ -283,6 +407,14 @@ Workflow for interacting with a page:
    certainly using it wrong — switch to browser_run_flow. Both stop at the
    first step that doesn't resolve or fails, so a flow that goes wrong is
    never worse than the step-by-step equivalent.
+7. Once you've worked out how a site behaves (selectors, role/name pairs, a
+   working flow sequence), save it with browser_save_skill so a future
+   session doesn't pay the same discovery cost again — this is the whole
+   point of splitting browser_explore_flow (discovery) from
+   browser_run_flow (cheap reuse). Check browser_list_skills first: update
+   an existing skill for this domain rather than creating a near-duplicate.
+   You don't need to do this for a one-off task on a site you'll never
+   revisit — it's for anything you can reasonably expect to come back to.
 
 Tool selection — this is important for anything you intend to report as a
 verified UI behavior:
@@ -419,6 +551,16 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: { type: "object", properties: { tabId: { type: "number" } }, required: ["tabId"] }
       },
       {
+        name: "browser_list_skills",
+        description: "List saved skills — durable notes on how to work with a specific site (working selectors, role/name pairs, flow sequences), each declaring which domain(s) it applies to. Check this before creating a new skill (to update an existing one instead of duplicating it), or when the user references a skill by name (\"use the github skill\") without having navigated there yet. browser_navigate also auto-surfaces a matching skill via a skillHint field, so you don't usually need to call this just to check the current page.",
+        inputSchema: { type: "object", properties: {} }
+      },
+      {
+        name: "browser_save_skill",
+        description: "Create or update a skill — persist what you just learned about a site (selectors, role/name pairs, a working flow sequence, gotchas) so a future session doesn't have to re-discover it from scratch. This is what makes browser_explore_flow's discovery cost a one-time cost instead of a recurring one. `name` is a lowercase slug (e.g. \"github\", \"mio-fe-admin-inquiries\"); `domains` is required when creating a new skill (e.g. [\"github.com\"]) so browser_navigate can find it later, and can be omitted when updating one that already has domains set. This always overwrites the full file — check browser_list_skills or just read the existing skills/<name>/SKILL.md first if updating, and pass back the complete content, not a partial diff.",
+        inputSchema: { type: "object", properties: { name: { type: "string" }, domains: { type: "array", items: { type: "string" } }, description: { type: "string" }, content: { type: "string" } }, required: ["name", "content"] }
+      },
+      {
         name: "browser_snapshot",
         description: "Get the interactive elements on the page as a text list, filtered and deduplicated to save tokens. Each entry is {i, r, n, v?}: i=node id (pass to browser_click/browser_type/browser_inspect_element), r=role, n=accessible name, v=current value (omitted when empty). Fast and cheap, but you can't see WHERE on screen an id is. If you're not confident which id to click, use browser_visual_snapshot instead.",
         inputSchema: { type: "object", properties: {} }
@@ -516,14 +658,28 @@ async function handleToolCall(request: CallToolRequest): Promise<ToolCallRespons
   try {
     let result: CommandResult | string;
     switch (name) {
-      case "browser_navigate":
+      case "browser_navigate": {
         result = await executeCommand("navigate", { url: args?.url });
+        const url = typeof args?.url === "string" ? args.url : undefined;
+        if (url) {
+          try {
+            const skill = findSkillForHostname(new URL(url).hostname);
+            if (skill) result = { ...result, skillHint: `Skill available for this domain: ${skill.path} — read it before exploring.` };
+          } catch {}
+        }
         break;
+      }
       case "browser_list_tabs":
         result = await executeCommand("list_tabs");
         break;
       case "browser_switch_tab":
         result = await executeCommand("switch_tab", { tabId: args?.tabId });
+        break;
+      case "browser_list_skills":
+        result = { skills: listSkills() };
+        break;
+      case "browser_save_skill":
+        result = saveSkill(args ?? {});
         break;
       case "browser_snapshot":
         result = await executeCommand("snapshot");

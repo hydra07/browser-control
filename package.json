@@ -1,6 +1,6 @@
 {
   "name": "browsercontrol",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "Chrome extension + local MCP server for driving your everyday Chrome browser via CDP",
   "scripts": {
     "build": "tsc && bun run copy:assets",

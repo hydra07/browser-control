@@ -86,6 +86,19 @@ pick up source changes automatically.
 | `browser_network_request_detail` | Full headers + body for one request |
 | `browser_network_clear` | Clear the network log |
 | `browser_evaluate` | Run arbitrary JS — for reading state/setup, not for simulating clicks/typing |
+| `browser_list_skills` | List saved per-domain skills (name, domains, description) |
+| `browser_save_skill` | Create/update a skill — persist selectors/flows learned about a site so a future session doesn't rediscover it |
+
+**Per-domain skills**: a skill (`skills/<name>/SKILL.md`, format mirrors
+Claude Code's own `SKILL.md` convention) is a durable record of what the
+agent already knows about a site — the point is to pay `browser_explore_flow`'s
+discovery cost once and reuse it forever, instead of every session
+rediscovering the same page from scratch. `browser_navigate` auto-checks
+for a skill matching the domain and includes a `skillHint` in its response
+when one exists; `browser_list_skills`/`browser_save_skill` handle
+discovery and persistence explicitly. Unlike `logs/`/`screenshots/`,
+`skills/` is **not** gitignored — it's meant to be committed and shared,
+not ephemeral debug output.
 
 **Shared tab workspace**: "🤖 AI Workspace" is a two-way handoff, not just
 where tabs the agent opens end up — drag an already-open tab into that
