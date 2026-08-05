@@ -69,6 +69,8 @@ pick up source changes automatically.
 | Tool | Description |
 |---|---|
 | `browser_navigate` | Navigate to a URL |
+| `browser_list_tabs` | List tabs in the "🤖 AI Workspace" group, including ones the user dragged in themselves — flags `isNew` since the last check |
+| `browser_switch_tab` | Make an existing tab (from `browser_list_tabs`) the active one, instead of navigating fresh |
 | `browser_snapshot` | Flat, deduplicated text list of interactive elements (id, role, name, value) |
 | `browser_query_region` | Same idea, scoped to a CSS selector, returned as a nested tree so a field and its label are siblings |
 | `browser_visual_snapshot` | Whole-page snapshot plus a screenshot with a numbered box over every interactive element |
@@ -84,6 +86,16 @@ pick up source changes automatically.
 | `browser_network_request_detail` | Full headers + body for one request |
 | `browser_network_clear` | Clear the network log |
 | `browser_evaluate` | Run arbitrary JS — for reading state/setup, not for simulating clicks/typing |
+
+**Shared tab workspace**: "🤖 AI Workspace" is a two-way handoff, not just
+where tabs the agent opens end up — drag an already-open tab into that
+group yourself and `browser_list_tabs` is how the agent finds out (it flags
+`isNew: true` on anything added since it last checked, since MCP has no way
+to push a live notification into the agent's reasoning loop — it has to
+call the tool to find out). The extension's toolbar icon also gets a badge
+count as a human-visible cue that a drop was registered. Use
+`browser_switch_tab` to start working on a listed tab directly instead of
+navigating to the same URL fresh.
 
 `browser_click`/`browser_type`/`browser_press_key` glide a visible cursor to
 the target, pause, then act with a ripple + highlight — a multi-step,

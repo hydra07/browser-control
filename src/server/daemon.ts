@@ -219,14 +219,24 @@ async function executeCommand(cmd: string, args: Record<string, unknown> = {}): 
 // --- MCP Server Setup ---
 const mcpServer = new Server({
   name: "browsercontrol",
-  version: "1.7.0",
+  version: "1.8.0",
 }, {
   capabilities: { tools: {} },
   instructions: `
 BrowserControl drives a real Chrome tab (grouped as "🤖 AI Workspace") via
 your everyday browser's debugger, not a headless/isolated instance. All
-tools operate on a single shared tab — call browser_navigate first to
-establish it.
+tools operate on a single active tab at a time — establish it with either
+browser_navigate (a fresh tab/URL) or browser_switch_tab (an existing tab
+the user already has open, from browser_list_tabs).
+
+"🤖 AI Workspace" is a two-way handoff, not just where the tabs you open
+end up: the user can drag a tab they already have open into that group
+themselves, and browser_list_tabs is how you find out — it's the only
+notification channel, since there's no way for anything to interrupt you
+mid-turn. Call it at the start of a session and whenever the user
+references a tab they already have open ("check this", "I put a page
+there"); entries with isNew:true are ones added since you last checked.
+Use browser_switch_tab on the result to start working on it directly.
 
 If a tool call returns "Unknown command: <name>" with a hint about a
 version mismatch: this means the Chrome extension loaded in the browser is
@@ -399,6 +409,16 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] }
       },
       {
+        name: "browser_list_tabs",
+        description: "List tabs currently in the \"🤖 AI Workspace\" tab group — including tabs the USER dragged in themselves, not just the one you navigated to. Each entry has isNew:true if it wasn't there the last time you called this. Call this at the start of a session, or whenever the user references a tab they already have open (\"check this\", \"I put a page there\") — that's the only way you'll find out about it, since there's no other notification channel. Use browser_switch_tab to start working on one of the results.",
+        inputSchema: { type: "object", properties: {} }
+      },
+      {
+        name: "browser_switch_tab",
+        description: "Make an existing tab (from browser_list_tabs) the active one for all subsequent commands (browser_snapshot, browser_click, etc.), instead of browser_navigate-ing to the same URL fresh. Use this to start working on a tab the user handed you.",
+        inputSchema: { type: "object", properties: { tabId: { type: "number" } }, required: ["tabId"] }
+      },
+      {
         name: "browser_snapshot",
         description: "Get the interactive elements on the page as a text list, filtered and deduplicated to save tokens. Each entry is {i, r, n, v?}: i=node id (pass to browser_click/browser_type/browser_inspect_element), r=role, n=accessible name, v=current value (omitted when empty). Fast and cheap, but you can't see WHERE on screen an id is. If you're not confident which id to click, use browser_visual_snapshot instead.",
         inputSchema: { type: "object", properties: {} }
@@ -498,6 +518,12 @@ async function handleToolCall(request: CallToolRequest): Promise<ToolCallRespons
     switch (name) {
       case "browser_navigate":
         result = await executeCommand("navigate", { url: args?.url });
+        break;
+      case "browser_list_tabs":
+        result = await executeCommand("list_tabs");
+        break;
+      case "browser_switch_tab":
+        result = await executeCommand("switch_tab", { tabId: args?.tabId });
         break;
       case "browser_snapshot":
         result = await executeCommand("snapshot");

@@ -43,7 +43,9 @@ export type BrowserCommand =
   | { cmd: 'inspect_element'; nodeId: number }
   | { cmd: 'evaluate'; expression: string }
   | { cmd: 'run_flow'; steps: FlowStep[] }
-  | { cmd: 'explore_flow'; steps: FlowStep[] };
+  | { cmd: 'explore_flow'; steps: FlowStep[] }
+  | { cmd: 'list_tabs' }
+  | { cmd: 'switch_tab'; tabId: number };
 
 // What background.ts sends back over the WebSocket for every request,
 // success or failure — the shape daemon.ts's /execute and executeCommand()

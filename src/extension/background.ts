@@ -15,6 +15,35 @@ const EXTENSION_VERSION = chrome.runtime.getManifest().version;
 let activeTabId: number | null = null;
 let isDebuggerAttached = false;
 
+// Which tabs in the "🤖 AI Workspace" group browser_list_tabs has already
+// reported — lets it flag tabs the user just dragged in as isNew:true
+// without the AI having to remember what it saw last time itself. Reset
+// (replaced, not merged) on every browser_list_tabs call to the current
+// tab set, so a closed-then-reopened tab with a new id is treated as new
+// again rather than leaking stale ids forever.
+let seenTabIds = new Set<number>();
+// Drives the toolbar badge — the human-visible half of the "user dropped a
+// tab in" signal, since there's no way to push a live notification into
+// the AI's own reasoning loop (MCP is pull-based; the AI only learns
+// something when it calls a tool). Cleared when browser_list_tabs runs.
+let unseenTabCount = 0;
+
+// chrome.action requires "action" in manifest.json to exist at all — see
+// the badge-clearing code in the 'list_tabs' dispatchCommand branch and the
+// chrome.tabs.onUpdated listener below for where this is actually driven.
+chrome.tabs.onUpdated.addListener(async (_tabId, changeInfo) => {
+  if (changeInfo.groupId == null || changeInfo.groupId < 0) return;
+  try {
+    const group = await chrome.tabGroups.get(changeInfo.groupId);
+    if (group.title !== GROUP_NAME) return;
+  } catch {
+    return;
+  }
+  unseenTabCount++;
+  chrome.action.setBadgeBackgroundColor({ color: '#6366f1' });
+  chrome.action.setBadgeText({ text: String(unseenTabCount) });
+});
+
 type AXNode = Protocol.Accessibility.AXNode;
 type SnapshotEntry = { i?: number; r?: string; n?: string; v?: string; children?: SnapshotEntry[] };
 
@@ -901,6 +930,63 @@ async function dispatchCommand(data: BrowserCommand & { id?: string }): Promise<
   // 1. Session Initialization (navigate)
   if (cmd === 'navigate') {
     return await handleNavigate(data.url);
+  }
+
+  // 1b. list_tabs / switch_tab: the "🤖 AI Workspace" tab group as a shared
+  // handoff surface — the user drags tabs into it, the AI discovers them
+  // here instead of only ever seeing the one tab it navigated to itself.
+  // Neither needs an active CDP session (they're chrome.tabs/chrome.tabGroups
+  // queries, not CDP), and both must work even before any navigate has
+  // happened — a user might create the group and drop tabs in first, then
+  // ask the AI to look. So both run here, before the activeTabId guard.
+  if (cmd === 'list_tabs') {
+    const groups = await chrome.tabGroups.query({ title: GROUP_NAME });
+    if (groups.length === 0) return { tabs: [] };
+    const tabs = await chrome.tabs.query({ groupId: groups[0].id });
+    const result = tabs
+      .filter((t) => t.id != null)
+      .map((t) => ({
+        tabId: t.id!,
+        url: t.url,
+        title: t.title,
+        active: t.id === activeTabId,
+        isNew: !seenTabIds.has(t.id!),
+      }));
+    // Replaced (not merged) so a closed tab's id doesn't linger forever,
+    // and cleared every call so the badge/isNew signal never re-fires for
+    // the same tab twice.
+    seenTabIds = new Set(result.map((t) => t.tabId));
+    unseenTabCount = 0;
+    chrome.action.setBadgeText({ text: '' });
+    return { tabs: result };
+  }
+
+  if (cmd === 'switch_tab') {
+    try {
+      await chrome.tabs.get(data.tabId);
+    } catch {
+      return { error: `No tab with id ${data.tabId}`, hint: "Call browser_list_tabs again — it may have been closed." };
+    }
+    // isDebuggerAttached is a single global flag, not per-tab — it was safe
+    // as long as handleNavigate was the only way to change activeTabId
+    // (and it already resets this flag on stale-tab recovery). Switching to
+    // a DIFFERENT valid tab is a second way that flag can go stale: leave it
+    // true and attachDebuggerIfNeeded would skip attaching to the new tab
+    // entirely, since it thinks a debugger is already attached (to the old
+    // one). Detach from the old tab and reset so the next command properly
+    // attaches CDP to the tab we're actually switching to.
+    if (activeTabId && activeTabId !== data.tabId && isDebuggerAttached) {
+      try { await chrome.debugger.detach({ tabId: activeTabId }); } catch {}
+    }
+    activeTabId = data.tabId;
+    isDebuggerAttached = false;
+    const tab = await chrome.tabs.update(data.tabId, { active: true });
+    if (tab?.windowId != null) {
+      chrome.windows.update(tab.windowId, { focused: true }, () => {
+        if (chrome.runtime.lastError) console.log('Could not focus window:', chrome.runtime.lastError.message);
+      });
+    }
+    return { success: true, message: `Switched to tab ${data.tabId}`, url: tab?.url, title: tab?.title };
   }
 
   // Ensure we have an active session
