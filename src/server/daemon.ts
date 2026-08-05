@@ -259,12 +259,20 @@ Workflow for interacting with a page:
    drive it one browser_click/browser_type call at a time — that costs one
    round trip (and one reasoning pass) per step. Instead, write the whole
    sequence as steps referencing elements by role+name (from the snapshot)
-   and send it in one browser_run_flow call. If you're not confident about
-   the role/name guesses (unfamiliar UI), validate with browser_explore_flow
-   first — it runs the same steps for real but reports a snapshot after
-   every step, so you can fix a wrong guess before it costs a whole flow
-   run. Both stop at the first step that doesn't resolve or fails, so a
-   flow that goes wrong is never worse than the step-by-step equivalent.
+   and send it in one browser_run_flow call. Default to browser_run_flow,
+   not browser_explore_flow — browser_explore_flow is for validating ONE
+   uncertain sequence against an unfamiliar UI, not a general substitute for
+   browser_run_flow. Repeatedly calling browser_explore_flow instead of
+   browser_run_flow once you already know the flow works is the single
+   biggest token cost this tool has measured in practice — on a real
+   multi-scenario test session, 10 browser_explore_flow calls alone
+   accounted for over 75% of the session's total tool-call tokens, some
+   individual calls running into the tens of thousands of tokens against a
+   data-heavy page. If most of your steps in a session are
+   browser_explore_flow rather than browser_run_flow, you are almost
+   certainly using it wrong — switch to browser_run_flow. Both stop at the
+   first step that doesn't resolve or fails, so a flow that goes wrong is
+   never worse than the step-by-step equivalent.
 
 Tool selection — this is important for anything you intend to report as a
 verified UI behavior:
@@ -427,7 +435,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "browser_explore_flow",
-        description: "Same engine as browser_run_flow, but returns a snapshot after EVERY step instead of just a final one — use this ONCE to validate a best-guess sequence of steps against an unfamiliar UI (confirm role/name guesses, see intermediate states) before committing to the leaner browser_run_flow for repeat runs. Important: this is NOT a safe preview — there is no way to know what a later step's UI looks like without actually executing the earlier steps for real (submitting a form, following a link). Every step here has the same real side effects as browser_click/browser_type. The same destructive-action block/confirmRisky mechanism as browser_run_flow applies.",
+        description: "Same engine as browser_run_flow, but each step's result includes a `delta` (added/changed/removed elements versus the previous step, not a full page snapshot) — use this ONCE to validate a best-guess sequence of steps against an unfamiliar UI (confirm role/name guesses, see what each step actually changed) before committing to browser_run_flow for repeat runs. Do NOT reach for this as your default flow tool — once a sequence is validated, switch to browser_run_flow; repeated browser_explore_flow calls for flows you already know work is the most common way this tool burns tokens unnecessarily. Important: this is NOT a safe preview — there is no way to know what a later step's UI looks like without actually executing the earlier steps for real (submitting a form, following a link). Every step here has the same real side effects as browser_click/browser_type. The same destructive-action block/confirmRisky mechanism as browser_run_flow applies.",
         inputSchema: FLOW_STEPS_SCHEMA,
       },
       {

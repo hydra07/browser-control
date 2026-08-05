@@ -77,7 +77,7 @@ pick up source changes automatically.
 | `browser_type` | Focus an element by id and type — real, trusted key events |
 | `browser_press_key` | Press Enter/Tab/Escape/arrows/etc — submits a search/form after `browser_type`, which never does on its own |
 | `browser_run_flow` | Run a list of click/type/press_key/wait_for/assert_text/scroll steps in ONE call instead of one round trip per step |
-| `browser_explore_flow` | Same engine as `browser_run_flow`, but returns a snapshot after every step — for validating a best-guess flow once before committing to the leaner `browser_run_flow` |
+| `browser_explore_flow` | Same engine as `browser_run_flow`, but each step reports a delta (added/changed/removed vs. the previous step) — for validating a best-guess flow once before switching to the leaner `browser_run_flow` |
 | `browser_scroll` | Scroll by a pixel delta |
 | `browser_screenshot` | Viewport or full-page screenshot |
 | `browser_network_requests` | List XHR/Fetch/Document/WebSocket requests since the last navigate/clear |
@@ -104,11 +104,18 @@ fails, and returns a compact report plus a final snapshot. A step whose
 target's accessible name looks destructive/irreversible (delete, cancel,
 sign out, pay, confirm, ...) is **blocked by default**; re-send that step
 with `confirmRisky: true` — after confirming with the user — to proceed.
-`browser_explore_flow` runs the exact same engine but returns a snapshot
-after every step instead of just the last one, meant to validate a
-best-guess sequence once before committing to the leaner `browser_run_flow`
-for repeat runs. Both have real side effects — there is no safe way to
-preview a later step without actually executing the earlier ones.
+`browser_explore_flow` runs the exact same engine but each step's result
+includes a delta — elements added/changed/removed versus the previous
+step, not a full page re-dump — meant to validate a best-guess sequence
+once before switching to the leaner `browser_run_flow` for repeat runs.
+Measured on a real multi-scenario test session: returning a full snapshot
+after every step (the original design) cost 87k+ tokens across just 10
+calls — 77% of that session's entire tool-call spend, with individual
+calls running into the tens of thousands of tokens against a data-heavy
+page — which is why per-step output is a diff, not a snapshot. Both
+`browser_run_flow` and `browser_explore_flow` have real side effects —
+there is no safe way to preview a later step without actually executing
+the earlier ones.
 
 ## Observability
 

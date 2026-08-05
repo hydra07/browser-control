@@ -692,6 +692,13 @@ function describeStepTarget(step: FlowStep): string {
   return 'the currently focused element';
 }
 
+type SnapshotDelta = {
+  added: SnapshotEntry[];
+  changed: SnapshotEntry[];
+  removed: Array<{ role?: string; name?: string }>;
+  truncated?: boolean;
+};
+
 type FlowStepResult = {
   index: number;
   action: string;
@@ -699,7 +706,7 @@ type FlowStepResult = {
   ambiguous?: boolean;
   success: boolean;
   error?: string;
-  snapshot?: SnapshotEntry[];
+  delta?: SnapshotDelta;
 }
 
 type FlowReport = {
@@ -714,10 +721,55 @@ type FlowReport = {
 const MAX_FLOW_STEPS = 20;
 const WAIT_FOR_POLL_MS = 250;
 const WAIT_FOR_DEFAULT_TIMEOUT_MS = 3000;
+// Real-world measurement (a 10-call explore_flow session against a
+// data-heavy admin list/search screen): returning a FULL page snapshot
+// after every step cost 87k+ tokens on its own — 77% of that session's
+// entire tool-call token spend, escalating up to ~28k tokens for a single
+// call as the page accumulated more rows. Most of that was the SAME static
+// content (nav, sidebar, footer, unrelated rows) re-emitted on every step.
+// A diff against the previous step — what's new, changed, or gone — is
+// both smaller AND more directly useful (it answers "what did this step
+// actually do?" instead of making the caller re-diff two huge snapshots
+// themselves), capped defensively in case a single step still changes an
+// unusually large number of elements (e.g. a big table re-rendering).
+const MAX_DELTA_ENTRIES = 30;
 
 async function takeFlowSnapshot(target: chrome.debugger.Debuggee): Promise<SnapshotEntry[]> {
   const axTreeResult = await sendCommand<Protocol.Accessibility.GetFullAXTreeResponse>(target, 'Accessibility.getFullAXTree', {});
   return buildSnapshotNodes(axTreeResult?.nodes || []);
+}
+
+function snapshotEntryKey(e: SnapshotEntry): string {
+  return `${e.r ?? ''}::${e.n ?? ''}`;
+}
+
+// Compares two flat snapshots by role+name identity (the same identity
+// basis replay.ts and resolveStepTarget already use, since backendDOMNodeId
+// isn't stable across a re-render). `prev` undefined (the very first step)
+// reports everything present as "added" — there's nothing to diff against.
+function diffSnapshots(prev: SnapshotEntry[] | undefined, curr: SnapshotEntry[]): SnapshotDelta {
+  const prevMap = new Map((prev ?? []).map((e) => [snapshotEntryKey(e), e]));
+  const currMap = new Map(curr.map((e) => [snapshotEntryKey(e), e]));
+
+  const added: SnapshotEntry[] = [];
+  const changed: SnapshotEntry[] = [];
+  for (const [key, entry] of currMap) {
+    const prevEntry = prevMap.get(key);
+    if (!prevEntry) added.push(entry);
+    else if (prevEntry.v !== entry.v) changed.push(entry);
+  }
+  const removed: Array<{ role?: string; name?: string }> = [];
+  for (const [key, entry] of prevMap) {
+    if (!currMap.has(key)) removed.push({ role: entry.r, name: entry.n });
+  }
+
+  const truncated = added.length > MAX_DELTA_ENTRIES || changed.length > MAX_DELTA_ENTRIES || removed.length > MAX_DELTA_ENTRIES;
+  return {
+    added: added.slice(0, MAX_DELTA_ENTRIES),
+    changed: changed.slice(0, MAX_DELTA_ENTRIES),
+    removed: removed.slice(0, MAX_DELTA_ENTRIES),
+    ...(truncated ? { truncated: true } : {}),
+  };
 }
 
 // The shared engine behind run_flow (opts.captureEachStep: false — one
@@ -742,6 +794,12 @@ async function runFlowSteps(target: chrome.debugger.Debuggee, steps: FlowStep[],
 
   const stop = (index: number, reason: FlowReport['reason'], message: string): FlowReport =>
     ({ success: false, stoppedAtStep: index, reason, message, steps: results });
+
+  // Baseline to diff step 0 against — without this, step 0's delta would
+  // report the ENTIRE page as "added" (nothing came before it), which is
+  // exactly the full-snapshot cost this diffing exists to avoid.
+  let previousSnapshot: SnapshotEntry[] | undefined;
+  if (opts.captureEachStep) previousSnapshot = await takeFlowSnapshot(target);
 
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
@@ -817,14 +875,23 @@ async function runFlowSteps(target: chrome.debugger.Debuggee, steps: FlowStep[],
       success,
       error: errorMessage,
     });
-    if (opts.captureEachStep) results[results.length - 1].snapshot = await takeFlowSnapshot(target);
+    if (opts.captureEachStep) {
+      // What changed as a result of THIS step, not a full re-dump of the
+      // page — the same content (nav, sidebar, unrelated rows) doesn't need
+      // to be re-sent every step just because a handful of things moved.
+      const currentSnapshot = await takeFlowSnapshot(target);
+      results[results.length - 1].delta = diffSnapshots(previousSnapshot, currentSnapshot);
+      previousSnapshot = currentSnapshot;
+    }
 
     if (!success) {
       return stop(i, step.action === 'assert_text' ? 'assert_failed' : 'action_failed', `Step ${i} (${step.action}) failed: ${errorMessage}`);
     }
   }
 
-  const finalSnapshot = opts.captureEachStep ? results[results.length - 1]?.snapshot : await takeFlowSnapshot(target);
+  // Reuse the last step's already-captured snapshot instead of a redundant
+  // extra AX-tree fetch when explore_flow already has it fresh.
+  const finalSnapshot = opts.captureEachStep && previousSnapshot ? previousSnapshot : await takeFlowSnapshot(target);
   return { success: true, steps: results, finalSnapshot };
 }
 
