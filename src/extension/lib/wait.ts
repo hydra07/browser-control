@@ -1,3 +1,5 @@
+import { sendCommand } from './cdp.js';
+
 // Waits for the page to settle (DOM stops mutating) after an action, instead
 // of a fixed sleep. Bounded by timeoutMs so a page that never quiesces
 // (animations, polling widgets) can't hang a command forever.
@@ -31,14 +33,11 @@ export async function waitForStableDom(
     // Extension-side guard in case the debugger command itself never calls back
     // (e.g. target navigated away mid-evaluation).
     const guard = setTimeout(resolve, timeoutMs + 500);
-    chrome.debugger.sendCommand(
-      target,
-      'Runtime.evaluate',
-      { expression, awaitPromise: true, returnByValue: true },
-      () => {
+    void sendCommand(target, 'Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })
+      .catch(() => {})
+      .finally(() => {
         clearTimeout(guard);
         resolve();
-      },
-    );
+      });
   });
 }

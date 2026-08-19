@@ -1,4 +1,5 @@
 import type { Protocol } from 'devtools-protocol';
+import { sendCommand, errorMessage } from './cdp.js';
 
 export interface NetworkEntry {
   requestId: string;
@@ -118,10 +119,13 @@ export async function getNetworkRequestDetail(
     return { error: 'Unknown requestId', hint: 'Call browser_network_requests again — the buffer may have rotated it out, or it belongs to a request from before the last navigate/network_clear.' };
   }
 
-  type BodyResult = Protocol.Network.GetResponseBodyResponse & { error?: { message: string } };
-  const bodyResult = await new Promise<BodyResult | undefined>((resolve) => {
-    chrome.debugger.sendCommand(target, 'Network.getResponseBody', { requestId }, (result) => resolve(result as unknown as BodyResult | undefined));
-  });
+  let bodyResult: Protocol.Network.GetResponseBodyResponse | undefined;
+  let bodyError: string | undefined;
+  try {
+    bodyResult = await sendCommand(target, 'Network.getResponseBody', { requestId });
+  } catch (e) {
+    bodyError = errorMessage(e);
+  }
 
   let body: string | undefined = bodyResult?.body;
   let bodyTruncated = false;
@@ -136,7 +140,7 @@ export async function getNetworkRequestDetail(
     bodyBase64Encoded: bodyResult?.base64Encoded,
     bodyTruncated,
     bodyUnavailable: bodyResult?.body === undefined
-      ? (bodyResult?.error?.message ?? 'Body not available (non-text response, or evicted by Chrome).')
+      ? (bodyError ?? 'Body not available (non-text response, or evicted by Chrome).')
       : undefined,
   };
 }
