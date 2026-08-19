@@ -9,6 +9,9 @@
 // instead of waiting for a periodic alarm to notice.
 
 import type { BrowserCommand } from '../shared/protocol.js';
+import { startCapture, stopCapture } from './lib/capture.js';
+import { handleBatchCrawlCommand } from './lib/batch.js';
+import { handleWebSearchCommand } from './lib/search.js';
 
 type IncomingMessage = BrowserCommand & { id: string };
 
@@ -43,6 +46,37 @@ function connect(): void {
       console.error('[offscreen] Received malformed message:', errorMessage(e));
       return;
     }
+
+    // start_capture/stop_capture and batch_crawl/web_search need a real DOM
+    // context (MediaRecorder/DOMParser), which only exists here in offscreen,
+    // not in the service worker. Handle them right here.
+    if (data.cmd === 'start_capture' || data.cmd === 'stop_capture') {
+      try {
+        const result = data.cmd === 'start_capture' ? await startCapture() : await stopCapture();
+        ws?.send(JSON.stringify({ id: data.id, type: 'result', data: result }));
+      } catch (e: unknown) {
+        console.error('[offscreen] Capture command failed:', errorMessage(e));
+        ws?.send(JSON.stringify({ id: data.id, type: 'error', error: errorMessage(e) }));
+      }
+      return;
+    }
+
+    // Same reason as above: both need fetch()+DOMParser, which this
+    // document has and the service worker doesn't.
+    if (data.cmd === 'batch_crawl' || data.cmd === 'web_search') {
+      try {
+        const result =
+          data.cmd === 'batch_crawl'
+            ? await handleBatchCrawlCommand(data)
+            : await handleWebSearchCommand(data);
+        ws?.send(JSON.stringify({ id: data.id, type: 'result', data: result }));
+      } catch (e: unknown) {
+        console.error(`[offscreen] ${data.cmd} failed:`, errorMessage(e));
+        ws?.send(JSON.stringify({ id: data.id, type: 'error', error: errorMessage(e) }));
+      }
+      return;
+    }
+
     try {
       const result = await chrome.runtime.sendMessage({ target: 'background', payload: data });
       ws?.send(JSON.stringify({ id: data.id, type: 'result', data: result }));

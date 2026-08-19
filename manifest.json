@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BrowserControl Agent",
-  "version": "1.8.0",
+  "version": "1.12.1",
   "description": "AI Workspace extension for controlling browser via CDP",
   "permissions": [
     "tabs",

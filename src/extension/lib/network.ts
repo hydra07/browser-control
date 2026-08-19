@@ -1,5 +1,5 @@
-import type { Protocol } from 'devtools-protocol';
-import { sendCommand, errorMessage } from './cdp.js';
+import type { Protocol } from "devtools-protocol";
+import { sendCommand, errorMessage } from "./cdp.js";
 
 export interface NetworkEntry {
   requestId: string;
@@ -22,7 +22,13 @@ export interface NetworkEntry {
 // XHR/Fetch/Document/WebSocket are what an action button actually triggers.
 // Everything else (images, css, fonts, scripts) is page-load noise that would
 // otherwise drown out the one API call the agent is looking for.
-const DEFAULT_RESOURCE_TYPES = new Set(['XHR', 'Fetch', 'Document', 'WebSocket', 'EventSource']);
+const DEFAULT_RESOURCE_TYPES = new Set([
+  "XHR",
+  "Fetch",
+  "Document",
+  "WebSocket",
+  "EventSource",
+]);
 const MAX_ENTRIES = 300;
 const MAX_BODY_CHARS = 20000;
 
@@ -36,23 +42,25 @@ function evictIfNeeded(): void {
   }
 }
 
-export function installNetworkCollector(getActiveTabId: () => number | null): void {
+export function installNetworkCollector(
+  getActiveTabId: () => number | null,
+): void {
   chrome.debugger.onEvent.addListener((source, method, params) => {
     if (!source.tabId || source.tabId !== getActiveTabId()) return;
 
-    if (method === 'Network.requestWillBeSent') {
+    if (method === "Network.requestWillBeSent") {
       const p = params as Protocol.Network.RequestWillBeSentEvent;
       entries.set(p.requestId, {
         requestId: p.requestId,
         url: p.request.url,
         method: p.request.method,
-        resourceType: p.type ?? 'Other',
+        resourceType: p.type ?? "Other",
         requestHeaders: p.request.headers,
         postData: p.request.postData,
         timestamp: Date.now(),
       });
       evictIfNeeded();
-    } else if (method === 'Network.responseReceived') {
+    } else if (method === "Network.responseReceived") {
       const p = params as Protocol.Network.ResponseReceivedEvent;
       const entry = entries.get(p.requestId);
       if (entry) {
@@ -61,7 +69,7 @@ export function installNetworkCollector(getActiveTabId: () => number | null): vo
         entry.mimeType = p.response.mimeType;
         entry.responseHeaders = p.response.headers;
       }
-    } else if (method === 'Network.loadingFailed') {
+    } else if (method === "Network.loadingFailed") {
       const p = params as Protocol.Network.LoadingFailedEvent;
       const entry = entries.get(p.requestId);
       if (entry) {
@@ -69,7 +77,7 @@ export function installNetworkCollector(getActiveTabId: () => number | null): vo
         entry.errorText = p.errorText;
         entry.durationMs = Date.now() - entry.timestamp;
       }
-    } else if (method === 'Network.loadingFinished') {
+    } else if (method === "Network.loadingFinished") {
       const p = params as Protocol.Network.LoadingFinishedEvent;
       const entry = entries.get(p.requestId);
       if (entry) {
@@ -88,9 +96,10 @@ export function listNetworkRequests(
   opts: { resourceTypes?: string[]; filter?: string; limit?: number } = {},
 ): Array<Partial<NetworkEntry>> {
   const limit = opts.limit ?? 50;
-  const allowed = opts.resourceTypes && opts.resourceTypes.length > 0
-    ? new Set(opts.resourceTypes)
-    : DEFAULT_RESOURCE_TYPES;
+  const allowed =
+    opts.resourceTypes && opts.resourceTypes.length > 0
+      ? new Set(opts.resourceTypes)
+      : DEFAULT_RESOURCE_TYPES;
 
   return Array.from(entries.values())
     .filter((e) => allowed.has(e.resourceType))
@@ -116,20 +125,25 @@ export async function getNetworkRequestDetail(
 ): Promise<Record<string, unknown>> {
   const entry = entries.get(requestId);
   if (!entry) {
-    return { error: 'Unknown requestId', hint: 'Call browser_network_requests again — the buffer may have rotated it out, or it belongs to a request from before the last navigate/network_clear.' };
+    return {
+      error: "Unknown requestId",
+      hint: "Call browser_network_requests again — the buffer may have rotated it out, or it belongs to a request from before the last navigate/network_clear.",
+    };
   }
 
   let bodyResult: Protocol.Network.GetResponseBodyResponse | undefined;
   let bodyError: string | undefined;
   try {
-    bodyResult = await sendCommand(target, 'Network.getResponseBody', { requestId });
+    bodyResult = await sendCommand(target, "Network.getResponseBody", {
+      requestId,
+    });
   } catch (e) {
     bodyError = errorMessage(e);
   }
 
   let body: string | undefined = bodyResult?.body;
   let bodyTruncated = false;
-  if (typeof body === 'string' && body.length > MAX_BODY_CHARS) {
+  if (typeof body === "string" && body.length > MAX_BODY_CHARS) {
     body = body.slice(0, MAX_BODY_CHARS);
     bodyTruncated = true;
   }
@@ -139,8 +153,10 @@ export async function getNetworkRequestDetail(
     body,
     bodyBase64Encoded: bodyResult?.base64Encoded,
     bodyTruncated,
-    bodyUnavailable: bodyResult?.body === undefined
-      ? (bodyError ?? 'Body not available (non-text response, or evicted by Chrome).')
-      : undefined,
+    bodyUnavailable:
+      bodyResult?.body === undefined
+        ? (bodyError ??
+          "Body not available (non-text response, or evicted by Chrome).")
+        : undefined,
   };
 }

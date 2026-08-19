@@ -7,6 +7,10 @@ import type { CallToolRequest } from "@modelcontextprotocol/sdk/types.js";
 import { mkdirSync, writeFileSync, appendFileSync, readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { recordAndCheckFlow } from "./lib/sessionFlow.js";
+import { DOCS_FILE, appendContentToDocsFile } from "./lib/docs.js";
+import { startJob, getJobStatusText, jobExists, MAX_JOB_TASKS, MAX_CONCURRENT_JOBS } from "./lib/jobs.js";
+import type { JobTaskInput } from "./lib/jobs.js";
+import { startDeepCrawl, getDeepCrawlStatusText, crawlExists, MAX_CRAWL_DEPTH, MAX_CRAWL_PAGES, MAX_CONCURRENT_CRAWLS } from "./lib/crawl.js";
 import type { ExtensionResponse } from "../shared/protocol.js";
 
 // The daemon never validates a tool's `arguments` against a schema beyond
@@ -33,15 +37,31 @@ console.info = console.error;
 // clients (e.g. Claude Code) known to handle image content blocks properly.
 const INLINE_IMAGES = process.env.BROWSERCONTROL_INLINE_IMAGES === "true";
 
-const SCREENSHOTS_DIR = join(import.meta.dir, "..", "..", "screenshots");
-try { mkdirSync(SCREENSHOTS_DIR, { recursive: true }); } catch {}
+// data/images and data/videos replace the old top-level screenshots/ dir —
+// one place for everything browser_screenshot/browser_snapshot({visual:true})/
+// browser_start_recording+browser_stop_recording write to disk.
+const DATA_DIR = join(import.meta.dir, "..", "..", "data");
+const IMAGES_DIR = join(DATA_DIR, "images");
+const VIDEOS_DIR = join(DATA_DIR, "videos");
+try { mkdirSync(IMAGES_DIR, { recursive: true }); } catch {}
+try { mkdirSync(VIDEOS_DIR, { recursive: true }); } catch {}
 
 function saveScreenshotToFile(dataBase64: string, format: string): string {
   const ext = format === "png" ? "png" : "jpg";
-  const filePath = join(SCREENSHOTS_DIR, `screenshot-${Date.now()}.${ext}`);
+  const filePath = join(IMAGES_DIR, `screenshot-${Date.now()}.${ext}`);
   writeFileSync(filePath, Buffer.from(dataBase64, "base64"));
   return filePath;
 }
+
+function saveVideoToFile(dataBase64: string, format: string): string {
+  const filePath = join(VIDEOS_DIR, `recording-${Date.now()}.${format}`);
+  writeFileSync(filePath, Buffer.from(dataBase64, "base64"));
+  return filePath;
+}
+
+// See lib/docs.ts for why this exists — a shared running docs file instead
+// of dumping crawled content through the tool response.
+
 
 // Every tool call gets logged here — this is what actually answers "which
 // call burned the tokens", instead of guessing from a pasted transcript
@@ -56,7 +76,8 @@ const PREVIEW_CHARS = 300;
 // --- Per-domain skills ---
 // A skill is a durable, discoverable record of what the AI already knows
 // about a site (working selectors, role/name pairs, flow sequences) — the
-// point is to pay the exploration cost once (see browser_explore_flow) and
+// point is to pay the exploration cost once (see browser_run_flow's
+// explore:true mode) and
 // reuse it across every future session, instead of re-discovering the same
 // page from scratch every time (which is what happened before this existed:
 // an agent hand-wrote its own walkthrough.md/test-flow.json, which worked
@@ -93,7 +114,7 @@ function parseSkillFrontmatter(content: string): { name?: string; domains: strin
   };
 }
 
-function listSkills(): SkillMeta[] {
+function listSkills(filter?: { domain?: string; query?: string }): SkillMeta[] {
   let dirs: string[];
   try {
     dirs = readdirSync(SKILLS_DIR, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
@@ -112,11 +133,45 @@ function listSkills(): SkillMeta[] {
       // crash listing every other valid skill.
     }
   }
+  // Metadata-only (name/domains/description, never the full SKILL.md body)
+  // keeps even an unfiltered call cheap, but as the skill count grows a
+  // caller that already knows what it's after shouldn't have to read past
+  // every other skill's metadata to find it — same "query instead of dump"
+  // shape as browser_find vs. browser_snapshot.
+  if (filter?.domain) {
+    const domain = filter.domain.toLowerCase();
+    return skills.filter((s) => s.domains.some((d) => d.toLowerCase() === domain));
+  }
+  if (filter?.query) {
+    const q = filter.query.toLowerCase();
+    return skills.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        s.description?.toLowerCase().includes(q) ||
+        s.domains.some((d) => d.toLowerCase().includes(q)),
+    );
+  }
   return skills;
 }
 
 function findSkillForHostname(hostname: string): SkillMeta | undefined {
   return listSkills().find((s) => s.domains.includes(hostname));
+}
+
+// Surfaced as a non-fatal `_duplicateWarning` on browser_save_skill's
+// response when creating a genuinely NEW skill (not updating an existing
+// one) whose domains overlap another skill's — the tool description already
+// asks the caller to check browser_list_skills first, but that's easy to
+// skip; this catches the actual consequence (near-duplicate skills for the
+// same site) at the point it would happen instead of relying on the caller
+// having read the docs.
+function findOverlappingSkill(
+  name: string,
+  domains: string[],
+): SkillMeta | undefined {
+  return listSkills().find(
+    (s) => s.name !== name && s.domains.some((d) => domains.includes(d)),
+  );
 }
 
 function buildSkillFile(name: string, domains: string[], description: string | undefined, content: string): string {
@@ -163,13 +218,26 @@ function saveSkill(args: { name?: unknown; domains?: unknown; description?: unkn
     if (description === undefined) description = existing?.description;
   }
 
+  const isNewSkill = !existsSync(path);
+  const overlap = isNewSkill ? findOverlappingSkill(name, domains) : undefined;
+
   try {
     mkdirSync(join(SKILLS_DIR, name), { recursive: true });
     writeFileSync(path, buildSkillFile(name, domains, description, content));
   } catch (e) {
     return { error: `Failed to write skill: ${e instanceof Error ? e.message : String(e)}` };
   }
-  return { success: true, message: `Saved skill "${name}"`, path, domains };
+  return {
+    success: true,
+    message: `Saved skill "${name}"`,
+    path,
+    domains,
+    ...(overlap
+      ? {
+          _duplicateWarning: `Skill "${overlap.name}" (${overlap.path}) already covers ${overlap.domains.filter((d) => domains!.includes(d)).join(", ")}. Consider merging into that one (browser_save_skill with name:"${overlap.name}") instead of keeping both — two skills for the same site drift out of sync and cost double the context on every browser_list_skills call.`,
+        }
+      : {}),
+  };
 }
 
 function writeCallLog(entry: { ts: string; cmd: string; args: ToolArgs; durationMs: number; approxChars: number; approxTokens: number; hasImage: boolean; isError: boolean; source: string; preview: string; elementRole?: string; elementName?: string }): void {
@@ -310,7 +378,11 @@ const httpServer = serve({
 console.error(`🚀 BrowserControl HTTP/WS Daemon running at http://localhost:${httpServer.port}`);
 
 // --- Helper to execute via WebSocket ---
-async function executeCommand(cmd: string, args: Record<string, unknown> = {}): Promise<CommandResult> {
+// timeoutMs default covers every normal command; stop_capture gets a longer
+// one (see its call site) since it has to flush the MediaRecorder and
+// base64-encode a multi-MB blob before it can respond, which the usual
+// 15s budget (sized for CDP round trips) can undercut on a longer recording.
+async function executeCommand(cmd: string, args: Record<string, unknown> = {}, timeoutMs = 15000): Promise<CommandResult> {
   if (!extensionSocket) throw new Error("Extension not connected to Daemon. Open chrome://extensions and reload BrowserControl Agent.");
 
   const flowWarning = recordAndCheckFlow(cmd, args);
@@ -320,7 +392,7 @@ async function executeCommand(cmd: string, args: Record<string, unknown> = {}): 
     const timeout = setTimeout(() => {
       pendingRequests.delete(reqId);
       reject(new Error("Timeout waiting for Chrome. The page may be stuck on a slow load or an unhandled dialog."));
-    }, 15000);
+    }, timeoutMs);
 
     pendingRequests.set(reqId, (extResponse) => {
       clearTimeout(timeout);
@@ -342,11 +414,37 @@ const mcpServer = new Server({
 }, {
   capabilities: { tools: {} },
   instructions: `
-BrowserControl drives a real Chrome tab (grouped as "🤖 AI Workspace") via
-your everyday browser's debugger, not a headless/isolated instance. All
-tools operate on a single active tab at a time — establish it with either
-browser_navigate (a fresh tab/URL) or browser_switch_tab (an existing tab
-the user already has open, from browser_list_tabs).
+BrowserControl drives real Chrome tabs (grouped as "🤖 AI Workspace") via
+your everyday browser's debugger, not a headless/isolated instance. Every
+tool defaults to whichever tab browser_navigate/browser_switch_tab last
+pointed at — for a single-tab session, that's all you need, same as ever.
+To work with more than one tab at once (compare two pages, fill a form on
+one while watching another, anything genuinely parallel), pass tabId
+(returned by browser_navigate, or from browser_list_tabs) on any tool call
+to target that specific tab regardless of which one is "current" — no
+switch_tab round trip needed between steps on different tabs. Open an
+additional tab without disturbing the current one via
+browser_navigate({url, newTab: true}); its response's tabId is what you
+capture and reuse. Each tab keeps its own CDP session (attaching one
+doesn't detach another), but note two things stay scoped to a single
+tab regardless: browser_start_recording/browser_stop_recording, and the
+network log (browser_network_requests/browser_network_clear).
+
+When the work is "go read/extract N pages" rather than one interactive
+flow, don't drive that yourself with N sequential browser_navigate calls.
+For public, mostly-static content (docs, articles, wikis) at real volume,
+use browser_batch_crawl (or browser_deep_crawl to also follow the links
+each page turns up, to a depth you set) — these fetch directly, no tab
+overhead, so they scale to dozens of pages. For pages needing an actual
+login session or client-rendered content, use browser_start_job instead —
+same idea, real tabs. browser_search gets you clean {title,url} results to
+feed any of these instead of navigating to a search engine and parsing the
+results page yourself. All three of the async ones (browser_start_job,
+browser_deep_crawl) return an id almost immediately and keep working in
+the background — poll browser_task_status(taskId) for progress; each poll
+only returns what finished since your LAST check on that id, never
+repeating a result, which is also why it's cheap to poll repeatedly
+instead of trying to time it perfectly.
 
 "🤖 AI Workspace" is a two-way handoff, not just where the tabs you open
 end up: the user can drag a tab they already have open into that group
@@ -377,8 +475,8 @@ Workflow for interacting with a page:
 2. browser_snapshot for a fast text list of interactive elements (id, role,
    name, value). If you're not fully confident which id is the right one
    (custom dropdowns, icon-only buttons, repeated labels), use
-   browser_visual_snapshot instead — it draws a numbered box over every
-   interactive element on a screenshot, so you can ground the id to a
+   browser_snapshot({visual:true}) instead — it draws a numbered box over
+   every interactive element on a screenshot, so you can ground the id to a
    position before clicking.
 3. browser_click / browser_type using the id from the snapshot. These
    dispatch real, trusted input events (same as a physical mouse/keyboard),
@@ -393,33 +491,32 @@ Workflow for interacting with a page:
    drive it one browser_click/browser_type call at a time — that costs one
    round trip (and one reasoning pass) per step. Instead, write the whole
    sequence as steps referencing elements by role+name (from the snapshot)
-   and send it in one browser_run_flow call. Default to browser_run_flow,
-   not browser_explore_flow — browser_explore_flow is for validating ONE
+   and send it in one browser_run_flow call. Default to plain
+   browser_run_flow, not explore:true — explore:true is for validating ONE
    uncertain sequence against an unfamiliar UI, not a general substitute for
-   browser_run_flow. Repeatedly calling browser_explore_flow instead of
-   browser_run_flow once you already know the flow works is the single
-   biggest token cost this tool has measured in practice — on a real
-   multi-scenario test session, 10 browser_explore_flow calls alone
-   accounted for over 75% of the session's total tool-call tokens, some
-   individual calls running into the tens of thousands of tokens against a
-   data-heavy page. If most of your steps in a session are
-   browser_explore_flow rather than browser_run_flow, you are almost
-   certainly using it wrong — switch to browser_run_flow. Both stop at the
+   a plain run. Repeatedly running with explore:true instead of switching to
+   plain once you already know the flow works is the single biggest token
+   cost this tool has measured in practice — on a real multi-scenario test
+   session, 10 explore:true calls alone accounted for over 75% of the
+   session's total tool-call tokens, some individual calls running into the
+   tens of thousands of tokens against a data-heavy page. If most of your
+   browser_run_flow calls in a session have explore:true set, you are
+   almost certainly using it wrong — switch to plain. Both modes stop at the
    first step that doesn't resolve or fails, so a flow that goes wrong is
    never worse than the step-by-step equivalent.
 7. Once you've worked out how a site behaves (selectors, role/name pairs, a
    working flow sequence), save it with browser_save_skill so a future
    session doesn't pay the same discovery cost again — this is the whole
-   point of splitting browser_explore_flow (discovery) from
-   browser_run_flow (cheap reuse). Check browser_list_skills first: update
+   point of splitting explore:true (discovery) from a plain run (cheap
+   reuse). Check browser_list_skills first: update
    an existing skill for this domain rather than creating a near-duplicate.
    You don't need to do this for a one-off task on a site you'll never
    revisit — it's for anything you can reasonably expect to come back to.
 
 Tool selection — this is important for anything you intend to report as a
 verified UI behavior:
-- browser_click / browser_type / browser_press_key / browser_run_flow /
-  browser_explore_flow: the ONLY tools that count as testing real user
+- browser_click / browser_type / browser_press_key / browser_run_flow: the
+  ONLY tools that count as testing real user
   interaction. Prefer them whenever you're checking that a button, link, or
   form field actually works. Standalone click/type/press_key glide a
   visible cursor dot to the target and briefly outline it (violet for
@@ -438,26 +535,44 @@ verified UI behavior:
   so explicitly rather than reporting it as a tested interaction.
 - browser_screenshot: pure visual inspection (layout, spacing, colors) when
   you need to see rendering issues the accessibility tree can't show.
-- browser_visual_snapshot: structure + visual grounding in one call, for
-  when you need both an id to act on and confidence about its position.
+- browser_snapshot({visual:true}): structure + visual grounding in one
+  call, for when you need both an id to act on and confidence about its
+  position.
+- browser_start_recording / browser_stop_recording: when what matters is
+  motion, not a single frame — a drag, an animation, a multi-step wizard you
+  want to hand back as one video instead of a pile of screenshots. Bracket
+  just the part you actually need recorded; don't leave a recording running
+  across unrelated exploration.
 - browser_inspect_element: browser_snapshot deliberately shows very little
   per element to stay cheap across a whole page. When you need to know WHY
   one specific element looks or behaves a certain way — which CSS rule set
   that color/spacing, what its computed layout is, whether it has a click/
   change listener attached — call browser_inspect_element on its id instead
   of trying to infer it from the snapshot or re-reading source files blind.
-- browser_query_region: the middle tier between browser_snapshot (whole
-  page, flat, cheap, but a form field's label can be 50 unrelated elements
-  away in the list) and browser_inspect_element (one element, no surrounding
-  context). Pass a CSS selector for the containing form/panel/row and get
-  back a nested tree of just what's inside it — a label and its field are
-  siblings in the same "children" array, so the association is structural,
-  not something you infer from ordering. Prefer this over browser_snapshot
-  when you're specifically trying to fill out or verify one form/section,
-  and especially when browser_snapshot showed you fields with an empty name
-  (no accessible label) that you need to correctly associate.
+- browser_snapshot({selector:...}): the middle tier between a plain
+  browser_snapshot (whole page, flat, cheap, but a form field's label can be
+  50 unrelated elements away in the list) and browser_inspect_element (one
+  element, no surrounding context). Pass a CSS selector for the containing
+  form/panel/row and get back a nested tree of just what's inside it — a
+  label and its field are siblings in the same "children" array, so the
+  association is structural, not something you infer from ordering. Prefer
+  this over a plain browser_snapshot when you're specifically trying to fill
+  out or verify one form/section, and especially when browser_snapshot
+  showed you fields with an empty name (no accessible label) that you need
+  to correctly associate.
+- browser_reading_mode: when the goal is reading content (an article, docs
+  page, blog post), not acting on it — returns clean title+body text with
+  the accessibility tree skipped entirely, cheaper than browser_snapshot for
+  that specific job. Says so and returns nothing useful on non-article pages
+  (an app UI, a dashboard) — fall back to browser_snapshot there.
+- browser_find: when you already know what you're looking for (a label, an
+  error message, a specific price) on a large page — jumps straight to
+  matching elements (by text, CSS selector, or XPath) instead of you
+  scanning a full browser_snapshot node list. Returns the same {i,r,n}
+  shape as browser_snapshot, usable directly with browser_click/
+  browser_type.
 
-Both browser_screenshot and browser_visual_snapshot save the image to a file
+Both browser_screenshot and browser_snapshot({visual:true}) save the image to a file
 on disk and give you the path in the text output. Inline image content is
 OFF by default (set BROWSERCONTROL_INLINE_IMAGES=true to enable) because
 some MCP clients — notably some Antigravity CLI versions — can't handle
@@ -468,7 +583,7 @@ usage window in practice. Concretely:
 - Never pass format:"png" unless you specifically need pixel-exact color
   values — it is 3-5x larger than the jpeg default for no benefit in
   routine "let me see the page" checks.
-- Don't call browser_screenshot / browser_visual_snapshot on every step.
+- Don't call browser_screenshot / browser_snapshot({visual:true}) on every step.
   Use browser_snapshot (cheap, text-only) as your default; reach for a
   screenshot only when you actually need to visually confirm layout/styling
   or ground an ambiguous click target.
@@ -482,12 +597,12 @@ Network tab):
 2. browser_click the submit/action button.
 3. browser_network_requests to see what fired — defaults to XHR/Fetch/
    Document/WebSocket only (the actual API calls), not static assets.
-4. browser_network_request_detail with a requestId from that list if you
-   need the full request/response headers or body (e.g. to check the
+4. browser_network_requests again with requestId set (from that list) if
+   you need the full request/response headers or body (e.g. to check the
    payload sent or the error message returned).
 The network log also auto-clears on every browser_navigate.
 
-browser_run_flow/browser_explore_flow block a step by default if its target's
+browser_run_flow (either mode) blocks a step by default if its target's
 accessible name looks destructive/irreversible (delete, remove, cancel, sign
 out, pay, confirm, ...) — the response will have reason:"risky_action_blocked"
 and a message naming the step. This tool has no way to ask your user directly,
@@ -501,27 +616,41 @@ extension not connected, unhandled dialog, etc).
 `.trim(),
 });
 
-// Shared input schema for browser_run_flow/browser_explore_flow — both take
-// the same step list, just report back differently (see runFlowSteps in
-// background.ts, which is the single engine behind both commands).
+// Input schema for browser_run_flow — the same step list regardless of
+// explore mode, which just reports back differently (see runFlowSteps in
+// lib/flow.ts, the single engine behind both).
+// Spread into every tab-scoped tool's inputSchema.properties — lets a
+// caller target a SPECIFIC tab (its id comes back from browser_navigate or
+// browser_list_tabs) instead of whichever one browser_switch_tab last
+// pointed at. Omitting it keeps every existing single-tab flow unchanged.
+const TAB_ID_PROPERTY = {
+  tabId: { type: "number", description: "Target this specific tab (id from browser_navigate's response or browser_list_tabs) instead of the currently active one. Omit to use the current tab, same as always." },
+} as const;
+
 const FLOW_STEPS_SCHEMA = {
   type: "object",
   properties: {
+    ...TAB_ID_PROPERTY,
+    explore: { type: "boolean", description: "Add a per-step delta (what changed) to validate an unfamiliar/best-guess sequence once, instead of a plain run. See the tool description — don't default to this once a flow is validated." },
     steps: {
       type: "array",
       description: "Ordered list of steps to run in one call. Stops at the first step that doesn't resolve or fails.",
       items: {
         type: "object",
         properties: {
-          action: { type: "string", enum: ["click", "type", "press_key", "wait_for", "assert_text", "scroll"] },
-          role: { type: "string", description: "Accessibility role of the target, from a prior browser_snapshot/browser_explore_flow (e.g. 'button', 'textbox')." },
+          action: { type: "string", enum: ["click", "type", "press_key", "wait_for", "assert_text", "scroll", "drag"] },
+          role: { type: "string", description: "Accessibility role of the target, from a prior browser_snapshot (e.g. 'button', 'textbox')." },
           name: { type: "string", description: "Accessible name of the target, paired with role." },
           selector: { type: "string", description: "CSS selector, as an alternative to role+name." },
           text: { type: "string", description: "Text to type (action: 'type')." },
-          key: { type: "string", description: "Key to press (action: 'press_key') — see browser_press_key for supported names." },
+          key: { type: "string", description: "Key to press (action: 'press_key') — a named key or a single character, see browser_press_key." },
           contains: { type: "string", description: "Substring the target's accessible name must contain (action: 'assert_text')." },
           deltaX: { type: "number", description: "Scroll delta (action: 'scroll')." },
           deltaY: { type: "number", description: "Scroll delta (action: 'scroll')." },
+          fromX: { type: "number", description: "Drag start x, viewport pixels (action: 'drag')." },
+          fromY: { type: "number", description: "Drag start y, viewport pixels (action: 'drag')." },
+          toX: { type: "number", description: "Drag end x, viewport pixels (action: 'drag')." },
+          toY: { type: "number", description: "Drag end y, viewport pixels (action: 'drag')." },
           timeoutMs: { type: "number", description: "Max time in ms to poll for the target to appear (action: 'wait_for'), default 3000." },
           confirmRisky: { type: "boolean", description: "Set true to proceed past a step whose target looks destructive/irreversible (delete, cancel, sign out, pay, confirm, ...) — only after confirming with your user that this step is intended." },
         },
@@ -537,8 +666,8 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: "browser_navigate",
-        description: "Navigate to a URL",
-        inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] }
+        description: "Navigate to a URL. By default reuses whichever tab is currently active (today's behavior, unchanged). Pass newTab:true to open this URL in a NEW tab instead, keeping the current one where it is — the response's `tabId` is then what you pass as `tabId` on later browser_click/browser_snapshot/etc. calls to keep driving that specific tab. Pass an existing `tabId` to re-navigate that specific tab in place.",
+        inputSchema: { type: "object", properties: { url: { type: "string" }, newTab: { type: "boolean", description: "Open in a new tab instead of reusing the current one. Ignored if tabId is set." }, tabId: { type: "number", description: "Re-navigate this specific existing tab (id from a prior browser_navigate/browser_list_tabs) instead of the current one or a new one." } }, required: ["url"] }
       },
       {
         name: "browser_list_tabs",
@@ -552,90 +681,169 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "browser_list_skills",
-        description: "List saved skills — durable notes on how to work with a specific site (working selectors, role/name pairs, flow sequences), each declaring which domain(s) it applies to. Check this before creating a new skill (to update an existing one instead of duplicating it), or when the user references a skill by name (\"use the github skill\") without having navigated there yet. browser_navigate also auto-surfaces a matching skill via a skillHint field, so you don't usually need to call this just to check the current page.",
-        inputSchema: { type: "object", properties: {} }
+        description: "List saved skills — durable notes on how to work with a specific site (working selectors, role/name pairs, flow sequences), each declaring which domain(s) it applies to. Metadata only (name/domains/description), never the full skill content, so this stays cheap even as the skill count grows. Check this before creating a new skill (to update an existing one instead of duplicating it), or when the user references a skill by name (\"use the github skill\") without having navigated there yet. browser_navigate also auto-surfaces a matching skill via a skillHint field, so you don't usually need to call this just to check the current page. Pass `domain` or `query` once you have more than a handful of skills saved, so you're not re-reading every skill's metadata just to find the one you want.",
+        inputSchema: { type: "object", properties: { domain: { type: "string", description: "Exact hostname match, e.g. \"github.com\" — the same lookup browser_navigate's skillHint uses internally." }, query: { type: "string", description: "Substring match against name/description/domains, for when you don't know the exact hostname." } } }
       },
       {
         name: "browser_save_skill",
-        description: "Create or update a skill — persist what you just learned about a site (selectors, role/name pairs, a working flow sequence, gotchas) so a future session doesn't have to re-discover it from scratch. This is what makes browser_explore_flow's discovery cost a one-time cost instead of a recurring one. `name` is a lowercase slug (e.g. \"github\", \"mio-fe-admin-inquiries\"); `domains` is required when creating a new skill (e.g. [\"github.com\"]) so browser_navigate can find it later, and can be omitted when updating one that already has domains set. This always overwrites the full file — check browser_list_skills or just read the existing skills/<name>/SKILL.md first if updating, and pass back the complete content, not a partial diff.",
+        description: "Create or update a skill — persist REUSABLE interaction knowledge about a site (working selectors, role/name pairs, a flow sequence, gotchas) so a future session doesn't have to re-discover it from scratch. This is what makes browser_run_flow's explore:true discovery cost a one-time cost instead of a recurring one. Do NOT call this just because you navigated somewhere or read a page — that's what browser_reading_mode/browser_select_content/browser_batch_crawl/browser_deep_crawl are for, and none of them need a skill; save one only when you've actually worked out how to interact with the site (a login flow, a search form, a multi-step wizard) and expect to come back to it. `name` is a lowercase slug (e.g. \"github\", \"mio-fe-admin-inquiries\"); `domains` is required when creating a new skill (e.g. [\"github.com\"]) so browser_navigate can find it later, and can be omitted when updating one that already has domains set. This always overwrites the full file — check browser_list_skills or just read the existing skills/<name>/SKILL.md first if updating, and pass back the complete content, not a partial diff. If a new skill's domains overlap an existing one, the response carries a `_duplicateWarning` — merge into the existing skill instead of keeping both when you see it.",
         inputSchema: { type: "object", properties: { name: { type: "string" }, domains: { type: "array", items: { type: "string" } }, description: { type: "string" }, content: { type: "string" } }, required: ["name", "content"] }
       },
       {
         name: "browser_snapshot",
-        description: "Get the interactive elements on the page as a text list, filtered and deduplicated to save tokens. Each entry is {i, r, n, v?}: i=node id (pass to browser_click/browser_type/browser_inspect_element), r=role, n=accessible name, v=current value (omitted when empty). Fast and cheap, but you can't see WHERE on screen an id is. If you're not confident which id to click, use browser_visual_snapshot instead.",
-        inputSchema: { type: "object", properties: {} }
-      },
-      {
-        name: "browser_visual_snapshot",
-        description: "Like browser_snapshot, but also returns a screenshot with a numbered box drawn over every interactive element — the number is the same id you pass to browser_click/browser_type. Use this before clicking anything you're not 100% sure about (custom dropdowns, icon-only buttons, ambiguous labels), since guessing from the text list alone is how wrong-element clicks happen.",
-        inputSchema: { type: "object", properties: {} }
-      },
-      {
-        name: "browser_query_region",
-        description: "Scoped version of browser_snapshot: pass a CSS selector for a container (a form, a panel, a table row — whatever you can identify from the page source) and get back a nested tree (not a flat list) of just the elements inside it. Because it's nested, a field's label is literally its sibling in the same `children` array — you don't have to guess the association from position in a long flat list like with browser_snapshot. Capped at 150 elements; narrow the selector further if truncated.",
-        inputSchema: { type: "object", properties: { selector: { type: "string", description: "CSS selector for the container to scope into" } }, required: ["selector"] }
+        description: "Get the interactive elements on the page — the default way to see what's there before clicking/typing. Plain call: a flat text list, {i, r, n, v?} per entry (i=node id for browser_click/browser_type/browser_inspect_element, r=role, n=accessible name, v=current value if any). Fast and cheap, but you can't see WHERE on screen an id is or how fields relate to their labels — two optional modes cover those: `visual:true` also returns a screenshot with a numbered box over every interactive element (same ids) — use before clicking anything you're not 100% sure about (custom dropdowns, icon-only buttons, ambiguous labels). `selector:\"...\"` scopes to one container (a form/panel/row) and returns a NESTED tree instead of a flat list — a field's label ends up as its sibling in the same `children` array, so the association is structural instead of guessed from position; capped at 150 elements, narrow the selector if truncated. If both are set, visual wins (full-page annotated screenshot) — selector-scoped + visual together isn't supported, pass selector alone for the nested tree.",
+        inputSchema: { type: "object", properties: { visual: { type: "boolean", description: "Also return an annotated screenshot with numbered boxes over interactive elements." }, selector: { type: "string", description: "CSS selector to scope into — returns a nested tree instead of the default flat list." }, ...TAB_ID_PROPERTY } }
       },
       {
         name: "browser_click",
         description: "Click an element by its Node ID (from browser_snapshot). Dispatches a real, trusted mouse event — use this instead of browser_evaluate whenever you're testing that a button/link/control actually works, since a JS-invoked .click() or a manually-set .value doesn't exercise the same code path a real user click does.",
-        inputSchema: { type: "object", properties: { nodeId: { type: "number" } }, required: ["nodeId"] }
+        inputSchema: { type: "object", properties: { nodeId: { type: "number" }, ...TAB_ID_PROPERTY }, required: ["nodeId"] }
       },
       {
         name: "browser_type",
         description: "Focus the element with the given Node ID (from browser_snapshot) and type text into it as a real user would, one CDP input event at a time. Prefer this over browser_evaluate for filling form fields — setting element.value via JS does not reliably trigger React/Vue's onChange, so it can make a broken input look like it works.",
-        inputSchema: { type: "object", properties: { text: { type: "string" }, nodeId: { type: "number", description: "Element to focus before typing. Omit only if the target is already focused." } }, required: ["text"] }
+        inputSchema: { type: "object", properties: { text: { type: "string" }, nodeId: { type: "number", description: "Element to focus before typing. Omit only if the target is already focused." }, ...TAB_ID_PROPERTY }, required: ["text"] }
       },
       {
         name: "browser_press_key",
-        description: "Press a single named key (Enter, Tab, Escape, Backspace, Delete, ArrowUp/Down/Left/Right, Space, Home, End, PageUp, PageDown) — dispatches a real keydown/keyup, distinct from browser_type which only inserts text and never submits anything on its own. Use this after browser_type to submit a search box or form (Enter), or to navigate a custom dropdown/menu (arrows + Enter).",
-        inputSchema: { type: "object", properties: { key: { type: "string", description: "One of: Enter, Tab, Escape, Backspace, Delete, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Space, Home, End, PageUp, PageDown" }, nodeId: { type: "number", description: "Element to focus before pressing the key. Omit only if the target is already focused (e.g. right after browser_type)." } }, required: ["key"] }
+        description: "Press a key — dispatches a real keydown/keyup, distinct from browser_type which only inserts text and never submits or triggers shortcuts on its own. Two forms: a named key (Enter, Tab, Escape, Backspace, Delete, ArrowUp/Down/Left/Right, Space, Home, End, PageUp, PageDown) for form/navigation use — after browser_type to submit a search box or form (Enter), or to navigate a custom dropdown/menu (arrows + Enter); or a single character (a letter, digit, or common symbol, e.g. \"r\") to trigger a keyboard-shortcut listener directly — canvas/whiteboard apps (Excalidraw and similar) commonly bind their tool selection to single letters rather than exposing DOM buttons for each one, since there's no per-shape DOM to click. Single characters fire the key event only, never insert text (use browser_type for that).",
+        inputSchema: { type: "object", properties: { key: { type: "string", description: "A named key (Enter, Tab, Escape, Backspace, Delete, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Space, Home, End, PageUp, PageDown), or any single character." }, nodeId: { type: "number", description: "Element to focus before pressing the key. Omit only if the target is already focused (e.g. right after browser_type), or for a global/canvas shortcut with no specific element to focus." }, ...TAB_ID_PROPERTY }, required: ["key"] }
       },
       {
         name: "browser_run_flow",
-        description: "Run a list of steps (click/type/press_key/wait_for/assert_text/scroll) in ONE call instead of one round trip per step — collapses a multi-step flow (login, a multi-field form, a wizard) that would otherwise cost N separate tool calls into a single one. Steps target elements by role+name (from a prior browser_snapshot/browser_explore_flow) or a CSS selector, resolved fresh against the live page at execution time. Stops at the first step that doesn't resolve or fails, and returns a compact per-step report plus a final snapshot. If you're not confident your step sequence is correct (unfamiliar UI, guessed role/name), use browser_explore_flow first to validate it — running an unvalidated guess directly is how a flow burns a call on a mid-flow failure. A step whose target looks destructive/irreversible (delete, cancel, sign out, pay, confirm, ...) is blocked by default; if that's actually intended, confirm with your user and re-run with that step's confirmRisky:true.",
-        inputSchema: FLOW_STEPS_SCHEMA,
-      },
-      {
-        name: "browser_explore_flow",
-        description: "Same engine as browser_run_flow, but each step's result includes a `delta` (added/changed/removed elements versus the previous step, not a full page snapshot) — use this ONCE to validate a best-guess sequence of steps against an unfamiliar UI (confirm role/name guesses, see what each step actually changed) before committing to browser_run_flow for repeat runs. Do NOT reach for this as your default flow tool — once a sequence is validated, switch to browser_run_flow; repeated browser_explore_flow calls for flows you already know work is the most common way this tool burns tokens unnecessarily. Important: this is NOT a safe preview — there is no way to know what a later step's UI looks like without actually executing the earlier steps for real (submitting a form, following a link). Every step here has the same real side effects as browser_click/browser_type. The same destructive-action block/confirmRisky mechanism as browser_run_flow applies.",
+        description: "Run a list of steps (click/type/press_key/drag/wait_for/assert_text/scroll) in ONE call instead of one round trip per step — collapses a multi-step flow (login, a multi-field form, a wizard, drawing a diagram) that would otherwise cost N separate tool calls into a single one. Steps target elements by role+name (from a prior browser_snapshot) or a CSS selector, resolved fresh against the live page at execution time — except drag, addressed by raw viewport coordinates since canvas-based UI has no per-shape DOM element. Stops at the first step that doesn't resolve or fails, and returns a compact per-step report plus a final snapshot. Two modes: plain (default) is for a sequence you're already confident in, one clean run. `explore:true` adds a `delta` (added/changed/removed elements vs. the previous step, not a full snapshot) to every step's result — use it ONCE to validate a best-guess sequence against an unfamiliar UI (confirm role/name guesses, see what each step actually changed) before switching back to plain mode for repeat runs; it is NOT a safe preview — every step still has the same real side effects (submitting a form, following a link, drawing a shape), there's no way to know a later step's UI without actually executing the earlier ones. Don't default to explore:true once a sequence is validated — repeated explore calls for a flow you already know works is the most common way this tool burns tokens unnecessarily. A step whose target looks destructive/irreversible (delete, cancel, sign out, pay, confirm, ...) is blocked by default in both modes; if that's actually intended, confirm with your user and re-run with that step's confirmRisky:true.",
         inputSchema: FLOW_STEPS_SCHEMA,
       },
       {
         name: "browser_evaluate",
         description: "Evaluate arbitrary JavaScript on the page. Use this for reading state (e.g. localStorage, computed values) or for setup/teardown (e.g. seeding auth tokens) — NOT as a shortcut for clicking buttons or filling form fields, which won't verify real user interaction. Use browser_click/browser_type for anything you intend to report as a tested UI behavior.",
-        inputSchema: { type: "object", properties: { expression: { type: "string" } }, required: ["expression"] }
+        inputSchema: { type: "object", properties: { expression: { type: "string" }, ...TAB_ID_PROPERTY }, required: ["expression"] }
       },
       {
         name: "browser_scroll",
         description: "Scroll the page by a pixel delta",
-        inputSchema: { type: "object", properties: { deltaX: { type: "number" }, deltaY: { type: "number" } } }
+        inputSchema: { type: "object", properties: { deltaX: { type: "number" }, deltaY: { type: "number" }, ...TAB_ID_PROPERTY } }
+      },
+      {
+        name: "browser_drag",
+        description: "Drag from one viewport point to another — a real mousedown->mousemove(*n)->mouseup sequence, not a click. For canvas-based UI (a whiteboard, a drawing app) where there's no DOM element per shape to click/type into: drawing a rectangle/line, resizing something, reordering a drag-handle list. Coordinates are viewport pixels (from browser_snapshot({visual:true})'s annotated screenshot, or worked out from browser_evaluate reading canvas/element bounds) — there's no nodeId for a point on a canvas the way there is for a DOM element.",
+        inputSchema: { type: "object", properties: { fromX: { type: "number" }, fromY: { type: "number" }, toX: { type: "number" }, toY: { type: "number" }, ...TAB_ID_PROPERTY }, required: ["fromX", "fromY", "toX", "toY"] }
       },
       {
         name: "browser_network_requests",
-        description: "List network requests observed since the last navigate or browser_network_clear — like the DevTools Network tab. Defaults to XHR/Fetch/Document/WebSocket only (the calls an action button actually triggers), hiding static asset noise (images/css/fonts/scripts) unless you pass resourceTypes explicitly. Use browser_network_clear right before clicking a submit/action button, then call this after, to see exactly what request that click caused.",
+        description: "List network requests observed since the last navigate or browser_network_clear — like the DevTools Network tab. Plain call: defaults to XHR/Fetch/Document/WebSocket only (the calls an action button actually triggers), hiding static asset noise (images/css/fonts/scripts) unless you pass resourceTypes explicitly. Use browser_network_clear right before clicking a submit/action button, then call this after, to see exactly what request that click caused. Pass `requestId` (from a prior call's results) instead to get full detail on that ONE request — headers, post body, response body (fetched on demand, truncated if large) — ignoring resourceTypes/filter/limit.",
         inputSchema: {
           type: "object",
           properties: {
             resourceTypes: { type: "array", items: { type: "string" }, description: "CDP resource type names (XHR, Fetch, Document, Script, Stylesheet, Image, Font, Media, WebSocket, ...). Overrides the default filter." },
             filter: { type: "string", description: "Only include requests whose URL contains this substring" },
-            limit: { type: "number", description: "Max entries to return, most recent first. Default 50." }
+            limit: { type: "number", description: "Max entries to return, most recent first. Default 50." },
+            requestId: { type: "string", description: "Get full detail for this one request instead of listing — id comes from a prior browser_network_requests call's results." },
+            ...TAB_ID_PROPERTY
           }
         }
       },
       {
-        name: "browser_network_request_detail",
-        description: "Get full detail for one request from browser_network_requests — headers, post body, and response body (fetched on demand, truncated if very large).",
-        inputSchema: { type: "object", properties: { requestId: { type: "string" } }, required: ["requestId"] }
-      },
-      {
         name: "browser_network_clear",
         description: "Clear the network log. Call this immediately before a submit/action click so browser_network_requests afterward only shows what that action triggered, not accumulated page-load noise. Also happens automatically on every browser_navigate.",
-        inputSchema: { type: "object", properties: {} }
+        inputSchema: { type: "object", properties: { ...TAB_ID_PROPERTY } }
       },
       {
         name: "browser_inspect_element",
-        description: "Deep-dive on ONE element by id (from browser_snapshot/browser_visual_snapshot): outerHTML, which CSS rule/selector set its computed styles, key computed layout properties, and any event listeners attached (type only, not handler source). Expensive relative to browser_snapshot — use it only for the specific element you need to explain, not in a loop over every node.",
-        inputSchema: { type: "object", properties: { nodeId: { type: "number" } }, required: ["nodeId"] }
+        description: "Deep-dive on ONE element by id (from browser_snapshot): outerHTML, which CSS rule/selector set its computed styles, key computed layout properties, and any event listeners attached (type only, not handler source). Expensive relative to browser_snapshot — use it only for the specific element you need to explain, not in a loop over every node.",
+        inputSchema: { type: "object", properties: { nodeId: { type: "number" }, ...TAB_ID_PROPERTY }, required: ["nodeId"] }
+      },
+      {
+        name: "browser_reading_mode",
+        description: "Extract just the clean article/main-content text of the page (title + body text, chrome like nav/ads/sidebars stripped) — like a browser's built-in reader view. Far cheaper than browser_snapshot when the goal is READING content (an article, a docs page, a blog post) rather than acting on interactive elements: no accessibility tree, no node ids, just text. If the page isn't article-shaped (an app UI, a form, a dashboard), it'll say so — fall back to browser_snapshot for those.",
+        inputSchema: { type: "object", properties: { maxChars: { type: "number", description: "Cap on returned text length, default 20000. Lower it if you only need a quick sense of the page, not the full article." }, ...TAB_ID_PROPERTY } }
+      },
+      {
+        name: "browser_find",
+        description: "Find elements matching text, a CSS selector, or an XPath — like Ctrl+F, but returns node ids (usable with browser_click/browser_type/browser_inspect_element) instead of just scrolling to a match. Much cheaper than browser_snapshot when you already know what you're looking for (a specific label, error message, or product name) on a large/data-heavy page — jump straight to it instead of scanning the whole node list. Flashes a highlight on the first match, same as browser_click's target highlight.",
+        inputSchema: { type: "object", properties: { query: { type: "string", description: "Text, CSS selector, or XPath to search for." }, limit: { type: "number", description: "Max matches to return, default 20." }, ...TAB_ID_PROPERTY }, required: ["query"] }
+      },
+      {
+        name: "browser_select_content",
+        description: "Extract clean markdown (headings, links, lists, code blocks, emphasis preserved) from specific element(s) — for crawling a page (or many pages, across many calls) into material for doc generation. IMPORTANT: this does NOT return the extracted content in the tool response — that would flood your context on anything beyond a trivial page, especially across a multi-page crawl. Every call instead APPENDS to one running markdown file for this session and gives you back the file path plus a short preview. Read the file yourself (in chunks — offset/limit, not all at once) once you're ready to use the content, whether that's after one call or fifty. Pass either `selector` (CSS — matches multiple elements, each becomes its own block, e.g. every '.faq-item') or `nodeId` (from browser_snapshot/browser_find — exactly one element). If you truly need a small amount of text back immediately instead of accumulating a file, browser_reading_mode is the right tool, not this one.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            selector: { type: "string", description: "CSS selector — every matching element becomes its own extracted block." },
+            nodeId: { type: "number", description: "A specific node id (from browser_snapshot/browser_find) to extract instead of a selector." },
+            maxChars: { type: "number", description: "Cap on characters extracted THIS call (not the file total), default 20000." },
+            maxMatches: { type: "number", description: "Max elements to extract when using selector, default 20." },
+            ...TAB_ID_PROPERTY
+          }
+        }
+      },
+      {
+        name: "browser_batch_crawl",
+        description: "Concurrent batch crawler for heavy workloads: fetch and extract clean Markdown from multiple URLs in parallel without opening visible tabs or triggering UI animations. Automatically extracts metadata (Title, Author, Published Date, Reading Time) and outbound links, applies Readability heuristics, dedupes against every URL already crawled this session, and appends the structured results into the session's markdown docs file on disk (data/docs/). Returns a compact execution summary and file path to save tokens — never the extracted content itself. IMPORTANT: unlike every other browser_* tool, this does NOT go through the real browser tab — it's a plain fetch() with no cookies/login session and no JavaScript execution. Only use it for public, mostly-static pages (docs, blog posts, wikis). For anything behind a login, or a JS-rendered SPA, navigate there with browser_navigate and use browser_select_content/browser_reading_mode on the real tab instead (or browser_start_job for several such pages) — this tool will silently return thin or empty results there, not an error. Max 100 URLs per call; split a larger list across multiple calls (they all append to the same session docs file). For recursively following the links a crawl turns up instead of managing that yourself, use browser_deep_crawl instead of calling this in a loop.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            urls: { type: "array", items: { type: "string" }, description: "Array of URLs to crawl concurrently (max 100 per call)." },
+            concurrency: { type: "number", description: "Number of parallel workers. Default scales with this machine's CPU core count (roughly cores x4, floor 8, ceiling 32) — set explicitly only if you need a specific number." },
+            maxCharsPerUrl: { type: "number", description: "Cap on characters extracted per URL, default 15000." }
+          },
+          required: ["urls"]
+        }
+      },
+      {
+        name: "browser_search",
+        description: "Run a web search and get back clean {title, url, snippet} results — not a page you then have to parse yourself. Use this to find URLs worth crawling (feed the results into browser_batch_crawl/browser_start_job/browser_deep_crawl) instead of navigating to a search engine and treating the results page itself as content. Same fetch()-based mechanism as browser_batch_crawl (no login session, no JS) via DuckDuckGo's HTML endpoint.",
+        inputSchema: { type: "object", properties: { query: { type: "string" }, limit: { type: "number", description: "Max results, default 10 (max 30)." } }, required: ["query"] }
+      },
+      {
+        name: "browser_deep_crawl",
+        description: `Recursive crawl: start from seed URLs and/or a search query, follow the outbound links pages turn up, up to \`depth\` hops deep — automatically, without you reading content to decide what to follow next. A continuous pool of \`concurrency\` workers drains a shared queue (a real frontier, not depth-by-depth batches) — a worker that finishes a page immediately picks up whatever's next, sibling or freshly-discovered child, so the whole pool stays busy instead of the next round waiting on this round's single slowest page. Built on browser_batch_crawl's per-page fetch (same fetch()-based, no-login caveat applies), so it's for discovering/reading public content at volume, not for authenticated or JS-rendered sites. Returns a crawlId almost immediately; the crawl runs in the background. Poll browser_task_status(crawlId) — each call only reports pages that finished since your last check. Results append to the session docs file as pages finish; this tool never returns crawled content directly. Max depth ${MAX_CRAWL_DEPTH}, max ${MAX_CRAWL_PAGES} total pages per crawl, ${MAX_CONCURRENT_CRAWLS} crawls running at once.`,
+        inputSchema: {
+          type: "object",
+          properties: {
+            seedUrls: { type: "array", items: { type: "string" }, description: "Root URLs to start from. Provide this, searchQuery, or both." },
+            searchQuery: { type: "string", description: "Run browser_search first and use its results as additional depth-0 roots." },
+            depth: { type: "number", description: `How many hops of outbound links to follow, default 2 (max ${MAX_CRAWL_DEPTH}). Depth 1 = just the seeds/search results, no following.` },
+            maxPages: { type: "number", description: `Total page budget across the whole crawl, default 60 (max ${MAX_CRAWL_PAGES}).` },
+            maxOutlinksPerPage: { type: "number", description: "Cap on how many outbound links ONE page can add to the frontier, default 15 (max 50) — controls fan-out, not total volume (maxPages does that)." },
+            concurrency: { type: "number", description: "Persistent workers draining the crawl queue at once. Default scales with this machine's CPU core count (roughly cores x4, floor 8, ceiling 48/hard cap 64) — set explicitly only if you need a specific number." },
+            maxCharsPerUrl: { type: "number", description: "Cap on characters extracted per URL, default 15000." },
+          },
+        }
+      },
+      {
+        name: "browser_start_job",
+        description: `Async multi-tab task runner: give it a list of URLs (each with what to extract), it opens up to \`concurrency\` real tabs at once — full login session, full JS rendering, unlike browser_batch_crawl — works through each, and appends results into the session's docs file (data/docs/) as they finish. Returns almost immediately with a jobId; the crawl continues in the background. Poll browser_task_status(jobId) to check progress — do NOT block waiting for this to "complete" the way a normal tool call does, that's the whole point of it being async. Prefer this over several sequential browser_navigate+browser_reading_mode calls whenever you have multiple URLs to process — driving them one at a time is exactly the throughput problem this exists to avoid. Max ${MAX_JOB_TASKS} tasks per job, ${MAX_CONCURRENT_JOBS} jobs running at once; split a larger batch across sequential browser_start_job calls.`,
+        inputSchema: {
+          type: "object",
+          properties: {
+            tasks: {
+              type: "array",
+              description: `1-${MAX_JOB_TASKS} pages to process concurrently.`,
+              items: {
+                type: "object",
+                properties: {
+                  url: { type: "string" },
+                  extract: { type: "string", enum: ["reading_mode", "select_content", "snapshot"], description: "What to do on each page once loaded — 'reading_mode' (default): clean article text, for reading/summarizing. 'select_content': markdown from a specific selector (pass `selector` too), for doc generation. 'snapshot': the interactive-element list, if the point is finding something actionable per page rather than reading it." },
+                  selector: { type: "string", description: "CSS selector — only used when extract is 'select_content'." },
+                },
+                required: ["url"],
+              },
+            },
+            concurrency: { type: "number", description: "Tabs to run at once, default 4 (max 8). Real tabs are heavier than browser_batch_crawl's fetch workers — keep this modest." },
+          },
+          required: ["tasks"],
+        },
+      },
+      {
+        name: "browser_task_status",
+        description: "Check progress on an async task — a jobId from browser_start_job OR a crawlId from browser_deep_crawl, this tool tells them apart automatically. IMPORTANT: each call only returns results that finished since the LAST time you checked THIS id — already-reported results are never repeated, so don't expect the full list again on a second call. Keep polling until the summary says complete. A completed task is dropped from tracking the moment you've seen its last result, so don't call this again after that — the id will just come back as unknown.",
+        inputSchema: { type: "object", properties: { taskId: { type: "string" } }, required: ["taskId"] },
+      },
+      {
+        name: "browser_close_tab",
+        description: "Close a tab by id (from browser_navigate/browser_list_tabs) — tidy up a tab you opened with browser_navigate({newTab:true}) once you're done with it, especially after driving several tabs at once.",
+        inputSchema: { type: "object", properties: { tabId: { type: "number" } }, required: ["tabId"] },
       },
       {
         name: "browser_screenshot",
@@ -645,9 +853,20 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             fullPage: { type: "boolean", description: "Capture the full scrollable page instead of just the viewport" },
             format: { type: "string", enum: ["jpeg", "png"], description: "Leave unset (defaults to jpeg). PNG is 3-5x larger for typical UI screenshots and is almost never worth it — only pass 'png' if you specifically need pixel-exact color values, not for routine 'let me see the page' checks." },
-            quality: { type: "number", description: "JPEG quality 0-100, default 80" }
+            quality: { type: "number", description: "JPEG quality 0-100, default 80" },
+            ...TAB_ID_PROPERTY
           }
         }
+      },
+      {
+        name: "browser_start_recording",
+        description: "Start recording the active tab as video — use this instead of repeated browser_screenshot calls when you want to show/review a multi-step flow (a wizard, a drag interaction, an animation) as motion rather than a stack of stills. Records the tab only (no audio, no other tabs). Call browser_stop_recording when done; every tool call you make while recording is running still lands in the normal session log (logs/session-*.jsonl) with a timestamp, so you can line up what you did against what the video shows. Only one recording can be active at a time.",
+        inputSchema: { type: "object", properties: {} }
+      },
+      {
+        name: "browser_stop_recording",
+        description: "Stop the recording started by browser_start_recording, save it as a .webm file, and return its path. Errors if no recording is in progress.",
+        inputSchema: { type: "object", properties: {} }
       }
     ]
   };
@@ -659,7 +878,7 @@ async function handleToolCall(request: CallToolRequest): Promise<ToolCallRespons
     let result: CommandResult | string;
     switch (name) {
       case "browser_navigate": {
-        result = await executeCommand("navigate", { url: args?.url });
+        result = await executeCommand("navigate", { url: args?.url, newTab: args?.newTab, tabId: args?.tabId });
         const url = typeof args?.url === "string" ? args.url : undefined;
         if (url) {
           try {
@@ -676,71 +895,234 @@ async function handleToolCall(request: CallToolRequest): Promise<ToolCallRespons
         result = await executeCommand("switch_tab", { tabId: args?.tabId });
         break;
       case "browser_list_skills":
-        result = { skills: listSkills() };
+        result = { skills: listSkills({ domain: args?.domain as string | undefined, query: args?.query as string | undefined }) };
         break;
       case "browser_save_skill":
         result = saveSkill(args ?? {});
         break;
-      case "browser_snapshot":
-        result = await executeCommand("snapshot");
-        break;
-      case "browser_query_region":
-        result = await executeCommand("query_region", { selector: args?.selector });
-        break;
-      case "browser_visual_snapshot": {
-        const snap = await executeCommand("visual_snapshot");
-        if (!snap?.dataBase64) {
+      case "browser_snapshot": {
+        // visual wins if both are set — see the tool description for why
+        // selector+visual together isn't supported.
+        if (args?.visual) {
+          const snap = await executeCommand("visual_snapshot", { tabId: args?.tabId });
+          if (!snap?.dataBase64) {
+            return {
+              content: [{ type: "text", text: `Error: ${snap?.error ?? 'Visual snapshot failed'}${snap?.hint ? ` (${snap.hint})` : ''}` }],
+              isError: true,
+            };
+          }
+          const snapFilePath = saveScreenshotToFile(snap.dataBase64 as string, 'jpeg');
           return {
-            content: [{ type: "text", text: `Error: ${snap?.error ?? 'Visual snapshot failed'}${snap?.hint ? ` (${snap.hint})` : ''}` }],
+            content: [
+              ...(INLINE_IMAGES ? [{ type: "image" as const, data: snap.dataBase64 as string, mimeType: 'image/jpeg' }] : []),
+              { type: "text", text: `${snap.message}\nScreenshot saved to ${snapFilePath}${INLINE_IMAGES ? " (also shown above)" : " — open it to see the annotated boxes; inline image content is off by default (see BROWSERCONTROL_INLINE_IMAGES)"}.${snap._flowWarning ? `\n\n[${snap._flowWarning}]` : ''}\n\n${JSON.stringify(snap.nodes, null, 2)}` },
+            ],
+          };
+        }
+        result = args?.selector
+          ? await executeCommand("query_region", { selector: args.selector, tabId: args?.tabId })
+          : await executeCommand("snapshot", { tabId: args?.tabId });
+        break;
+      }
+      case "browser_click":
+        result = await executeCommand("click", { nodeId: args?.nodeId, tabId: args?.tabId });
+        break;
+      case "browser_type":
+        result = await executeCommand("type", { text: args?.text, nodeId: args?.nodeId, tabId: args?.tabId });
+        break;
+      case "browser_press_key":
+        result = await executeCommand("press_key", { key: args?.key, nodeId: args?.nodeId, tabId: args?.tabId });
+        break;
+      case "browser_run_flow":
+        result = await executeCommand(args?.explore ? "explore_flow" : "run_flow", { steps: args?.steps, tabId: args?.tabId });
+        break;
+      case "browser_evaluate":
+        result = await executeCommand("evaluate", { expression: args?.expression, tabId: args?.tabId });
+        break;
+      case "browser_scroll":
+        result = await executeCommand("scroll", { deltaX: args?.deltaX, deltaY: args?.deltaY, tabId: args?.tabId });
+        break;
+      case "browser_drag":
+        result = await executeCommand("drag", { fromX: args?.fromX, fromY: args?.fromY, toX: args?.toX, toY: args?.toY, tabId: args?.tabId });
+        break;
+      case "browser_network_requests":
+        result = args?.requestId
+          ? await executeCommand("network_request_detail", { requestId: args.requestId, tabId: args?.tabId })
+          : await executeCommand("network_requests", { resourceTypes: args?.resourceTypes, filter: args?.filter, limit: args?.limit, tabId: args?.tabId });
+        break;
+      case "browser_network_clear":
+        result = await executeCommand("network_clear", { tabId: args?.tabId });
+        break;
+      case "browser_inspect_element":
+        result = await executeCommand("inspect_element", { nodeId: args?.nodeId, tabId: args?.tabId });
+        break;
+      case "browser_reading_mode":
+        result = await executeCommand("reading_mode", { maxChars: args?.maxChars, tabId: args?.tabId });
+        break;
+      case "browser_find":
+        result = await executeCommand("find", { query: args?.query, limit: args?.limit, tabId: args?.tabId });
+        break;
+      case "browser_select_content": {
+        const sel = await executeCommand("select_content", {
+          selector: args?.selector,
+          nodeId: args?.nodeId,
+          maxChars: args?.maxChars,
+          maxMatches: args?.maxMatches,
+          tabId: args?.tabId,
+        });
+        if (sel?.error) {
+          return {
+            content: [{ type: "text", text: `Error: ${sel.error}${sel.hint ? ` (${sel.hint})` : ''}` }],
             isError: true,
           };
         }
-        const snapFilePath = saveScreenshotToFile(snap.dataBase64 as string, 'jpeg');
+        const blocks = (sel?.blocks as string[] | undefined) ?? [];
+        if (blocks.length === 0) {
+          return { content: [{ type: "text", text: String(sel?.message ?? "No content extracted.") }] };
+        }
+        const source = args?.selector ? `selector "${args.selector}"` : `nodeId ${args?.nodeId}`;
+        const { appendedChars, totalFileChars } = appendContentToDocsFile(blocks, source);
+        const preview = blocks[0].slice(0, PREVIEW_CHARS);
         return {
-          content: [
-            ...(INLINE_IMAGES ? [{ type: "image" as const, data: snap.dataBase64 as string, mimeType: 'image/jpeg' }] : []),
-            { type: "text", text: `${snap.message}\nScreenshot saved to ${snapFilePath}${INLINE_IMAGES ? " (also shown above)" : " — open it to see the annotated boxes; inline image content is off by default (see BROWSERCONTROL_INLINE_IMAGES)"}.${snap._flowWarning ? `\n\n[${snap._flowWarning}]` : ''}\n\n${JSON.stringify(snap.nodes, null, 2)}` },
-          ],
+          content: [{
+            type: "text",
+            text: `Extracted ${blocks.length} of ${sel?.count} matched element(s) from ${source}. Appended (+${appendedChars} chars) to ${DOCS_FILE} — file is now ${totalFileChars} chars total. Content is NOT included in this response; read the file yourself (in chunks) when ready to use it.${sel?.truncated ? ' [truncated at maxChars/maxMatches this call — narrow the selector or raise the caps for more]' : ''}\n\nPreview of first block:\n${preview}${blocks[0].length > PREVIEW_CHARS ? '…' : ''}`,
+          }],
         };
       }
-      case "browser_click":
-        result = await executeCommand("click", { nodeId: args?.nodeId });
+      case "browser_batch_crawl": {
+        const crawl = await executeCommand("batch_crawl", {
+          urls: args?.urls,
+          concurrency: args?.concurrency,
+          maxCharsPerUrl: args?.maxCharsPerUrl,
+        }, 60000);
+        if (crawl?.error) {
+          return {
+            content: [{ type: "text", text: `Error: ${crawl.error}${crawl.hint ? ` (${crawl.hint})` : ''}` }],
+            isError: true,
+          };
+        }
+        const items = (crawl?.items as Array<{
+          url: string;
+          status: string;
+          fetchDurationMs?: number;
+          title?: string;
+          byline?: string;
+          publishedTime?: string;
+          readingTime?: string;
+          description?: string;
+          markdown?: string;
+          length?: number;
+          error?: string;
+        }> | undefined) ?? [];
+
+        const successfulItems = items.filter((i) => i.status === "success" && i.markdown);
+        const formattedBlocks = successfulItems.map((item) => {
+          const metaLines = [
+            `# [${item.title || item.url}](${item.url})`,
+            `> 🌐 **Source URL**: \`${item.url}\``,
+            `> ⏱️ **Crawled At**: \`${new Date().toISOString()}\` | **Latency**: \`${item.fetchDurationMs ?? 0}ms\` | **Reading Time**: \`${item.readingTime || 'N/A'}\``,
+            ...(item.byline ? [`> 👤 **Author**: ${item.byline}`] : []),
+            ...(item.publishedTime ? [`> 📅 **Published**: ${item.publishedTime}`] : []),
+            ...(item.description ? [`> 💬 **Summary**: ${item.description}`] : []),
+            "",
+            item.markdown,
+          ];
+          return metaLines.join("\n");
+        });
+
+        let fileReport = "";
+        if (formattedBlocks.length > 0) {
+          const { appendedChars, totalFileChars } = appendContentToDocsFile(
+            formattedBlocks,
+            `batch_crawl (${successfulItems.length} URLs)`,
+          );
+          fileReport = `\nAppended (+${appendedChars} chars) to ${DOCS_FILE} — total file size is now ${totalFileChars} chars.`;
+        }
+
+        const summaryLines = [
+          `⚡ Batch crawled ${crawl?.totalProcessed ?? items.length} URL(s) in ${crawl?.durationMs}ms: ${crawl?.successful} succeeded, ${crawl?.failed} failed${crawl?.duplicatesSkipped ? ` (${crawl.duplicatesSkipped} duplicates skipped)` : ''}.${fileReport}`,
+          `📊 Throughput: ${crawl?.throughputPagesPerSec ?? 0} pages/s | Avg Latency: ${crawl?.avgFetchLatencyMs ?? 0}ms/page | Discovered Outlinks: ${(crawl?.discoveredOutlinks as string[])?.length ?? 0}`,
+          "",
+          "### Crawl Results Summary:",
+          ...items.map((item, idx) => {
+            if (item.status === "success") {
+              return `${idx + 1}. ✅ [${item.title || item.url}](${item.url}) — ${item.fetchDurationMs ? `${item.fetchDurationMs}ms | ` : ''}${item.readingTime || `${item.length} chars`}`;
+            } else if (item.status === "skipped_duplicate") {
+              return `${idx + 1}. ⏭️ ${item.url} (skipped duplicate)`;
+            } else {
+              return `${idx + 1}. ❌ ${item.url} — ${item.error || "Failed"}`;
+            }
+          }),
+        ];
+
+        return {
+          content: [{
+            type: "text",
+            text: summaryLines.join("\n"),
+          }],
+        };
+      }
+      case "browser_search":
+        result = await executeCommand("web_search", { query: args?.query, limit: args?.limit });
         break;
-      case "browser_type":
-        result = await executeCommand("type", { text: args?.text, nodeId: args?.nodeId });
+      case "browser_deep_crawl": {
+        const started = startDeepCrawl({
+          seedUrls: args?.seedUrls as string[] | undefined,
+          searchQuery: args?.searchQuery as string | undefined,
+          depth: args?.depth as number | undefined,
+          maxPages: args?.maxPages as number | undefined,
+          maxOutlinksPerPage: args?.maxOutlinksPerPage as number | undefined,
+          concurrency: args?.concurrency as number | undefined,
+          maxCharsPerUrl: args?.maxCharsPerUrl as number | undefined,
+        }, executeCommand);
+        if ("error" in started) {
+          return {
+            content: [{ type: "text", text: `Error: ${started.error} (${started.hint})` }],
+            isError: true,
+          };
+        }
+        return {
+          content: [{
+            type: "text",
+            text: `Started deep crawl ${started.crawlId} (depth ${started.depth}, up to ${started.maxPages} pages, ${started.concurrency} concurrent workers) running in the background. Poll browser_task_status({taskId: "${started.crawlId}"}) for progress — don't wait here.`,
+          }],
+        };
+      }
+      case "browser_start_job": {
+        const rawTasks = (args?.tasks as JobTaskInput[] | undefined) ?? [];
+        const started = startJob(rawTasks, Number(args?.concurrency) || undefined, executeCommand);
+        if ("error" in started) {
+          return {
+            content: [{ type: "text", text: `Error: ${started.error} (${started.hint})` }],
+            isError: true,
+          };
+        }
+        return {
+          content: [{
+            type: "text",
+            text: `Started job ${started.jobId} with ${started.total} task(s) running in the background. Poll browser_task_status({taskId: "${started.jobId}"}) for progress — don't wait here, this call is meant to return immediately.`,
+          }],
+        };
+      }
+      case "browser_task_status": {
+        const taskId = String(args?.taskId ?? "");
+        result = jobExists(taskId)
+          ? getJobStatusText(taskId)
+          : crawlExists(taskId)
+            ? getDeepCrawlStatusText(taskId)
+            : `No task with id "${taskId}" — it may have already completed and been cleaned up (a task is dropped once you've seen its last result), or the id is wrong.`;
         break;
-      case "browser_press_key":
-        result = await executeCommand("press_key", { key: args?.key, nodeId: args?.nodeId });
-        break;
-      case "browser_run_flow":
-        result = await executeCommand("run_flow", { steps: args?.steps });
-        break;
-      case "browser_explore_flow":
-        result = await executeCommand("explore_flow", { steps: args?.steps });
-        break;
-      case "browser_evaluate":
-        result = await executeCommand("evaluate", { expression: args?.expression });
-        break;
-      case "browser_scroll":
-        result = await executeCommand("scroll", { deltaX: args?.deltaX, deltaY: args?.deltaY });
-        break;
-      case "browser_network_requests":
-        result = await executeCommand("network_requests", { resourceTypes: args?.resourceTypes, filter: args?.filter, limit: args?.limit });
-        break;
-      case "browser_network_request_detail":
-        result = await executeCommand("network_request_detail", { requestId: args?.requestId });
-        break;
-      case "browser_network_clear":
-        result = await executeCommand("network_clear");
-        break;
-      case "browser_inspect_element":
-        result = await executeCommand("inspect_element", { nodeId: args?.nodeId });
+      }
+      case "browser_close_tab":
+        result = await executeCommand("close_tab", { tabId: args?.tabId });
         break;
       case "browser_screenshot": {
         const shot = await executeCommand("screenshot", {
           fullPage: args?.fullPage,
           format: args?.format,
           quality: args?.quality,
+          tabId: args?.tabId,
         });
         if (!shot?.dataBase64) {
           return {
@@ -754,6 +1136,34 @@ async function handleToolCall(request: CallToolRequest): Promise<ToolCallRespons
             ...(INLINE_IMAGES ? [{ type: "image" as const, data: shot.dataBase64 as string, mimeType: shot.format === 'png' ? 'image/png' : 'image/jpeg' }] : []),
             { type: "text", text: `Captured ${shot.format} screenshot (${args?.fullPage ? 'full page' : 'viewport'}). Saved to ${shotFilePath}${INLINE_IMAGES ? " (also shown above)" : " — open it to view; inline image content is off by default (see BROWSERCONTROL_INLINE_IMAGES)"}.${shot._flowWarning ? `\n\n[${shot._flowWarning}]` : ''}` },
           ],
+        };
+      }
+      case "browser_start_recording": {
+        const ack = await executeCommand("start_capture");
+        if (!ack?.success) {
+          return {
+            content: [{ type: "text", text: `Error: ${ack?.error ?? 'Failed to start recording'}${ack?.hint ? ` (${ack.hint})` : ''}` }],
+            isError: true,
+          };
+        }
+        return { content: [{ type: "text", text: `${ack.message} Call browser_stop_recording when done.` }] };
+      }
+      case "browser_stop_recording": {
+        // Longer timeout than the 15s default: this has to flush the
+        // MediaRecorder and base64-encode a multi-MB blob before it can
+        // respond, not just round-trip a CDP call.
+        const rec = await executeCommand("stop_capture", {}, 60000);
+        if (!rec?.dataBase64) {
+          return {
+            content: [{ type: "text", text: `Error: ${rec?.error ?? 'Failed to stop recording'}${rec?.hint ? ` (${rec.hint})` : ''}` }],
+            isError: true,
+          };
+        }
+        const recFilePath = saveVideoToFile(rec.dataBase64 as string, rec.format as string);
+        const seconds = ((rec.durationMs as number) / 1000).toFixed(1);
+        const frameNote = rec.frameCount === 0 ? " Warning: 0 frames captured — the page may not have repainted during the recording, or the screencast never started; check the daemon log." : ` (${rec.frameCount} frames)`;
+        return {
+          content: [{ type: "text", text: `Saved ${seconds}s ${rec.format} recording to ${recFilePath}${frameNote}. To see what actions were taken during the recording, check logs/session-*.jsonl for entries in that time window.${rec._flowWarning ? `\n\n[${rec._flowWarning}]` : ''}` }],
         };
       }
       default:
