@@ -1070,13 +1070,22 @@ async function handleToolCall(request: CallToolRequest): Promise<ToolCallRespons
         break;
       }
       case "browser_click":
-        result = await executeCommand("click", { nodeId: args?.nodeId, tabId: args?.tabId });
+        // click/type/press_key/scroll/drag each chain several sequential
+        // CDP calls (scrollIntoView, getBoxModel, queryAXTree, the actual
+        // input dispatch...) behind ONE command. cdp.ts already bounds any
+        // single one of those at 10s; the default 15s budget here was
+        // sized for typical one-shot CDP round trips and can undercut a
+        // legitimate multi-call sequence that hits just one 10s-timed-out
+        // call partway through — the daemon's own timer then fires first
+        // and reports a generic "Timeout waiting for Chrome" instead of
+        // cdp.ts's specific (and more actionable) per-command error.
+        result = await executeCommand("click", { nodeId: args?.nodeId, tabId: args?.tabId }, 20000);
         break;
       case "browser_type":
-        result = await executeCommand("type", { text: args?.text, nodeId: args?.nodeId, tabId: args?.tabId });
+        result = await executeCommand("type", { text: args?.text, nodeId: args?.nodeId, tabId: args?.tabId }, 20000);
         break;
       case "browser_press_key":
-        result = await executeCommand("press_key", { key: args?.key, nodeId: args?.nodeId, tabId: args?.tabId });
+        result = await executeCommand("press_key", { key: args?.key, nodeId: args?.nodeId, tabId: args?.tabId }, 20000);
         break;
       case "browser_run_flow":
         result = await executeCommand(args?.explore ? "explore_flow" : "run_flow", { steps: args?.steps, tabId: args?.tabId });
@@ -1107,10 +1116,13 @@ async function handleToolCall(request: CallToolRequest): Promise<ToolCallRespons
         result = await executeCommand("evaluate", { expression: args?.expression, tabId: args?.tabId });
         break;
       case "browser_scroll":
-        result = await executeCommand("scroll", { deltaX: args?.deltaX, deltaY: args?.deltaY, tabId: args?.tabId });
+        result = await executeCommand("scroll", { deltaX: args?.deltaX, deltaY: args?.deltaY, tabId: args?.tabId }, 20000);
         break;
       case "browser_drag":
-        result = await executeCommand("drag", { fromX: args?.fromX, fromY: args?.fromY, toX: args?.toX, toY: args?.toY, tabId: args?.tabId });
+        // Up to ~14 sequential mouseMoved dispatches between press/release
+        // (see performDrag) — the widest single command in this family, so
+        // gets the most headroom above cdp.ts's per-call 10s cap.
+        result = await executeCommand("drag", { fromX: args?.fromX, fromY: args?.fromY, toX: args?.toX, toY: args?.toY, tabId: args?.tabId }, 25000);
         break;
       case "browser_network_requests":
         result = args?.requestId

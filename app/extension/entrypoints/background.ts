@@ -185,7 +185,17 @@ async function attachDebuggerIfNeeded(tabId: number) {
     });
     attachedTabIds.add(tabId);
     // Independent domains, enabled concurrently (~1 round-trip instead of
-    // 5): Page (dialogs), DOM (getBoxModel), Network, CSS, Overlay.
+    // 6): Page (dialogs), DOM (getBoxModel), Network, CSS, Overlay,
+    // Accessibility (queryAXTree). Accessibility.getFullAXTree/
+    // getPartialAXTree (lib/snapshot.ts) tolerate the domain being
+    // disabled and answer anyway, but Accessibility.queryAXTree (used by
+    // lib/actions.ts's getAxInfoForNode, i.e. every click/type/press_key
+    // that resolves a role+name) does not — without an explicit enable
+    // first, chrome.debugger.sendCommand's callback for queryAXTree just
+    // never fires (same silent-hang symptom as cdp.ts's header comment,
+    // easy to misdiagnose as that same generic flakiness). Playwright/
+    // Puppeteer both enable Accessibility before querying for the same
+    // reason.
     const target = { tabId };
     await Promise.all([
         sendCommand(target, "Page.enable"),
@@ -193,6 +203,7 @@ async function attachDebuggerIfNeeded(tabId: number) {
         sendCommand(target, "Network.enable"),
         sendCommand(target, "CSS.enable"),
         sendCommand(target, "Overlay.enable"),
+        sendCommand(target, "Accessibility.enable"),
     ]);
 }
 

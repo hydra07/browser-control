@@ -45,6 +45,25 @@ export async function addTabToWorkspaceGroup(tabId: number): Promise<void> {
 let seenTabIds = new Set<number>();
 let unseenTabCount = 0;
 
+// chrome.action requires an "action" key in the manifest to exist at all
+// (see wxt.config.ts's manifest.action:{}) — that alone should guarantee
+// it, but a freshly-reloaded/cold-started service worker has been observed
+// to hit this before the namespace is fully wired up, and a stale
+// unrebuilt .output/ (missing the action key) would hit it every time. The
+// badge is a nice-to-have notification, not load-bearing for any tool
+// actually working — degrade to "no badge shown" instead of an uncaught
+// rejection breaking whatever call triggered it.
+function setBadge(text: string, color?: string): void {
+    if (!chrome.action) {
+        console.error(
+            "[browsercontrol] chrome.action is unavailable — rebuild (bun run build) and fully reload the extension in chrome://extensions if this persists.",
+        );
+        return;
+    }
+    if (color) chrome.action.setBadgeBackgroundColor({ color });
+    chrome.action.setBadgeText({ text });
+}
+
 export function installTabGroupBadge(): void {
     chrome.tabs.onUpdated.addListener(async (_tabId, changeInfo) => {
         if (changeInfo.groupId == null || changeInfo.groupId < 0) return;
@@ -55,8 +74,7 @@ export function installTabGroupBadge(): void {
             return;
         }
         unseenTabCount++;
-        chrome.action.setBadgeBackgroundColor({ color: "#6366f1" });
-        chrome.action.setBadgeText({ text: String(unseenTabCount) });
+        setBadge(String(unseenTabCount), "#6366f1");
     });
 }
 
@@ -77,7 +95,7 @@ export async function handleListTabsCommand(
         }));
     seenTabIds = new Set(result.map((t) => t.tabId));
     unseenTabCount = 0;
-    chrome.action.setBadgeText({ text: "" });
+    setBadge("");
     return { tabs: result };
 }
 
