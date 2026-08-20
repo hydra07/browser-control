@@ -4,14 +4,34 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { CallToolRequest } from "@modelcontextprotocol/sdk/types.js";
-import { mkdirSync, writeFileSync, appendFileSync, readdirSync, readFileSync, existsSync } from "node:fs";
+import { mkdirSync, writeFileSync, appendFileSync, readdirSync, readFileSync, renameSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { recordAndCheckFlow } from "./lib/sessionFlow.js";
-import { DOCS_FILE, appendContentToDocsFile } from "./lib/docs.js";
+import * as dataStore from "./lib/dataStore.js";
 import { startJob, getJobStatusText, jobExists, MAX_JOB_TASKS, MAX_CONCURRENT_JOBS } from "./lib/jobs.js";
 import type { JobTaskInput } from "./lib/jobs.js";
 import { startDeepCrawl, getDeepCrawlStatusText, crawlExists, MAX_CRAWL_DEPTH, MAX_CRAWL_PAGES, MAX_CONCURRENT_CRAWLS } from "./lib/crawl.js";
 import type { ExtensionResponse } from "../shared/protocol.js";
+
+// One id for the whole daemon process, used everywhere a "session" needs
+// naming: the log filename, the dataStore sessions row, and every docs
+// block written by this process. Previously the log file and the old
+// docs.ts's per-session markdown file each computed their OWN Date.now(),
+// which only ever matched by the luck of both modules loading in the same
+// millisecond at startup — not a real shared identifier.
+const SESSION_ID = String(Date.now());
+
+// manifest.json is the single source of truth for this project's version
+// (see scripts/version.ts) — read live instead of a hardcoded string here
+// drifting from it, which is exactly what happened before this.
+const PACKAGE_VERSION: string = (() => {
+  try {
+    const manifestPath = join(import.meta.dir, "..", "..", "manifest.json");
+    return JSON.parse(readFileSync(manifestPath, "utf8")).version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
 
 // The daemon never validates a tool's `arguments` against a schema beyond
 // what the MCP SDK already does — logging/forwarding code just needs "some
@@ -49,27 +69,58 @@ try { mkdirSync(VIDEOS_DIR, { recursive: true }); } catch {}
 function saveScreenshotToFile(dataBase64: string, format: string): string {
   const ext = format === "png" ? "png" : "jpg";
   const filePath = join(IMAGES_DIR, `screenshot-${Date.now()}.${ext}`);
-  writeFileSync(filePath, Buffer.from(dataBase64, "base64"));
+  const buf = Buffer.from(dataBase64, "base64");
+  writeFileSync(filePath, buf);
+  dataStore.recordArtifact({ sessionId: SESSION_ID, kind: "image", path: filePath, source: "screenshot", sizeBytes: buf.length });
   return filePath;
 }
 
 function saveVideoToFile(dataBase64: string, format: string): string {
   const filePath = join(VIDEOS_DIR, `recording-${Date.now()}.${format}`);
-  writeFileSync(filePath, Buffer.from(dataBase64, "base64"));
+  const buf = Buffer.from(dataBase64, "base64");
+  writeFileSync(filePath, buf);
+  dataStore.recordArtifact({ sessionId: SESSION_ID, kind: "video", path: filePath, source: "recording", sizeBytes: buf.length });
   return filePath;
 }
-
-// See lib/docs.ts for why this exists — a shared running docs file instead
-// of dumping crawled content through the tool response.
-
 
 // Every tool call gets logged here — this is what actually answers "which
 // call burned the tokens", instead of guessing from a pasted transcript
 // after the fact. One JSONL file per daemon process (= roughly one MCP
 // client session), so a session's calls are easy to isolate and grep.
-const LOGS_DIR = join(import.meta.dir, "..", "..", "logs");
+// Lives under data/ now (used to be a separate top-level logs/ dir) so
+// everything a session produces — log, docs index, images, videos — sits
+// under one root dataCli.ts/dataStore.ts can reason about.
+const LOGS_DIR = join(DATA_DIR, "logs");
 try { mkdirSync(LOGS_DIR, { recursive: true }); } catch {}
-const LOG_FILE = join(LOGS_DIR, `session-${Date.now()}.jsonl`);
+
+// One-time best-effort migration: an older checkout may still have a
+// top-level logs/ dir from before this moved under data/. Move whatever's
+// there over so a single `mise run data:*` command sees the full history
+// instead of half of it being invisible in the old location. Never fatal —
+// worst case the old files just stay where they are.
+try {
+  const legacyLogsDir = join(import.meta.dir, "..", "..", "logs");
+  if (existsSync(legacyLogsDir)) {
+    for (const f of readdirSync(legacyLogsDir)) {
+      if (!f.endsWith(".jsonl")) continue;
+      const dest = join(LOGS_DIR, f);
+      if (existsSync(dest)) continue;
+      try { renameSync(join(legacyLogsDir, f), dest); } catch {}
+    }
+  }
+} catch {}
+
+const LOG_FILE = join(LOGS_DIR, `session-${SESSION_ID}.jsonl`);
+
+dataStore.initSession(SESSION_ID, { pid: process.pid });
+dataStore.recordArtifact({ sessionId: SESSION_ID, kind: "log", path: LOG_FILE });
+
+for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  process.on(sig, () => {
+    dataStore.endSession(SESSION_ID);
+    process.exit(0);
+  });
+}
 
 const PREVIEW_CHARS = 300;
 
@@ -410,7 +461,7 @@ async function executeCommand(cmd: string, args: Record<string, unknown> = {}, t
 // --- MCP Server Setup ---
 const mcpServer = new Server({
   name: "browsercontrol",
-  version: "1.9.0",
+  version: PACKAGE_VERSION,
 }, {
   capabilities: { tools: {} },
   instructions: `
@@ -445,6 +496,17 @@ the background — poll browser_task_status(taskId) for progress; each poll
 only returns what finished since your LAST check on that id, never
 repeating a result, which is also why it's cheap to poll repeatedly
 instead of trying to time it perfectly.
+
+Whatever browser_select_content/browser_batch_crawl/browser_deep_crawl/
+browser_start_job extract is saved as individual docs blocks (SQLite-backed,
+NOT one growing file you read with offset/limit) — each returns the new
+block id(s), and browser_query_docs is how you read one back
+({action:"read", blockId}) or find the right one across everything saved
+this session, or every session ever recorded with allSessions:true
+({action:"search", query}). If you did something on a session worth being
+able to find again later, browser_set_session_name({name}) labels it — not
+required, sessions auto-name from the hostnames they visited, but a real
+description is more useful than a hostname list.
 
 "🤖 AI Workspace" is a two-way handoff, not just where the tabs you open
 end up: the user can drag a tab they already have open into that group
@@ -765,7 +827,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "browser_select_content",
-        description: "Extract clean markdown (headings, links, lists, code blocks, emphasis preserved) from specific element(s) — for crawling a page (or many pages, across many calls) into material for doc generation. IMPORTANT: this does NOT return the extracted content in the tool response — that would flood your context on anything beyond a trivial page, especially across a multi-page crawl. Every call instead APPENDS to one running markdown file for this session and gives you back the file path plus a short preview. Read the file yourself (in chunks — offset/limit, not all at once) once you're ready to use the content, whether that's after one call or fifty. Pass either `selector` (CSS — matches multiple elements, each becomes its own block, e.g. every '.faq-item') or `nodeId` (from browser_snapshot/browser_find — exactly one element). If you truly need a small amount of text back immediately instead of accumulating a file, browser_reading_mode is the right tool, not this one.",
+        description: "Extract clean markdown (headings, links, lists, code blocks, emphasis preserved) from specific element(s) — for crawling a page (or many pages, across many calls) into material for doc generation. IMPORTANT: this does NOT return the extracted content in the tool response — that would flood your context on anything beyond a trivial page, especially across a multi-page crawl. Every matched element is instead saved as its own docs block (SQLite-backed, see browser_query_docs) and you get back the new block id(s) plus a short preview. Use browser_query_docs({action:'read', blockId}) once you're ready to use one, or {action:'search'} to find the right one across everything saved this session (or every session, with allSessions:true). Pass either `selector` (CSS — matches multiple elements, each becomes its own block, e.g. every '.faq-item') or `nodeId` (from browser_snapshot/browser_find — exactly one element). If you truly need a small amount of text back immediately instead of saving blocks, browser_reading_mode is the right tool, not this one.",
         inputSchema: {
           type: "object",
           properties: {
@@ -779,7 +841,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "browser_batch_crawl",
-        description: "Concurrent batch crawler for heavy workloads: fetch and extract clean Markdown from multiple URLs in parallel without opening visible tabs or triggering UI animations. Automatically extracts metadata (Title, Author, Published Date, Reading Time) and outbound links, applies Readability heuristics, dedupes against every URL already crawled this session, and appends the structured results into the session's markdown docs file on disk (data/docs/). Returns a compact execution summary and file path to save tokens — never the extracted content itself. IMPORTANT: unlike every other browser_* tool, this does NOT go through the real browser tab — it's a plain fetch() with no cookies/login session and no JavaScript execution. Only use it for public, mostly-static pages (docs, blog posts, wikis). For anything behind a login, or a JS-rendered SPA, navigate there with browser_navigate and use browser_select_content/browser_reading_mode on the real tab instead (or browser_start_job for several such pages) — this tool will silently return thin or empty results there, not an error. Max 100 URLs per call; split a larger list across multiple calls (they all append to the same session docs file). For recursively following the links a crawl turns up instead of managing that yourself, use browser_deep_crawl instead of calling this in a loop.",
+        description: "Concurrent batch crawler for heavy workloads: fetch and extract clean Markdown from multiple URLs in parallel without opening visible tabs or triggering UI animations. Automatically extracts metadata (Title, Author, Published Date, Reading Time) and outbound links, applies Readability heuristics, dedupes against every URL already crawled this session, and saves each page as its own docs block (SQLite-backed — see browser_query_docs), not one file everything gets appended to. Returns a compact execution summary and the new block ids to save tokens — never the extracted content itself. IMPORTANT: unlike every other browser_* tool, this does NOT go through the real browser tab — it's a plain fetch() with no cookies/login session and no JavaScript execution. Only use it for public, mostly-static pages (docs, blog posts, wikis). For anything behind a login, or a JS-rendered SPA, navigate there with browser_navigate and use browser_select_content/browser_reading_mode on the real tab instead (or browser_start_job for several such pages) — this tool will silently return thin or empty results there, not an error. Max 100 URLs per call; split a larger list across multiple calls. For recursively following the links a crawl turns up instead of managing that yourself, use browser_deep_crawl instead of calling this in a loop.",
         inputSchema: {
           type: "object",
           properties: {
@@ -797,7 +859,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "browser_deep_crawl",
-        description: `Recursive crawl: start from seed URLs and/or a search query, follow the outbound links pages turn up, up to \`depth\` hops deep — automatically, without you reading content to decide what to follow next. A continuous pool of \`concurrency\` workers drains a shared queue (a real frontier, not depth-by-depth batches) — a worker that finishes a page immediately picks up whatever's next, sibling or freshly-discovered child, so the whole pool stays busy instead of the next round waiting on this round's single slowest page. Built on browser_batch_crawl's per-page fetch (same fetch()-based, no-login caveat applies), so it's for discovering/reading public content at volume, not for authenticated or JS-rendered sites. Returns a crawlId almost immediately; the crawl runs in the background. Poll browser_task_status(crawlId) — each call only reports pages that finished since your last check. Results append to the session docs file as pages finish; this tool never returns crawled content directly. Max depth ${MAX_CRAWL_DEPTH}, max ${MAX_CRAWL_PAGES} total pages per crawl, ${MAX_CONCURRENT_CRAWLS} crawls running at once.`,
+        description: `Recursive crawl: start from seed URLs and/or a search query, follow the outbound links pages turn up, up to \`depth\` hops deep — automatically, without you reading content to decide what to follow next. A continuous pool of \`concurrency\` workers drains a shared queue (a real frontier, not depth-by-depth batches) — a worker that finishes a page immediately picks up whatever's next, sibling or freshly-discovered child, so the whole pool stays busy instead of the next round waiting on this round's single slowest page. Built on browser_batch_crawl's per-page fetch (same fetch()-based, no-login caveat applies), so it's for discovering/reading public content at volume, not for authenticated or JS-rendered sites. Returns a crawlId almost immediately; the crawl runs in the background. Poll browser_task_status(crawlId) — each call only reports pages that finished since your last check. Each page is saved as its own docs block as it finishes (query via browser_query_docs — a crawl of hundreds of pages does NOT become one giant file); this tool never returns crawled content directly. Max depth ${MAX_CRAWL_DEPTH}, max ${MAX_CRAWL_PAGES} total pages per crawl, ${MAX_CONCURRENT_CRAWLS} crawls running at once.`,
         inputSchema: {
           type: "object",
           properties: {
@@ -813,7 +875,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "browser_start_job",
-        description: `Async multi-tab task runner: give it a list of URLs (each with what to extract), it opens up to \`concurrency\` real tabs at once — full login session, full JS rendering, unlike browser_batch_crawl — works through each, and appends results into the session's docs file (data/docs/) as they finish. Returns almost immediately with a jobId; the crawl continues in the background. Poll browser_task_status(jobId) to check progress — do NOT block waiting for this to "complete" the way a normal tool call does, that's the whole point of it being async. Prefer this over several sequential browser_navigate+browser_reading_mode calls whenever you have multiple URLs to process — driving them one at a time is exactly the throughput problem this exists to avoid. Max ${MAX_JOB_TASKS} tasks per job, ${MAX_CONCURRENT_JOBS} jobs running at once; split a larger batch across sequential browser_start_job calls.`,
+        description: `Async multi-tab task runner: give it a list of URLs (each with what to extract), it opens up to \`concurrency\` real BACKGROUND tabs at once — full login session, full JS rendering, unlike browser_batch_crawl — works through each, and saves each page's result as its own docs block (query via browser_query_docs) as they finish. These tabs never touch your foreground session: they don't steal window focus and won't become the default target for a browser_click/browser_snapshot call that omits tabId. Returns almost immediately with a jobId; the crawl continues in the background. Poll browser_task_status(jobId) to check progress — do NOT block waiting for this to "complete" the way a normal tool call does, that's the whole point of it being async. Prefer this over several sequential browser_navigate+browser_reading_mode calls whenever you have multiple URLs to process — driving them one at a time is exactly the throughput problem this exists to avoid. Max ${MAX_JOB_TASKS} tasks per job, ${MAX_CONCURRENT_JOBS} jobs running at once; split a larger batch across sequential browser_start_job calls.`,
         inputSchema: {
           type: "object",
           properties: {
@@ -841,6 +903,21 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: { type: "object", properties: { taskId: { type: "string" } }, required: ["taskId"] },
       },
       {
+        name: "browser_query_docs",
+        description: "Query content saved by browser_select_content/browser_batch_crawl/browser_deep_crawl/browser_start_job — each of those saves what it extracts as one or more docs BLOCKS (SQLite-backed, not a file you read yourself) instead of returning the content directly. Three actions: 'list' — cheap metadata only (id, source, title, char count) for blocks in scope, so you can see what's there before fetching anything; 'read' — full content of ONE block by `blockId`; 'search' — full-text search across blocks' content/title/source, returning a highlighted snippet per match (not full content) so you can find the right block before reading it. Defaults to the CURRENT session's blocks only; pass `allSessions:true` to search/list across every session ever recorded (e.g. \"did I already crawl this site last week\").",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: { type: "string", enum: ["list", "search", "read"] },
+            blockId: { type: "number", description: "Required for action:'read' — id from a prior 'list' or 'search' result." },
+            query: { type: "string", description: "Required for action:'search' — full-text query." },
+            allSessions: { type: "boolean", description: "For 'list'/'search': include every session's blocks, not just the current one. Default false." },
+            limit: { type: "number", description: "Max results for 'list'/'search', default 20/50." },
+          },
+          required: ["action"],
+        },
+      },
+      {
         name: "browser_close_tab",
         description: "Close a tab by id (from browser_navigate/browser_list_tabs) — tidy up a tab you opened with browser_navigate({newTab:true}) once you're done with it, especially after driving several tabs at once.",
         inputSchema: { type: "object", properties: { tabId: { type: "number" } }, required: ["tabId"] },
@@ -860,13 +937,18 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "browser_start_recording",
-        description: "Start recording the active tab as video — use this instead of repeated browser_screenshot calls when you want to show/review a multi-step flow (a wizard, a drag interaction, an animation) as motion rather than a stack of stills. Records the tab only (no audio, no other tabs). Call browser_stop_recording when done; every tool call you make while recording is running still lands in the normal session log (logs/session-*.jsonl) with a timestamp, so you can line up what you did against what the video shows. Only one recording can be active at a time.",
+        description: "Start recording the active tab as video — use this instead of repeated browser_screenshot calls when you want to show/review a multi-step flow (a wizard, a drag interaction, an animation) as motion rather than a stack of stills. Records the tab only (no audio, no other tabs). Call browser_stop_recording when done; every tool call you make while recording is running still lands in the normal session log (data/logs/session-*.jsonl) with a timestamp, so you can line up what you did against what the video shows. Only one recording can be active at a time.",
         inputSchema: { type: "object", properties: {} }
       },
       {
         name: "browser_stop_recording",
         description: "Stop the recording started by browser_start_recording, save it as a .webm file, and return its path. Errors if no recording is in progress.",
         inputSchema: { type: "object", properties: {} }
+      },
+      {
+        name: "browser_set_session_name",
+        description: "Label this daemon session with a short human-readable name (e.g. \"Debugged checkout flow on shop.example.com\") so `mise run data:sessions`/`data:show` can identify it later instead of just a timestamp. Without this, a session's name auto-fills from the hostnames it visited — call this when that's not descriptive enough (e.g. you did something specific worth remembering on a generic site). Not required for every session; it's a nicety for ones worth finding again.",
+        inputSchema: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
       }
     ]
   };
@@ -882,7 +964,9 @@ async function handleToolCall(request: CallToolRequest): Promise<ToolCallRespons
         const url = typeof args?.url === "string" ? args.url : undefined;
         if (url) {
           try {
-            const skill = findSkillForHostname(new URL(url).hostname);
+            const hostname = new URL(url).hostname;
+            dataStore.recordHostVisit(SESSION_ID, hostname);
+            const skill = findSkillForHostname(hostname);
             if (skill) result = { ...result, skillHint: `Skill available for this domain: ${skill.path} — read it before exploring.` };
           } catch {}
         }
@@ -981,12 +1065,23 @@ async function handleToolCall(request: CallToolRequest): Promise<ToolCallRespons
           return { content: [{ type: "text", text: String(sel?.message ?? "No content extracted.") }] };
         }
         const source = args?.selector ? `selector "${args.selector}"` : `nodeId ${args?.nodeId}`;
-        const { appendedChars, totalFileChars } = appendContentToDocsFile(blocks, source);
+        // One docs_blocks row per matched element, not one call joining all
+        // of them together — keeps each block individually addressable/
+        // searchable via browser_query_docs instead of every match from a
+        // broad selector landing in one big blob.
+        const blockIds: number[] = [];
+        let sessionTotalChars = 0;
+        for (let i = 0; i < blocks.length; i++) {
+          const label = blocks.length > 1 ? `${source} (match ${i + 1}/${blocks.length})` : source;
+          const added = dataStore.addDocsBlock(SESSION_ID, blocks[i], label);
+          blockIds.push(added.blockId);
+          sessionTotalChars = added.sessionTotalChars;
+        }
         const preview = blocks[0].slice(0, PREVIEW_CHARS);
         return {
           content: [{
             type: "text",
-            text: `Extracted ${blocks.length} of ${sel?.count} matched element(s) from ${source}. Appended (+${appendedChars} chars) to ${DOCS_FILE} — file is now ${totalFileChars} chars total. Content is NOT included in this response; read the file yourself (in chunks) when ready to use it.${sel?.truncated ? ' [truncated at maxChars/maxMatches this call — narrow the selector or raise the caps for more]' : ''}\n\nPreview of first block:\n${preview}${blocks[0].length > PREVIEW_CHARS ? '…' : ''}`,
+            text: `Extracted ${blocks.length} of ${sel?.count} matched element(s) from ${source}. Saved as docs block${blockIds.length > 1 ? 's' : ''} [${blockIds.join(', ')}] — this session now has ${sessionTotalChars} docs chars total. Content is NOT included in this response; use browser_query_docs({action:"read", blockId:${blockIds[0]}}) to retrieve one, or {action:"search", query:"..."} to search across blocks.${sel?.truncated ? ' [truncated at maxChars/maxMatches this call — narrow the selector or raise the caps for more]' : ''}\n\nPreview of first block:\n${preview}${blocks[0].length > PREVIEW_CHARS ? '…' : ''}`,
           }],
         };
       }
@@ -1033,11 +1128,17 @@ async function handleToolCall(request: CallToolRequest): Promise<ToolCallRespons
 
         let fileReport = "";
         if (formattedBlocks.length > 0) {
-          const { appendedChars, totalFileChars } = appendContentToDocsFile(
-            formattedBlocks,
-            `batch_crawl (${successfulItems.length} URLs)`,
-          );
-          fileReport = `\nAppended (+${appendedChars} chars) to ${DOCS_FILE} — total file size is now ${totalFileChars} chars.`;
+          // One row per crawled URL (not one call joining all of them) —
+          // same reasoning as browser_select_content above.
+          const blockIds: number[] = [];
+          let sessionTotalChars = 0;
+          for (let i = 0; i < formattedBlocks.length; i++) {
+            const item = successfulItems[i];
+            const added = dataStore.addDocsBlock(SESSION_ID, formattedBlocks[i], item.url, item.title || item.url);
+            blockIds.push(added.blockId);
+            sessionTotalChars = added.sessionTotalChars;
+          }
+          fileReport = `\nSaved ${blockIds.length} docs block(s) [${blockIds.join(', ')}] — this session now has ${sessionTotalChars} docs chars total. Query via browser_query_docs.`;
         }
 
         const summaryLines = [
@@ -1075,7 +1176,7 @@ async function handleToolCall(request: CallToolRequest): Promise<ToolCallRespons
           maxOutlinksPerPage: args?.maxOutlinksPerPage as number | undefined,
           concurrency: args?.concurrency as number | undefined,
           maxCharsPerUrl: args?.maxCharsPerUrl as number | undefined,
-        }, executeCommand);
+        }, executeCommand, SESSION_ID);
         if ("error" in started) {
           return {
             content: [{ type: "text", text: `Error: ${started.error} (${started.hint})` }],
@@ -1091,7 +1192,7 @@ async function handleToolCall(request: CallToolRequest): Promise<ToolCallRespons
       }
       case "browser_start_job": {
         const rawTasks = (args?.tasks as JobTaskInput[] | undefined) ?? [];
-        const started = startJob(rawTasks, Number(args?.concurrency) || undefined, executeCommand);
+        const started = startJob(rawTasks, Number(args?.concurrency) || undefined, executeCommand, SESSION_ID);
         if ("error" in started) {
           return {
             content: [{ type: "text", text: `Error: ${started.error} (${started.hint})` }],
@@ -1114,6 +1215,38 @@ async function handleToolCall(request: CallToolRequest): Promise<ToolCallRespons
             : `No task with id "${taskId}" — it may have already completed and been cleaned up (a task is dropped once you've seen its last result), or the id is wrong.`;
         break;
       }
+      case "browser_query_docs": {
+        const action = String(args?.action ?? "");
+        const scopeSessionId = args?.allSessions ? undefined : SESSION_ID;
+        if (action === "list") {
+          const blocks = dataStore.listDocsBlocks({ sessionId: scopeSessionId, limit: Number(args?.limit) || undefined });
+          result = { blocks };
+        } else if (action === "search") {
+          const query = typeof args?.query === "string" ? args.query : "";
+          if (!query) {
+            return { content: [{ type: "text", text: `Error: Missing query (hint: action:"search" needs a \`query\` string.)` }], isError: true };
+          }
+          const blocks = dataStore.searchDocsBlocks(query, { sessionId: scopeSessionId, limit: Number(args?.limit) || undefined });
+          result = { blocks };
+        } else if (action === "read") {
+          const blockId = Number(args?.blockId);
+          if (!Number.isFinite(blockId)) {
+            return { content: [{ type: "text", text: `Error: Missing blockId (hint: action:"read" needs a \`blockId\` from a prior 'list' or 'search' result.)` }], isError: true };
+          }
+          const block = dataStore.getDocsBlock(blockId);
+          if (!block) {
+            return { content: [{ type: "text", text: `Error: No docs block with id ${blockId} (hint: it may belong to a different session — retry with allSessions:true, or it never existed.)` }], isError: true };
+          }
+          result = { ...block };
+        } else {
+          return { content: [{ type: "text", text: `Error: Unknown action "${action}" (hint: use "list", "search", or "read".)` }], isError: true };
+        }
+        break;
+      }
+      case "browser_set_session_name":
+        dataStore.setSessionName(SESSION_ID, String(args?.name ?? ""));
+        result = { success: true, message: `Session ${SESSION_ID} renamed to "${args?.name}".` };
+        break;
       case "browser_close_tab":
         result = await executeCommand("close_tab", { tabId: args?.tabId });
         break;
@@ -1163,7 +1296,7 @@ async function handleToolCall(request: CallToolRequest): Promise<ToolCallRespons
         const seconds = ((rec.durationMs as number) / 1000).toFixed(1);
         const frameNote = rec.frameCount === 0 ? " Warning: 0 frames captured — the page may not have repainted during the recording, or the screencast never started; check the daemon log." : ` (${rec.frameCount} frames)`;
         return {
-          content: [{ type: "text", text: `Saved ${seconds}s ${rec.format} recording to ${recFilePath}${frameNote}. To see what actions were taken during the recording, check logs/session-*.jsonl for entries in that time window.${rec._flowWarning ? `\n\n[${rec._flowWarning}]` : ''}` }],
+          content: [{ type: "text", text: `Saved ${seconds}s ${rec.format} recording to ${recFilePath}${frameNote}. To see what actions were taken during the recording, check data/logs/session-*.jsonl for entries in that time window.${rec._flowWarning ? `\n\n[${rec._flowWarning}]` : ''}` }],
         };
       }
       default:
@@ -1183,6 +1316,7 @@ async function handleToolCall(request: CallToolRequest): Promise<ToolCallRespons
 
 mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
   const start = Date.now();
+  dataStore.recordToolCall(SESSION_ID);
   const response = await handleToolCall(request);
   logToolCall(request.params.name, request.params.arguments, response, Date.now() - start);
   return response;

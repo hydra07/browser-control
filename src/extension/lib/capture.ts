@@ -1,19 +1,12 @@
-// Screen recording of the active tab — separate concern from screenshot.ts
-// (single frame) and, unlike everything else under extension/lib, this runs
-// in the OFFSCREEN DOCUMENT, not the service worker: MediaRecorder and
-// <canvas> don't exist in a service worker at all, only in a real DOM
-// context, and the offscreen document is the only place in an MV3 extension
-// that has both "stays alive" and "has DOM APIs".
+// Screen recording of the active tab. Runs in the OFFSCREEN DOCUMENT, not
+// the service worker — MediaRecorder/<canvas> need a real DOM context,
+// which only the offscreen document has while also staying alive in MV3.
 //
-// Frame source is CDP's Page.startScreencast (relayed from background.ts's
-// lib/screencast.ts over a chrome.runtime.Port), NOT chrome.tabCapture.
-// tabCapture.getMediaStreamId requires activeTab permission granted by a
-// real user gesture (clicking the extension's toolbar icon) — an AI-driven
-// recording triggered from the daemon has no such gesture, and fails with
-// "Extension has not been invoked for the current page". Each incoming
-// screencast frame (a JPEG) is drawn onto an offscreen <canvas>, whose
-// captureStream() feeds MediaRecorder — same MediaRecorder/webm output as a
-// real tabCapture stream would have produced, just sourced from CDP instead.
+// Frames come from CDP's Page.startScreencast (relayed from
+// lib/screencast.ts over a chrome.runtime.Port), not chrome.tabCapture,
+// which needs a real user gesture an AI-driven recording can't provide.
+// Each incoming JPEG frame is drawn onto an offscreen <canvas>, whose
+// captureStream() feeds MediaRecorder.
 
 function errorMessage(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
@@ -80,28 +73,19 @@ function base64ToBlob(base64: string, mimeType: string): Blob {
 
 async function drawFrame(frame: FrameMessage): Promise<void> {
     if (!canvas || !ctx || !track) return;
-    // Deliberately NOT resizing the canvas to frame.metadata's
-    // deviceWidth/deviceHeight here, even though they can differ slightly
-    // frame to frame (window resize, DPI change) — setting canvas.width/
-    // height mid-recording clears the canvas AND changes the resolution of
-    // the MediaStreamTrack MediaRecorder is actively encoding. The WebM
-    // container's PixelWidth/PixelHeight are fixed from the first keyframe;
-    // a resolution change partway through produces a file most players
-    // can't open at all, even though it still has a plausible size/duration
-    // (this was the cause of a real "recording succeeds but the .webm won't
-    // play" bug). drawImage's explicit destination rect below scales every
-    // frame to the canvas's fixed size instead, so the encoded resolution
-    // never moves for the life of one recording.
+    // Never resize the canvas to the frame's actual dimensions, even though
+    // they can drift slightly (window resize, DPI change) — WebM's
+    // PixelWidth/Height are fixed from the first keyframe, so changing
+    // canvas.width/height mid-recording produces a file most players can't
+    // open. drawImage's destination rect scales every frame to fit instead.
     const bitmap = await createImageBitmap(
         base64ToBlob(frame.data, "image/jpeg"),
     );
     ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
     bitmap.close();
     console.log("[browsercontrol] drew frame", frameCount + 1);
-    // captureStream(0) below puts the track in manual mode — a video frame
-    // is only emitted when explicitly requested, so the output frame rate
-    // tracks real screencast activity instead of a fixed timer sampling a
-    // possibly-stale canvas.
+    // captureStream(0) is manual mode — a frame only emits on requestFrame(),
+    // so output rate tracks real screencast activity, not a fixed timer.
     track.requestFrame();
     frameCount++;
 }
@@ -115,22 +99,16 @@ export async function startCapture(): Promise<CaptureAck | CaptureError> {
     }
 
     canvas = document.createElement("canvas");
-    // Matches lib/screencast.ts's Page.startScreencast maxWidth/maxHeight
-    // cap, so a normal-sized viewport's frames arrive at (or under) this
-    // canvas's own size and drawImage's scale-to-fit is a no-op or a minor
-    // downscale, not a stretch. Fixed for the whole recording — see the
-    // no-resize note in drawFrame for why.
+    // Matches screencast.ts's Page.startScreencast maxWidth/maxHeight so
+    // frames arrive at or under this size — fixed for the whole recording,
+    // see drawFrame's no-resize note.
     canvas.width = 1280;
     canvas.height = 900;
-    // Must actually be in the document tree, not just constructed — an
-    // unattached <canvas> is not on any render/compositing path, and
-    // captureStream() on one reliably grabs exactly one static frame at
-    // creation and never updates again (this was the actual cause of a
-    // recording that "looked like a picture" — a thumbnail with no
-    // scrubbable timeline: technically valid duration, effectively 1 frame).
-    // Positioned off in space rather than hidden — the offscreen document is
-    // never shown to the user either way, this is purely about being a real
-    // rendered element.
+    // Must be attached to the document — an unattached <canvas> isn't on any
+    // render path, and captureStream() on one grabs exactly one static frame
+    // at creation and never updates (produces a recording that's technically
+    // valid but effectively a single-frame thumbnail). Positioned off-screen
+    // since the offscreen document is never shown to the user anyway.
     canvas.style.cssText = "position:fixed;left:-99999px;top:0;";
     document.body.appendChild(canvas);
     ctx = canvas.getContext("2d");
@@ -143,14 +121,11 @@ export async function startCapture(): Promise<CaptureAck | CaptureError> {
         };
     }
 
-    // Paint one placeholder frame immediately instead of leaving the canvas
-    // (and therefore the track) with zero content until the first real CDP
-    // screencast frame lands. If stop_recording is called quickly after
-    // start_recording — before that first frame has round-tripped through
-    // Page.startScreencast + the capture-frames port — the recorder would
-    // otherwise have never received a single frame, which some Chrome builds
-    // treat as reason enough to drop it to "inactive" on their own well
-    // before an explicit .stop() call.
+    // Paint a placeholder frame immediately rather than leaving the track
+    // empty until the first real CDP frame lands — a stop_recording called
+    // very quickly after start could otherwise land on a recorder some
+    // Chrome builds have already dropped to "inactive" for never having
+    // received a frame.
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -172,24 +147,12 @@ export async function startCapture(): Promise<CaptureAck | CaptureError> {
         let settled = false;
         p.onMessage.addListener((msg: FrameMessage | PortAck) => {
             if ("data" in msg) {
-                // screencastFrameAck (screencast.ts) fires right after the
-                // frame is posted to this port, not after it's actually
-                // drawn — so frames can arrive faster than drawFrame's
-                // decode+draw finishes. Chaining onto frameQueue instead of
-                // firing each drawFrame independently keeps them drawn in
-                // arrival order even if one frame's JPEG decodes slower than
-                // the next one's; without this a later frame could land on
-                // the canvas before an earlier one, visibly reordering
-                // motion in the recording.
-                //
-                // The .catch() here is load-bearing, not decorative: without
-                // it, one rejected drawFrame() (a malformed frame, a decode
-                // error) leaves frameQueue itself permanently rejected —
-                // every later frame chains onto it with .then(), which never
-                // runs once the chain it's hanging off is rejected. That
-                // silently froze the recording at whatever the last
-                // successfully-drawn frame was (in practice: frame 0, the
-                // black placeholder) for the rest of the take.
+                // Frames can arrive faster than drawFrame's decode+draw
+                // finishes — chaining onto frameQueue (instead of firing
+                // each drawFrame independently) keeps them drawn in arrival
+                // order. The .catch() is load-bearing: one rejected
+                // drawFrame would otherwise leave frameQueue permanently
+                // rejected, silently freezing every frame after it.
                 frameQueue = frameQueue.then(() => drawFrame(msg)).catch((e) => {
                     console.error("[browsercontrol] drawFrame failed:", errorMessage(e));
                 });
@@ -225,10 +188,8 @@ export async function startCapture(): Promise<CaptureAck | CaptureError> {
     try {
         recorder.start(1000);
     } catch (e) {
-        // Leaving `recorder` set to a MediaRecorder that never actually
-        // started would permanently trip the "Already recording" guard
-        // above on every future call — reset all state so a retry can
-        // actually retry.
+        // Reset all state — leaving `recorder` set would permanently trip
+        // the "Already recording" guard above on every future call.
         port?.disconnect();
         port = null;
         track = null;
@@ -241,9 +202,8 @@ export async function startCapture(): Promise<CaptureAck | CaptureError> {
             hint: errorMessage(e),
         };
     }
-    // Push that placeholder frame now that the recorder is actually
-    // listening — fillRect alone doesn't emit anything on a manual-mode
-    // (captureStream(0)) track, only requestFrame() does.
+    // fillRect alone emits nothing on a manual-mode track — only
+    // requestFrame() does, now that the recorder is actually listening.
     track.requestFrame();
     frameCount++;
     recordingStartedAt = Date.now();
@@ -264,22 +224,18 @@ export async function stopCapture(): Promise<CaptureResult | CaptureError> {
     port = null;
     track = null;
 
-    // Triggers background.ts's port.onDisconnect -> Page.stopScreencast, so
-    // no more frames arrive after this point. Any frame already queued
-    // still needs to finish drawing (and call requestFrame()) before the
-    // recorder stops, or the last moment of the recording gets cut early.
+    // Triggers background.ts's port.onDisconnect -> Page.stopScreencast.
+    // Wait for any already-queued frame to finish drawing first, or the
+    // last moment of the recording gets cut early.
     finishedPort.disconnect();
     await frameQueue;
 
     const mimeType = finishedRecorder.mimeType || "video/webm";
     const blob = await new Promise<Blob>((resolve) => {
-        // .stop() throws InvalidStateError if the recorder is already
-        // "inactive" — which happens if the underlying track ended on its
-        // own (tab closed, canvas torn down) before this call. In that case
-        // its 'stop' event already fired (and won't fire again), so calling
-        // .stop() again would both throw AND leave this promise waiting on
-        // an event that's never coming. Resolve directly from whatever
-        // chunks landed instead.
+        // .stop() throws if the recorder is already "inactive" (the track
+        // ended on its own — tab closed, canvas torn down) — its 'stop'
+        // event already fired and won't again, so resolve from whatever
+        // chunks landed instead of calling .stop() again.
         if (finishedRecorder.state === "inactive") {
             resolve(new Blob(chunks, { type: mimeType }));
             return;

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BrowserControl Agent",
-  "version": "1.12.1",
+  "version": "0.1.0",
   "description": "AI Workspace extension for controlling browser via CDP",
   "permissions": [
     "tabs",
@@ -13,7 +13,20 @@
   "host_permissions": [
     "<all_urls>"
   ],
-  "action": {},
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
   "background": {
     "service_worker": "dist/extension/background.js",
     "type": "module"

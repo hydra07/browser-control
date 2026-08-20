@@ -1,26 +1,16 @@
 // browser_deep_crawl / browser_deep_crawl_status — automatic recursive
 // crawl on top of browser_batch_crawl's per-URL fetch+extract.
 //
-// First version of this batched by BFS level: one executeCommand("batch_crawl",
-// {urls: <whole level>}) call per depth, wait for ALL of it (Promise.all
-// inside batch.ts) before starting the next depth. That has real head-of-
-// line blocking — batch_crawl's own internal call doesn't return
-// discoveredOutlinks until every URL in it (including the single slowest
-// one) finishes, so the whole worker pool sits idle waiting on that one
-// page instead of picking up newly-discovered work. Measured effect: 50
-// pages over 3 levels in ~18s (~2.75 pages/s) despite a resource-aware
-// concurrency pool that should sustain much higher throughput continuously.
-//
-// This version is a real frontier: one shared queue of {url, depth}
-// entries and N persistent workers pulling from it. A worker that finishes
-// a fetch immediately pushes that page's outlinks (depth+1, capped, deduped)
-// onto the SAME queue and grabs whatever's next — a sibling still waiting,
-// or the child it just discovered — rather than waiting for anything else
-// to finish first. Each executeCommand("batch_crawl", {urls: [oneUrl]})
-// call is single-URL on purpose: concurrency now lives in this queue/worker
-// pool, not in batch.ts's own internal Promise.all-over-many-urls, which is
-// exactly what removed the barrier.
-import { appendContentToDocsFile, DOCS_FILE } from "./docs.js";
+// A real frontier, not depth-by-depth batches: one shared {url, depth}
+// queue and N persistent workers pulling from it. A worker that finishes a
+// fetch immediately pushes that page's outlinks onto the same queue and
+// grabs whatever's next (sibling or freshly-discovered child) instead of
+// waiting for the rest of its "level" to finish first — batching by BFS
+// level measured ~2.75 pages/s (head-of-line blocked on each level's
+// slowest page) vs. sustained full-concurrency throughput with this.
+// Concurrency lives entirely in this queue/worker pool — each
+// executeCommand("batch_crawl") call below is single-URL on purpose.
+import { addDocsBlock } from "./dataStore.js";
 import type { Executor } from "./jobs.js";
 import { cpus } from "node:os";
 
@@ -45,6 +35,7 @@ interface VisitedPage {
 
 interface Crawl {
     id: string;
+    sessionId: string;
     depth: number;
     maxPages: number;
     maxOutlinksPerPage: number;
@@ -80,6 +71,7 @@ function defaultCrawlConcurrency(): number {
 export function startDeepCrawl(
     input: DeepCrawlInput,
     execute: Executor,
+    sessionId: string,
 ): { crawlId: string; depth: number; maxPages: number; concurrency: number } | { error: string; hint: string } {
     const seedUrls = (input.seedUrls ?? []).filter(
         (u) => typeof u === "string" && u.trim().length > 0,
@@ -114,6 +106,7 @@ export function startDeepCrawl(
     const crawlId = crypto.randomUUID();
     const crawl: Crawl = {
         id: crawlId,
+        sessionId,
         depth,
         maxPages,
         maxOutlinksPerPage,
@@ -172,19 +165,15 @@ async function runDeepCrawl(
         for (const r of results) enqueue(r.url, 0);
     }
 
-    // activeFetches, not a "some worker is busy" boolean — a worker that
-    // finds the queue empty must know whether anyone still IN FLIGHT might
-    // enqueue more work before it's safe to exit. crawlOnePage's enqueue()
-    // calls always happen synchronously before its promise resolves (no
-    // await after them), so by the time activeFetches drops to 0, every
-    // finished page has already enqueued whatever children it found —
-    // nothing can add to the queue after that point undetected.
+    // A worker finding the queue empty must know whether anyone still IN
+    // FLIGHT might enqueue more work before it's safe to exit — enqueue()
+    // always runs synchronously before crawlOnePage's promise resolves, so
+    // activeFetches hitting 0 reliably means nothing more is coming.
     let activeFetches = 0;
 
-    // Persistent workers draining a shared queue — a worker that finishes
-    // immediately re-enters the loop and grabs whatever's next, whether
-    // that's a sibling that was already queued or a child it just
-    // discovered itself. No barrier between depths.
+    // Persistent workers draining a shared queue, no barrier between
+    // depths — a worker that finishes re-enters immediately and grabs
+    // whatever's next, sibling or freshly-discovered child.
     async function worker(): Promise<void> {
         while (true) {
             const entry = queue.shift();
@@ -236,9 +225,11 @@ async function crawlOnePage(
             return;
         }
 
-        appendContentToDocsFile(
-            [`# [${item.title || entry.url}](${entry.url})\n\n${item.markdown ?? ""}`],
-            `deep_crawl ${crawl.id} depth ${entry.depth}`,
+        addDocsBlock(
+            crawl.sessionId,
+            `# [${item.title || entry.url}](${entry.url})\n\n${item.markdown ?? ""}`,
+            entry.url,
+            typeof item.title === "string" ? item.title : entry.url,
         );
         crawl.pages.push({
             url: entry.url,
@@ -300,7 +291,7 @@ export function getDeepCrawlStatusText(crawlId: string): string {
                     : `❌ [d${p.depth}] ${p.url} — ${p.error}`,
             );
         }
-        lines.push("", `Content appended to ${DOCS_FILE}.`);
+        lines.push("", `Each page saved as its own docs block — query via browser_query_docs.`);
     } else {
         lines.push("(nothing new since your last check)");
     }

@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [master]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Cache bun install
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+
+      - run: bun install --frozen-lockfile
+
+      # Extension (src/extension/, src/shared/) — built by tsc into dist/.
+      - run: bun run check:extension
+
+      # Server (src/server/, src/shared/) — run directly via Bun, never
+      # built, so this is its only real type-check.
+      - run: bun run check:server
+
+      # Full build (also runs the manifest.json -> package.json version
+      # sync and the offscreen.html asset copy) — catches anything the
+      # noEmit type-checks above wouldn't.
+      - run: bun run build
+
+      - name: Fail if version:sync left package.json dirty
+        run: |
+          if ! git diff --quiet -- package.json; then
+            echo "::error::package.json's version doesn't match manifest.json. Run 'bun run version:sync' locally and commit the result."
+            git diff -- package.json
+            exit 1
+          fi

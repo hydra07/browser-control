@@ -1,15 +1,11 @@
-// The wire contract between src/server (daemon.ts, which constructs these)
-// and src/extension (background.ts, which executes them) — the only
-// intentionally-shared surface between the two runtimes. Type-only: nothing
-// here has a runtime body, so importing it via `import type` pulls zero
-// code across the extension/server boundary, keeping them genuinely
-// separate processes that just happen to agree on a message shape.
+// The wire contract between src/server (constructs these) and
+// src/extension (executes them). Type-only — `import type` pulls zero
+// runtime code across the extension/server boundary.
 
 // One step in a run_flow/explore_flow script. Elements are referenced by
-// role+name (matching browser_snapshot's {i,r,n,v} identity, resolved fresh
-// against the live page at execution time — never a pre-known nodeId, since
-// a script is written before the steps that create later DOM state have
-// run) or by CSS selector, not by a nodeId the AI can't know in advance.
+// role+name (resolved fresh against the live page at execution time, since
+// a script is written before the steps that create later DOM state run) or
+// by CSS selector — never a pre-known nodeId.
 export interface FlowStep {
   action: 'click' | 'type' | 'press_key' | 'wait_for' | 'assert_text' | 'scroll' | 'drag';
   role?: string;
@@ -28,25 +24,20 @@ export interface FlowStep {
   toX?: number;
   toY?: number;
   timeoutMs?: number;
-  // Opt-in override to proceed past a step whose target looks destructive/
-  // irreversible (see isRiskyTarget in background.ts) — set only after the
-  // calling AI has confirmed with its own user that this step is intended.
+  // Proceed past a step whose target looks destructive/irreversible (see
+  // isRiskyTarget in actions.ts) — only after the calling AI confirmed with
+  // its own user that this step is intended.
   confirmRisky?: boolean;
 }
 
-// `tabId` on every variant (via this intersection, not repeated per-variant)
-// is what makes multi-tab possible: omit it and a command targets whichever
-// tab was last navigated/switched to (today's single-tab behavior,
-// unchanged); pass it explicitly to target a SPECIFIC tab regardless of
-// which one is "current" — e.g. driving tab A and tab B in an interleaved
-// sequence without a switch_tab call between every step. background.ts
-// tracks CDP-attached state per tab (a Set), not one global flag, so two
-// tabs can both stay attached at once instead of switch_tab detaching one
-// to attach the other.
+// `tabId` on every variant: omit it and a command targets whichever tab was
+// last navigated/switched to (single-tab behavior); pass it to target a
+// specific tab regardless of which one is "current" (background.ts tracks
+// CDP-attach state per tab, so several tabs can stay attached at once).
 type WithTabId<T> = T & { tabId?: number };
 
 export type BrowserCommand = WithTabId<
-  | { cmd: 'navigate'; url: string; newTab?: boolean }
+  | { cmd: 'navigate'; url: string; newTab?: boolean; background?: boolean }
   | { cmd: 'snapshot' }
   | { cmd: 'query_region'; selector: string }
   | { cmd: 'visual_snapshot' }

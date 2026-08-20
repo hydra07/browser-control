@@ -1,33 +1,34 @@
-// Replays a recorded logs/session-<ts>.jsonl file against a live daemon —
-// re-runs the exact same sequence of tool calls to reproduce a flow (a bug,
-// a demo, a regression check) without needing an LLM agent to re-derive it.
+// Replays a recorded data/logs/session-<ts>.jsonl file against a live
+// daemon — re-runs the exact same sequence of tool calls to reproduce a
+// flow (a bug, a demo, a regression check) without needing an LLM agent to
+// re-derive it.
 //
 // Usage:
 //   bun run src/replay.ts --list
-//   bun run src/replay.ts logs/session-1785812707974.jsonl [--continue] [--delay 500]
+//   bun run src/replay.ts data/logs/session-1785812707974.jsonl [--continue] [--delay 500]
 //
 // Requires the daemon to already be running (spawned by an MCP client, or
 // `bun run src/server/daemon.ts` in another terminal) with the extension
 // connected — this talks to its existing /execute HTTP endpoint, it doesn't
 // start one.
 //
-// Node id resolution: backendDOMNodeId is only stable within one page's
-// DOM — a fresh navigate reassigns them all. For logs recorded after
-// background.ts started attaching {role, name} to click/type responses,
-// this re-resolves each click/type against a fresh snapshot by identity
-// (role+name) instead of trusting the recorded id, and warns if the match
-// is ambiguous (multiple elements with the same role+name) or missing
-// entirely. Older logs without that data fall back to the raw id — which
-// remains a coin flip after any navigate, and will typically fail loudly
-// now (see the FAILED output) rather than silently clicking the wrong
-// thing, since the earlier "any 200 response counts as ok" check was
-// itself a bug (fixed — see below).
+// Node id resolution: backendDOMNodeId is only stable within one page's DOM
+// — a fresh navigate reassigns them all. Logs that carry {role, name} on
+// click/type get re-resolved against a fresh snapshot by identity instead of
+// trusting the recorded id (warns if ambiguous or missing); older logs fall
+// back to the raw id, a coin flip after any navigate.
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionResponse } from "../shared/protocol.js";
 
-const LOGS_DIR = join(import.meta.dir, "..", "..", "logs");
+// Moved under data/ (used to be a top-level logs/ dir) — daemon.ts
+// migrates any legacy logs/*.jsonl into the new location on startup, but
+// replay can run without the daemon ever having been started against this
+// checkout, so fall back to the legacy path if the new one doesn't exist.
+const NEW_LOGS_DIR = join(import.meta.dir, "..", "..", "data", "logs");
+const LEGACY_LOGS_DIR = join(import.meta.dir, "..", "..", "logs");
+const LOGS_DIR = existsSync(NEW_LOGS_DIR) ? NEW_LOGS_DIR : LEGACY_LOGS_DIR;
 const DAEMON_URL = "http://127.0.0.1:8765/execute";
 
 // A logged JSONL line from daemon.ts's writeCallLog — replay only reads
@@ -108,6 +109,7 @@ async function replay(
 ): Promise<void> {
   const resolvedPath =
     logPath.startsWith("logs/") ||
+    logPath.startsWith("data/logs/") ||
     logPath.includes(":") ||
     logPath.startsWith("/")
       ? logPath
@@ -155,14 +157,11 @@ async function replay(
         body: JSON.stringify({ cmd, ...args }),
       });
       const data = await res.json() as Partial<ExtensionResponse> & { data?: { error?: string } };
-      // The extension always wraps its response as {id, type, data}. A
-      // WebSocket-level failure (dispatchCommand threw) shows up as
-      // type:"error" with a top-level `error` string. A *handled* failure
-      // (e.g. click's "Failed to resolve node bounds") is type:"result"
-      // with the error one level deeper, inside `data.data`. Checking only
-      // the top-level `error` field missed that second, far more common
-      // case entirely — every failed click/type was silently logged as
-      // "ok" because of this.
+      // A WebSocket-level failure has a top-level `error`; a *handled*
+      // failure (e.g. click's "Failed to resolve node bounds") is
+      // type:"result" with the error nested one level deeper in `data.data`
+      // — checking only the top-level field missed that far more common
+      // case, so every failed click/type used to log as "ok".
       const innerError = data?.data?.error;
       const failed = !res.ok || data?.type === "error" || data?.error || innerError;
       if (failed) {

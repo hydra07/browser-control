@@ -34,10 +34,10 @@ import {
     handleSelectContentCommand,
 } from "./lib/read.js";
 import {
-    GROUP_NAME,
     installTabGroupBadge,
     handleListTabsCommand,
     handleSwitchTabCommand,
+    addTabToWorkspaceGroup,
 } from "./lib/tabs.js";
 import { waitForStableDom } from "./lib/wait.js";
 
@@ -46,27 +46,21 @@ import { waitForStableDom } from "./lib/wait.js";
 // failing mysteriously with "Unknown command".
 const EXTENSION_VERSION = chrome.runtime.getManifest().version;
 
-// lastActiveTabId is the DEFAULT target for any command that omits tabId —
-// preserves today's single-tab flows (navigate/click/type/... with no tabId
-// arg) unchanged. attachedTabIds tracks CDP-attached state PER TAB (a Set,
-// not one global flag), which is what actually enables multi-tab: two tabs
-// can both stay attached at once, so switch_tab no longer has to detach the
-// old one to attach the new one — see resolveTargetTabId/attachDebuggerIfNeeded.
+// lastActiveTabId is the default target for any command that omits tabId.
+// attachedTabIds tracks CDP-attach state per tab (a Set, not one global
+// flag) — what makes multi-tab work: two tabs can stay attached at once,
+// so switch_tab doesn't have to detach one to attach the other.
 let lastActiveTabId: number | null = null;
 const attachedTabIds = new Set<number>();
 
-// Chrome can detach a debugger session out from under us (user closes the
-// "started debugging" infobar, hits the OS debugger limit, etc.) — without
-// this, attachedTabIds would keep claiming a tab is attached long after it
-// isn't, and every subsequent command against it would fail confusingly
-// instead of just re-attaching.
+// Chrome can detach a debugger session out from under us (DevTools infobar
+// closed, OS debugger limit hit, ...) — clear the flag so the next command
+// re-attaches instead of failing confusingly against a dead session.
 chrome.debugger.onDetach.addListener((source) => {
     if (source.tabId != null) attachedTabIds.delete(source.tabId);
 });
 
-// A closed tab can't be re-attached to — drop it so it doesn't linger as a
-// phantom "attached" entry, and so it stops being the default target if it
-// was lastActiveTabId.
+// A closed tab can't be re-attached to, or stay the default target.
 chrome.tabs.onRemoved.addListener((tabId) => {
     attachedTabIds.delete(tabId);
     if (lastActiveTabId === tabId) lastActiveTabId = null;
@@ -74,20 +68,18 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 installTabGroupBadge();
 
-// chrome.debugger is unavailable in offscreen documents, so the split is:
-// offscreen holds the daemon WebSocket (and now the recording canvas/
-// MediaRecorder — see lib/capture.ts), this service worker does all CDP
-// work, connected by chrome.runtime.sendMessage/Port.
+// chrome.debugger is unavailable in offscreen documents, so offscreen holds
+// the daemon WebSocket + recording canvas/MediaRecorder (lib/capture.ts)
+// while this service worker does all CDP work, connected via
+// chrome.runtime.sendMessage/Port.
 const OFFSCREEN_DOCUMENT_PATH = "dist/extension/offscreen.html";
 
 async function ensureOffscreenDocument(): Promise<void> {
     if (await chrome.offscreen.hasDocument()) return;
     await chrome.offscreen.createDocument({
         url: OFFSCREEN_DOCUMENT_PATH,
-        // No Reason fits "hold a WebSocket" exactly — WORKERS is the closest
-        // and, unlike AUDIO_PLAYBACK, has no auto-close timer. Also covers
-        // capture.ts's canvas/MediaRecorder pipeline (fed by CDP screencast
-        // frames, not getUserMedia, so USER_MEDIA doesn't apply).
+        // WORKERS is the closest fit for "hold a WebSocket" — unlike
+        // AUDIO_PLAYBACK it has no auto-close timer.
         reasons: ["WORKERS" as chrome.offscreen.Reason],
         justification:
             "Holds a persistent WebSocket connection to the local BrowserControl daemon, and hosts the canvas/MediaRecorder pipeline for browser_start_recording/browser_stop_recording.",
@@ -133,7 +125,13 @@ async function handleCaptureConnection(
         port.disconnect();
         return;
     }
-    await attachDebuggerIfNeeded(lastActiveTabId);
+    try {
+        await attachDebuggerIfNeeded(lastActiveTabId);
+    } catch (e) {
+        port.postMessage({ error: errorMessage(e) });
+        port.disconnect();
+        return;
+    }
     const target = { tabId: lastActiveTabId };
     const result = await startScreencastRelay(target, port);
     port.postMessage(result);
@@ -154,13 +152,24 @@ chrome.runtime.onStartup.addListener(ensureOffscreenDocument);
 
 async function attachDebuggerIfNeeded(tabId: number) {
     if (attachedTabIds.has(tabId)) return;
-    await new Promise<void>((resolve) => {
-        chrome.debugger.attach({ tabId }, "1.3", () => resolve());
+    // attach's callback fires on failure too (e.g. DevTools already
+    // debugging this tab) — must check lastError, or the failure is
+    // swallowed and the tab gets marked "attached" anyway.
+    await new Promise<void>((resolve, reject) => {
+        chrome.debugger.attach({ tabId }, "1.3", () => {
+            const err = chrome.runtime.lastError;
+            if (err) {
+                reject(
+                    new Error(
+                        `Failed to attach debugger to tab ${tabId}: ${err.message}. If this says another debugger is already attached, close DevTools on that tab (or whatever else is debugging it) and retry.`,
+                    ),
+                );
+            } else resolve();
+        });
     });
     attachedTabIds.add(tabId);
-    // Independent domains — enable concurrently, ~1 round-trip instead of 5.
-    // Page: dialog auto-handling. DOM: getBoxModel. Network: request/response
-    // collection. CSS: matched/computed styles. Overlay: native highlight.
+    // Independent domains, enabled concurrently (~1 round-trip instead of
+    // 5): Page (dialogs), DOM (getBoxModel), Network, CSS, Overlay.
     const target = { tabId };
     await Promise.all([
         sendCommand(target, "Page.enable"),
@@ -180,6 +189,7 @@ async function dispatchCommand(
         return await handleNavigate(data.url, {
             tabId: data.tabId,
             newTab: data.newTab,
+            background: data.background,
         });
     }
 
@@ -362,24 +372,28 @@ async function dispatchCommand(
     };
 }
 
+// Bounds the "wait for the tab to finish loading" step below — a page that
+// never fires "complete" (a stuck download, an SSE stream) would otherwise
+// leave the chrome.tabs.onUpdated listener registered forever.
+const NAVIGATE_LOAD_TIMEOUT_MS = 20000;
+
 async function handleNavigate(
     url: string,
-    opts: { tabId?: number; newTab?: boolean } = {},
+    opts: { tabId?: number; newTab?: boolean; background?: boolean } = {},
 ): Promise<Record<string, unknown>> {
     clearNetworkRequests();
-    const groups = await chrome.tabGroups.query({ title: GROUP_NAME });
-    let groupId: number | null = null;
 
     let windowId: number | undefined;
     let tabId: number;
     let reuseExistingTab: boolean;
+    // background:true (browser_start_job's worker tabs, see jobs.ts) must
+    // not touch lastActiveTabId or steal window focus — a job runs
+    // alongside the caller's own foreground session, not instead of it.
+    const active = !opts.background;
 
-    // Three ways in: an explicit tabId re-navigates that SPECIFIC tab
-    // (multi-tab — must already exist); newTab always opens a fresh one
-    // regardless of what was active; neither is today's original
-    // single-tab default — reuse lastActiveTabId if it's still alive, else
-    // create one. Every caller that never passes tabId/newTab keeps
-    // exactly the old behavior.
+    // Three ways in: explicit tabId re-navigates that specific tab; newTab
+    // always opens a fresh one; otherwise reuse lastActiveTabId if still
+    // alive, else create one (the original single-tab default).
     if (opts.tabId != null) {
         try {
             await chrome.tabs.get(opts.tabId);
@@ -392,7 +406,7 @@ async function handleNavigate(
         tabId = opts.tabId;
         reuseExistingTab = true;
     } else if (opts.newTab) {
-        const newTab = await chrome.tabs.create({ url, active: true });
+        const newTab = await chrome.tabs.create({ url, active });
         tabId = newTab.id!;
         windowId = newTab.windowId;
         reuseExistingTab = false;
@@ -415,7 +429,7 @@ async function handleNavigate(
             tabId = lastActiveTabId!;
             reuseExistingTab = true;
         } else {
-            const newTab = await chrome.tabs.create({ url, active: true });
+            const newTab = await chrome.tabs.create({ url, active });
             tabId = newTab.id!;
             windowId = newTab.windowId;
             reuseExistingTab = false;
@@ -423,17 +437,14 @@ async function handleNavigate(
     }
 
     if (reuseExistingTab) {
-        const updatedTab = await chrome.tabs.update(tabId, {
-            url,
-            active: true,
-        });
+        const updatedTab = await chrome.tabs.update(tabId, { url, active });
         windowId = updatedTab?.windowId;
     }
-    lastActiveTabId = tabId;
+    if (!opts.background) lastActiveTabId = tabId;
 
-    // Chrome-active isn't OS-active — if the Chrome window itself isn't
-    // focused, the animations run but nobody's looking. Bring it forward.
-    if (windowId !== undefined) {
+    // Chrome-active isn't OS-active — bring the window forward so the
+    // animations are actually visible. Skipped for background tabs.
+    if (windowId !== undefined && !opts.background) {
         chrome.windows.update(windowId, { focused: true }, () => {
             if (chrome.runtime.lastError)
                 console.log(
@@ -443,47 +454,45 @@ async function handleNavigate(
         });
     }
 
-    if (groups.length > 0) {
-        groupId = groups[0].id;
-        await chrome.tabs.group({ tabIds: tabId, groupId: groupId });
-    } else {
-        groupId = await chrome.tabs.group({ tabIds: tabId });
-        await chrome.tabGroups.update(groupId, {
-            title: GROUP_NAME,
-            color: "red",
-        });
-    }
+    await addTabToWorkspaceGroup(tabId);
 
     // Wait for the browser-level load event, then let the page's own JS
     // settle (SPA hydration, redirects) instead of guessing with a sleep.
+    // Bounded and always cleaned up — see NAVIGATE_LOAD_TIMEOUT_MS above.
     await new Promise<void>((resolve) => {
-        chrome.tabs.onUpdated.addListener(function listener(
-            updatedTabId,
-            info,
+        const timer = setTimeout(() => {
+            chrome.tabs.onUpdated.removeListener(listener);
+            resolve();
+        }, NAVIGATE_LOAD_TIMEOUT_MS);
+        function listener(
+            updatedTabId: number,
+            info: chrome.tabs.TabChangeInfo,
         ) {
             if (updatedTabId === tabId && info.status === "complete") {
+                clearTimeout(timer);
                 chrome.tabs.onUpdated.removeListener(listener);
                 resolve();
             }
-        });
+        }
+        chrome.tabs.onUpdated.addListener(listener);
     });
 
     await attachDebuggerIfNeeded(tabId);
     await waitForStableDom({ tabId }, { timeoutMs: 3000 });
 
-    // Only runs on the DESTINATION page — the one being left is already
-    // gone by the time a fresh CDP session is usable — so this reads
-    // "Navigated to X" (past tense), not mid-flight like click/type/scroll.
-    let hostname = url;
-    try {
-        hostname = new URL(url).hostname || url;
-    } catch {
-        // Not a parseable absolute URL — show it verbatim.
+    // Skipped for background tabs — nobody's watching one.
+    if (!opts.background) {
+        let hostname = url;
+        try {
+            hostname = new URL(url).hostname || url;
+        } catch {
+            // Not a parseable absolute URL — show it verbatim.
+        }
+        void evalOnPage(
+            { tabId },
+            `(${showPillCaption.toString()})(${JSON.stringify("🌐")}, ${JSON.stringify(`Navigated to ${hostname}`)}, ${JSON.stringify("#6ee7b7")}, ${JSON.stringify("#34d399")}, false)`,
+        );
     }
-    void evalOnPage(
-        { tabId },
-        `(${showPillCaption.toString()})(${JSON.stringify("🌐")}, ${JSON.stringify(`Navigated to ${hostname}`)}, ${JSON.stringify("#6ee7b7")}, ${JSON.stringify("#34d399")}, false)`,
-    );
 
     // tabId in the response is what a caller doing multi-tab work captures
     // and passes as `tabId` on later commands to keep targeting this exact

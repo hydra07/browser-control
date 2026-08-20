@@ -1,8 +1,6 @@
-// Tracks the recent command history for this daemon session and flags known
-// bad patterns as they happen. `instructions` on the MCP server is only read
-// once at initialize — by command #40 in a long session, a model has often
-// drifted from it. This gives a live nudge exactly when the pattern recurs,
-// which is a much stronger signal than a wall of text read once up front.
+// Tracks recent command history for this daemon session and flags known-bad
+// patterns as they happen — a live nudge, since `instructions` is only read
+// once at MCP initialize and a long session tends to drift from it.
 
 interface HistoryEntry {
   cmd: string;
@@ -11,17 +9,24 @@ interface HistoryEntry {
 
 const HISTORY_LIMIT = 15;
 const history: HistoryEntry[] = [];
-let snapshottedSinceNavigate = false;
+
+// Keyed per tab ("default" bucket for calls that omit tabId) so a snapshot
+// on tab A doesn't silence the "click with no snapshot" warning for tab B.
+// Capped well past any realistic tab count — advisory state, not durable.
+const snapshottedSinceNavigate = new Map<string, boolean>();
+const MAX_TRACKED_TABS = 100;
+
+function tabKey(args: Record<string, unknown>): string {
+  const tabId = args?.tabId;
+  return typeof tabId === 'number' ? String(tabId) : '__default__';
+}
 
 const INTERACTION_LIKE_EVALUATE = /\.value\s*=|\.click\(\)|\.checked\s*=|dispatchEvent/;
 
-// The last `count` occurrences of `cmd`, scanning the full retained history
-// regardless of what's interleaved between them. Filtering-then-slicing
-// (not slicing-then-filtering) matters: a click that got re-verified with a
-// snapshot before being retried is still "the same click twice" — an
-// unconditional-inactivity naive slice of the last N *entries* would miss it
-// because the snapshot in between pushes the second click out of a small
-// fixed-size window.
+// Last `count` occurrences of `cmd` across the full retained history —
+// filter-then-slice, not slice-then-filter, so an interleaved call (e.g. a
+// snapshot between two clicks) doesn't push a real occurrence out of a
+// small fixed-size window.
 function lastOfType(cmd: string, count: number): HistoryEntry[] {
   return history.filter((h) => h.cmd === cmd).slice(-count);
 }
@@ -31,11 +36,16 @@ export function recordAndCheckFlow(cmd: string, args: Record<string, unknown>): 
   while (history.length > HISTORY_LIMIT) history.shift();
 
   if (cmd === 'navigate') {
-    snapshottedSinceNavigate = false;
+    // background:true (browser_start_job's worker tabs) has no tabId yet
+    // at call time and never drives click/type — nothing to track.
+    if (!args?.background) {
+      if (snapshottedSinceNavigate.size >= MAX_TRACKED_TABS) snapshottedSinceNavigate.clear();
+      snapshottedSinceNavigate.set(tabKey(args), false);
+    }
     return undefined;
   }
   if (cmd === 'snapshot' || cmd === 'visual_snapshot' || cmd === 'query_region') {
-    snapshottedSinceNavigate = true;
+    snapshottedSinceNavigate.set(tabKey(args), true);
   }
 
   const warnings: string[] = [];
@@ -55,16 +65,14 @@ export function recordAndCheckFlow(cmd: string, args: Record<string, unknown>): 
     }
   }
 
-  if ((cmd === 'click' || cmd === 'type') && !snapshottedSinceNavigate) {
+  if ((cmd === 'click' || cmd === 'type') && !snapshottedSinceNavigate.get(tabKey(args))) {
     warnings.push(`flow: acting on a node id with no snapshot/visual_snapshot/query_region call since the last navigate. If this id came from an old snapshot it may be stale — expect "Failed to resolve node bounds" if so.`);
   }
 
   if (cmd === 'click') {
-    // Deliberately NOT scoped to "in a row" — the same nodeId showing up as
-    // your last two clicks even with a snapshot in between is exactly the
-    // "clicked, saw no change, clicked again" pattern, and it's real: one
-    // observed case burned ~3000 tokens re-snapshotting an unchanged page
-    // between two identical clicks before the second one finally landed.
+    // Not scoped to "in a row" — the same nodeId as the last two clicks,
+    // even with a snapshot between them, is the "clicked, saw no change,
+    // clicked again" pattern this is meant to catch.
     const lastTwoClicks = lastOfType('click', 2);
     if (lastTwoClicks.length === 2 && lastTwoClicks[0].args?.nodeId === lastTwoClicks[1].args?.nodeId) {
       warnings.push(`flow: your last two browser_click calls both targeted node ${args?.nodeId}. If the first click's snapshot showed no change, don't assume it silently failed and retry blind — the effect may just be slow to render; consider a brief pause or checking browser_network_requests before clicking again, since retrying a click that actually worked can double-submit.`);

@@ -1,25 +1,13 @@
 // browser_start_job / browser_job_status — async multi-tab task runner.
-// browser_run_flow and friends are all synchronous: one MCP call, one wait,
-// one answer. That's wrong for "go read these 12 pages" — either the call
-// blocks for however long 12 real navigations take (risking the daemon's
-// own timeouts), or the caller has to drive 12 browser_navigate/
-// browser_reading_mode round trips itself. A job instead: browser_start_job
-// returns almost immediately (work continues in the background via
-// executeCommand, the same channel every other tool already uses), and
-// browser_job_status is polled later for progress.
+// browser_start_job returns almost immediately (work continues via
+// executeCommand, the same channel every other tool uses) instead of
+// blocking on however long N real navigations take.
 //
-// The status-polling side is the part actually worth being careful about:
-// naively returning "here's every task and its status" on every poll means
-// the AI re-reads N already-known results every single time it checks in on
-// a long job — wasted tokens, and worse, a real path to it re-announcing
-// "page 3 failed" three different times because it saw task 3 in three
-// different status calls. Each task carries a `delivered` flag instead;
-// browser_job_status returns only tasks that finished (success OR error)
-// since the LAST time this job was polled, and immediately marks them
-// delivered. A finished job is dropped from the registry the first time a
-// status call sees it fully delivered — nothing to leak, nothing to see
-// twice.
-import { appendContentToDocsFile, DOCS_FILE } from "./docs.js";
+// Each task carries a `delivered` flag so browser_job_status only returns
+// tasks that finished since the LAST poll, instead of re-reporting the same
+// results (and burning tokens) every check-in. A job is dropped from the
+// registry once every task has been delivered at least once.
+import { addDocsBlock } from "./dataStore.js";
 
 export type JobTaskExtract = "reading_mode" | "select_content" | "snapshot";
 
@@ -34,12 +22,14 @@ interface JobTask extends JobTaskInput {
     status: "pending" | "running" | "success" | "error";
     title?: string;
     chars?: number;
+    blockIds?: number[];
     error?: string;
     delivered: boolean;
 }
 
 interface Job {
     id: string;
+    sessionId: string;
     tasks: JobTask[];
     concurrency: number;
     startedAt: number;
@@ -50,11 +40,9 @@ export const MAX_JOB_TASKS = 20;
 export const MAX_CONCURRENT_JOBS = 3;
 const DEFAULT_CONCURRENCY = 4;
 const MAX_CONCURRENCY = 8;
-// Generous, not tight — this bounds ONE task (navigate + extract on one
-// real page), not the whole job. A task that blows through it is far more
-// likely a genuinely hung page load than a slow-but-fine one; either way
-// the worker needs to give up and move to the next task rather than stall
-// the whole job behind one stuck tab.
+// Bounds one task (navigate + extract on one page), not the whole job — a
+// task that blows through it is likely a hung page load; the worker should
+// move on rather than stall the job behind one stuck tab.
 const TASK_TIMEOUT_MS = 45000;
 
 const jobs = new Map<string, Job>();
@@ -72,6 +60,7 @@ export function startJob(
     rawTasks: JobTaskInput[],
     concurrency: number | undefined,
     execute: Executor,
+    sessionId: string,
 ): { jobId: string; total: number } | { error: string; hint: string } {
     const tasks = rawTasks.filter(
         (t) => typeof t?.url === "string" && t.url.trim().length > 0,
@@ -98,6 +87,7 @@ export function startJob(
     const jobId = crypto.randomUUID();
     const job: Job = {
         id: jobId,
+        sessionId,
         tasks: tasks.map((t) => ({
             url: t.url,
             extract: t.extract ?? "reading_mode",
@@ -126,7 +116,7 @@ async function runJob(job: Job, execute: Executor): Promise<void> {
     async function worker(): Promise<void> {
         while (nextIndex < job.tasks.length) {
             const task = job.tasks[nextIndex++];
-            await runTask(task, execute);
+            await runTask(task, execute, job.sessionId);
         }
     }
     const workerCount = Math.min(job.concurrency, job.tasks.length);
@@ -134,13 +124,23 @@ async function runJob(job: Job, execute: Executor): Promise<void> {
     job.finishedAt = Date.now();
 }
 
-async function runTask(task: JobTask, execute: Executor): Promise<void> {
+async function runTask(
+    task: JobTask,
+    execute: Executor,
+    sessionId: string,
+): Promise<void> {
     task.status = "running";
     let tabId: number | undefined;
     try {
         const nav = await execute(
+            // background:true — this tab belongs to the job, not to whatever
+            // the caller's own foreground session is doing on lastActiveTabId
+            // right now. Without it, concurrent job workers hijack the
+            // default tab target (and steal OS window focus) out from under
+            // any interactive browser_click/browser_snapshot/etc. call that
+            // omits tabId while the job is still running.
             "navigate",
-            { url: task.url, newTab: true },
+            { url: task.url, newTab: true, background: true },
             TASK_TIMEOUT_MS,
         );
         if (nav?.error) throw new Error(String(nav.error));
@@ -157,18 +157,31 @@ async function runTask(task: JobTask, execute: Executor): Promise<void> {
             const blocks = (res?.blocks as string[] | undefined) ?? [];
             task.title = task.url;
             task.chars = blocks.reduce((n, b) => n + b.length, 0);
-            if (blocks.length > 0)
-                appendContentToDocsFile(blocks, `job task: ${task.url}`);
+            // One docs_blocks row per matched element, same reasoning as
+            // daemon.ts's own browser_select_content handler.
+            task.blockIds = blocks.map(
+                (b, i) =>
+                    addDocsBlock(
+                        sessionId,
+                        b,
+                        blocks.length > 1
+                            ? `job task: ${task.url} (match ${i + 1}/${blocks.length})`
+                            : `job task: ${task.url}`,
+                    ).blockId,
+            );
         } else if (task.extract === "snapshot") {
             const res = await execute("snapshot", { tabId }, TASK_TIMEOUT_MS);
             if (res?.error) throw new Error(String(res.error));
             const json = JSON.stringify(res?.nodes ?? [], null, 2);
             task.title = task.url;
             task.chars = json.length;
-            appendContentToDocsFile(
-                [`\`\`\`json\n${json.slice(0, 8000)}\n\`\`\``],
-                `job task snapshot: ${task.url}`,
-            );
+            task.blockIds = [
+                addDocsBlock(
+                    sessionId,
+                    `\`\`\`json\n${json.slice(0, 8000)}\n\`\`\``,
+                    `job task snapshot: ${task.url}`,
+                ).blockId,
+            ];
         } else {
             const res = await execute(
                 "reading_mode",
@@ -180,10 +193,14 @@ async function runTask(task: JobTask, execute: Executor): Promise<void> {
             task.title = String(res?.title || task.url);
             task.chars = text.length;
             if (text)
-                appendContentToDocsFile(
-                    [`# [${task.title}](${task.url})\n\n${text}`],
-                    `job task: ${task.url}`,
-                );
+                task.blockIds = [
+                    addDocsBlock(
+                        sessionId,
+                        text,
+                        `job task: ${task.url}`,
+                        task.title,
+                    ).blockId,
+                ];
         }
         task.status = "success";
     } catch (e) {
@@ -229,7 +246,7 @@ export function getJobStatusText(jobId: string): string {
         for (const t of newlyDone) {
             lines.push(
                 t.status === "success"
-                    ? `✅ ${t.title || t.url} — ${t.chars ?? 0} chars appended to ${DOCS_FILE}`
+                    ? `✅ ${t.title || t.url} — ${t.chars ?? 0} chars, saved as docs block${(t.blockIds?.length ?? 0) > 1 ? "s" : ""} [${(t.blockIds ?? []).join(", ")}] (browser_query_docs)`
                     : `❌ ${t.url} — ${t.error}`,
             );
         }

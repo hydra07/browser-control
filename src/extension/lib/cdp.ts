@@ -1,22 +1,14 @@
-// Every chrome.debugger.sendCommand call used to be hand-wrapped in
-// `new Promise((resolve) => chrome.debugger.sendCommand(...))` with the
-// result typed `any` — @types/chrome has no way to link a CDP method string
-// to its actual response shape. This wrapper does that linkage manually via
-// an explicit type parameter backed by devtools-protocol's Protocol
-// namespace (the same source of truth Chrome's own DevTools frontend is
-// generated from), and folds the repeated Promise-wrapping into one place.
+// Promise wrapper for chrome.debugger.sendCommand, typed against
+// devtools-protocol's ProtocolMapping so a CDP method name resolves to its
+// real params/return types instead of `any`.
 
 import type { Protocol } from "devtools-protocol";
 import type { ProtocolMapping } from "devtools-protocol/types/protocol-mapping";
 
-// Found via a real session: Input.dispatchMouseEvent during an Excalidraw
-// drag, and Page.captureScreenshot shortly after a same-tab location.reload(),
-// each left chrome.debugger.sendCommand's callback never firing — no CDP
-// error, no exception, just silence. Every awaiting caller hung until the
-// daemon's own outer executeCommand timeout (15s) gave up with zero
-// indication of which step was actually stuck. Bounding every command here
-// means a wedged callback fails fast and names itself instead of silently
-// eating the whole request budget.
+// chrome.debugger.sendCommand's callback can just never fire (seen with
+// Input.dispatchMouseEvent mid-drag, and Page.captureScreenshot right after
+// a same-tab reload) — no error, no exception, just silence. This bounds
+// every command so a wedged one fails fast and names itself.
 const CDP_COMMAND_TIMEOUT_MS = 10000;
 
 export function sendCommand<M extends keyof ProtocolMapping.Commands>(
@@ -50,12 +42,9 @@ export function errorMessage(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
 }
 
-// A CDP DOM.Quad is 4 (x,y) corner pairs, not necessarily axis-aligned
-// (elements can be rotated/skewed) — collapsing to a bounding box is what
-// every caller actually wants (a rect to draw a highlight/cursor-glide
-// target at), not the raw quad. Shared by both the click/type/press_key
-// action animations (lib/overlay.ts) and screenshot annotation
-// (lib/screenshot.ts) — a plain CDP-geometry helper, not specific to either.
+// A DOM.Quad is 4 (x,y) corner pairs (elements can be rotated/skewed) —
+// collapses to the bounding box callers actually want for a highlight/
+// cursor target. Shared by overlay.ts and screenshot.ts.
 export function quadToBox(quad: Protocol.DOM.Quad): {
     x: number;
     y: number;
@@ -69,13 +58,9 @@ export function quadToBox(quad: Protocol.DOM.Quad): {
     return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
 }
 
-// Every visual-feedback injection (cursor/highlight/ripple/annotation
-// overlay) used to go through a bare chrome.debugger.sendCommand(..., resolve)
-// that ignored the result entirely — if the injected code threw (or the
-// command itself failed), we'd silently move on with no visual effect and
-// zero trace of why. Route them all through here so failures show up in the
-// extension's own service worker console (chrome://extensions → "service
-// worker" link) instead of just quietly not happening.
+// Runs injected visual-feedback scripts (cursor/highlight/ripple/badges)
+// and logs any exception to the service worker console (chrome://extensions
+// → "service worker") instead of failing silently.
 export async function evalOnPage(
     target: chrome.debugger.Debuggee,
     expression: string,

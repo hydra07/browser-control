@@ -7,6 +7,37 @@ import { showPillCaption } from "./overlay.js";
 
 export const GROUP_NAME = "🤖 AI Workspace";
 
+// handleNavigate used to look up/create this group inline with its own
+// await chrome.tabGroups.query(...) / chrome.tabs.group(...) pair. That's
+// safe for one navigate at a time, but browser_start_job fires several
+// "navigate" commands concurrently (one per worker) — two calls landing
+// between the query and the create both see "no group yet" and each create
+// their own "🤖 AI Workspace" group, splitting tabs across duplicates.
+// Serializing every add-to-group op through this single promise chain means
+// only the first concurrent caller ever does the create; the rest just wait
+// their turn and join the group it made.
+let groupOpChain: Promise<unknown> = Promise.resolve();
+
+export async function addTabToWorkspaceGroup(tabId: number): Promise<void> {
+    const run = groupOpChain.then(async () => {
+        const groups = await chrome.tabGroups.query({ title: GROUP_NAME });
+        if (groups.length > 0) {
+            await chrome.tabs.group({ tabIds: tabId, groupId: groups[0].id });
+        } else {
+            const groupId = await chrome.tabs.group({ tabIds: tabId });
+            await chrome.tabGroups.update(groupId, {
+                title: GROUP_NAME,
+                color: "red",
+            });
+        }
+    });
+    // Keep the chain alive even if this op threw — one tab that failed to
+    // group (e.g. its window closed mid-navigate) shouldn't wedge every
+    // navigate after it.
+    groupOpChain = run.catch(() => {});
+    await run;
+}
+
 // Which tabs list_tabs has already reported, so a user-dropped-in tab shows
 // isNew:true once. Reset (replaced, not merged) each call so a closed tab's
 // id doesn't linger. unseenTabCount drives the toolbar badge — the only way

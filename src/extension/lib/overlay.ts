@@ -196,12 +196,11 @@ export function showScrollIndicator(
     setTimeout(() => badge.remove(), durationS * 1000 + 50);
 }
 
-// Bottom-center anchor every badge below docks to, so a human (or a
-// recording) always knows where to look. Duplicated as a literal into each
-// self-contained function below — can't share a runtime const across
-// separately-serialized functions.
-const BADGE_DOCK_CSS =
-    "position:fixed;left:50%;bottom:8%;z-index:2147483647;pointer-events:none;";
+// Every badge below docks to `position:fixed;left:50%;bottom:8%` — inlined
+// into each function's own cssText rather than shared via a module-level
+// const, since .toString()-ing a function only captures its own source
+// text; a reference to an outside const evaluates to `undefined` once run
+// in the page's JS realm instead of this module's.
 
 /** Self-contained. 52px icon badge for press_key with no target element (browser_type -> Enter, no nodeId). Glyph-mapped for common keys. */
 export function showKeyBadge(key: string, fast?: boolean) {
@@ -231,7 +230,7 @@ export function showKeyBadge(key: string, fast?: boolean) {
     const glyph = GLYPHS[key];
     const durationS = fast ? 0.6 : 1.2;
     const badge = document.createElement("div");
-    badge.style.cssText = `all:initial;${BADGE_DOCK_CSS}display:flex;align-items:center;justify-content:center;width:52px;height:52px;border-radius:26px;background:rgba(17,24,39,0.85);backdrop-filter:blur(12px);box-shadow:0 8px 32px rgba(0,0,0,0.3),inset 0 1px 1px rgba(255,255,255,0.15);animation:__bc_icon_badge_pop__ ${durationS}s cubic-bezier(0.16, 1, 0.3, 1) both;`;
+    badge.style.cssText = `all:initial;position:fixed;left:50%;bottom:8%;z-index:2147483647;pointer-events:none;display:flex;align-items:center;justify-content:center;width:52px;height:52px;border-radius:26px;background:rgba(17,24,39,0.85);backdrop-filter:blur(12px);box-shadow:0 8px 32px rgba(0,0,0,0.3),inset 0 1px 1px rgba(255,255,255,0.15);animation:__bc_icon_badge_pop__ ${durationS}s cubic-bezier(0.16, 1, 0.3, 1) both;`;
     const label = document.createElement("div");
     label.style.cssText = glyph
         ? "color:#67e8f9;font:600 22px/1 -apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;text-shadow:0 0 10px rgba(34,211,238,0.7);"
@@ -242,7 +241,7 @@ export function showKeyBadge(key: string, fast?: boolean) {
     setTimeout(() => badge.remove(), durationS * 1000 + 50);
 }
 
-/** Self-contained. Wider text pill for actions needing more than a glyph (navigate, switch_tab) — same BADGE_DOCK_CSS anchor as showKeyBadge/showScrollIndicator. `color`/`glow` are a hex pair, per caller. */
+/** Self-contained. Wider text pill for actions needing more than a glyph (navigate, switch_tab) — same bottom-dock anchor as showKeyBadge/showScrollIndicator. `color`/`glow` are a hex pair, per caller. */
 export function showPillCaption(
     icon: string,
     text: string,
@@ -259,7 +258,7 @@ export function showPillCaption(
     }
     const durationS = fast ? 0.8 : 1.6;
     const badge = document.createElement("div");
-    badge.style.cssText = `all:initial;${BADGE_DOCK_CSS}display:flex;align-items:center;gap:8px;max-width:min(480px,84vw);padding:10px 18px 10px 14px;border-radius:999px;background:rgba(17,24,39,0.85);backdrop-filter:blur(12px);box-shadow:0 8px 32px rgba(0,0,0,0.3),inset 0 1px 1px rgba(255,255,255,0.15);animation:__bc_pill_badge_pop__ ${durationS}s cubic-bezier(0.16, 1, 0.3, 1) both;`;
+    badge.style.cssText = `all:initial;position:fixed;left:50%;bottom:8%;z-index:2147483647;pointer-events:none;display:flex;align-items:center;gap:8px;max-width:min(480px,84vw);padding:10px 18px 10px 14px;border-radius:999px;background:rgba(17,24,39,0.85);backdrop-filter:blur(12px);box-shadow:0 8px 32px rgba(0,0,0,0.3),inset 0 1px 1px rgba(255,255,255,0.15);animation:__bc_pill_badge_pop__ ${durationS}s cubic-bezier(0.16, 1, 0.3, 1) both;`;
     const iconEl = document.createElement("span");
     iconEl.style.cssText = `flex:none;font-size:16px;line-height:1;filter:drop-shadow(0 0 6px ${glow}b3);`;
     iconEl.textContent = icon;
