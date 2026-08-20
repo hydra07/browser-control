@@ -1,10 +1,11 @@
 name: Release
 
-# Triggered by pushing a `vX.Y.Z` tag — see scripts/bump-version.ts for the
-# local "bump manifest.json, then git tag" workflow this expects. Builds the
-# extension and attaches it as a zip to a GitHub Release; does NOT publish
-# to the Chrome Web Store (that needs API credentials this repo doesn't
-# have configured — see README's Releasing section for the manual steps).
+# Triggered by pushing a `vX.Y.Z` tag — see app/extension/scripts/bump-version.ts
+# for the local "bump, then git tag" workflow this expects. Builds the
+# extension and attaches WXT's own zip artifact to a GitHub Release; does
+# NOT publish to the Chrome Web Store (that needs API credentials this repo
+# doesn't have configured — see README's Releasing section for the manual
+# steps).
 on:
   push:
     tags: ["v*"]
@@ -24,32 +25,21 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      - name: Verify tag matches manifest.json version
+      - name: Verify tag matches app/extension's version
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          MANIFEST_VERSION=$(bun -e "console.log(JSON.parse(await Bun.file('./manifest.json').text()).version)")
-          if [ "$TAG_VERSION" != "$MANIFEST_VERSION" ]; then
-            echo "::error::Tag ${GITHUB_REF_NAME} doesn't match manifest.json's version ($MANIFEST_VERSION). Run 'bun run version:bump' and commit before tagging."
+          PKG_VERSION=$(bun -e "console.log(JSON.parse(await Bun.file('./app/extension/package.json').text()).version)")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} doesn't match app/extension's version ($PKG_VERSION). Run 'bun run version:bump' (in app/extension) and commit before tagging."
             exit 1
           fi
-          echo "Tag matches manifest.json version: $MANIFEST_VERSION"
+          echo "Tag matches app/extension's version: $PKG_VERSION"
 
-      - run: bun run check:extension
-      - run: bun run check:server
-      - run: bun run check:sidepanel
-      - run: bun run build
-
-      - name: Package extension
-        run: |
-          VERSION=$(bun -e "console.log(JSON.parse(await Bun.file('./manifest.json').text()).version)")
-          mkdir -p release
-          # manifest.json at the zip root (alongside dist/ and icons/) so
-          # unzipping and pointing "Load unpacked" at the folder just works.
-          zip -r "release/browsercontrol-v${VERSION}.zip" manifest.json dist icons
-          echo "ZIP_PATH=release/browsercontrol-v${VERSION}.zip" >> "$GITHUB_ENV"
+      - run: bun run check
+      - run: bun run --cwd app/extension zip
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ env.ZIP_PATH }}
+          files: app/extension/.output/*.zip
           generate_release_notes: true
