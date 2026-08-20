@@ -390,14 +390,16 @@ export async function performScroll(
         `(${showScrollIndicator.toString()})(${deltaX}, ${deltaY}, ${opts.fast})`,
     );
     // Wheel events need x,y to apply at — center screen is as good as any
-    // single point for a whole-page scroll.
-    await sendCommand(target, "Input.dispatchMouseEvent", {
-        type: "mouseWheel",
-        x: 500,
-        y: 500,
-        deltaX,
-        deltaY,
-    });
+    // single point for a whole-page scroll. retryOnTimeout is safe here
+    // specifically because a duplicate wheel event just scrolls a bit
+    // extra — unlike mousePressed/mouseReleased below, it can't turn into
+    // a spurious second click.
+    await sendCommand(
+        target,
+        "Input.dispatchMouseEvent",
+        { type: "mouseWheel", x: 500, y: 500, deltaX, deltaY },
+        { retryOnTimeout: true },
+    );
     await waitForStableDom(target);
     return { success: true, message: `Scrolled by (${deltaX}, ${deltaY})` };
 }

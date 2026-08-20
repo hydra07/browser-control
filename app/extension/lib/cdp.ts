@@ -11,10 +11,10 @@ import type { ProtocolMapping } from "devtools-protocol/types/protocol-mapping";
 // every command so a wedged one fails fast and names itself.
 const CDP_COMMAND_TIMEOUT_MS = 10000;
 
-export function sendCommand<M extends keyof ProtocolMapping.Commands>(
+function sendCommandOnce<M extends keyof ProtocolMapping.Commands>(
     target: chrome.debugger.Debuggee,
     method: M,
-    params?: ProtocolMapping.Commands[M]["paramsType"][0],
+    params: ProtocolMapping.Commands[M]["paramsType"][0] | undefined,
 ): Promise<ProtocolMapping.Commands[M]["returnType"]> {
     return new Promise((resolve, reject) => {
         let settled = false;
@@ -35,6 +35,30 @@ export function sendCommand<M extends keyof ProtocolMapping.Commands>(
             if (err) reject(new Error(`CDP ${method} failed: ${err.message}`));
             else resolve(result as ProtocolMapping.Commands[M]["returnType"]);
         });
+    });
+}
+
+export function sendCommand<M extends keyof ProtocolMapping.Commands>(
+    target: chrome.debugger.Debuggee,
+    method: M,
+    params?: ProtocolMapping.Commands[M]["paramsType"][0],
+    opts?: { retryOnTimeout?: boolean },
+): Promise<ProtocolMapping.Commands[M]["returnType"]> {
+    const attempt = () => sendCommandOnce(target, method, params);
+    if (!opts?.retryOnTimeout) return attempt();
+    // Only safe for commands whose effect is harmless to fire twice
+    // (e.g. a wheel scroll) — chrome.debugger.sendCommand's callback can
+    // just never fire (see CDP_COMMAND_TIMEOUT_MS above), and that's
+    // frequently a lost ack rather than a command that never reached
+    // Chrome at all, so one retry after a timeout clears most of these.
+    // Never opt a command with a real side effect that shouldn't double
+    // fire (mousePressed/mouseReleased, dispatchKeyEvent, etc.) into this.
+    return attempt().catch((e) => {
+        console.warn(
+            `[browsercontrol] CDP ${method} timed out, retrying once:`,
+            errorMessage(e),
+        );
+        return attempt();
     });
 }
 
