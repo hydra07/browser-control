@@ -107,3 +107,68 @@ export async function runFlow(id: string): Promise<FlowRunResult> {
   }
   return data as unknown as FlowRunResult;
 }
+
+export interface BenchmarkMetrics {
+  summary: {
+    sessionId: string;
+    sessionName: string;
+    startedAt: number;
+    totalCalls: number;
+    totalInTokens: number;
+    totalOutTokens: number;
+    totalTokens: number;
+    totalInChars: number;
+    totalOutChars: number;
+    avgInTokensPerCall: number;
+    avgOutTokensPerCall: number;
+    avgTokensPerCall: number;
+    avgDurationMs: number;
+    totalDurationMs: number;
+    errorCount: number;
+    errorRatePct: number;
+    flowStepTotal: number;
+  };
+  tokenSavings: {
+    estimatedSavedTokens: number;
+    savingsBreakdown: {
+      fromFlowBatching: number;
+      fromCompactSnapshots: number;
+      fromDocsBlocks: number;
+    };
+  };
+  byCommand: Array<{
+    cmd: string;
+    count: number;
+    inTokens: number;
+    outTokens: number;
+    totalTokens: number;
+    avgTokens: number;
+    totalDurationMs: number;
+    avgDurationMs: number;
+    errorCount: number;
+    pctOfTokens: number;
+  }>;
+  recentCalls: Array<{
+    id: number;
+    cmd: string;
+    durationMs: number;
+    inTokens: number;
+    outTokens: number;
+    approxTokens: number;
+    isError: boolean;
+    source: string;
+    preview: string;
+    elementRole?: string;
+    elementName?: string;
+    stepCount?: number;
+    createdAt: number;
+    argsSummary: string;
+  }>;
+}
+
+export async function getMetrics(sessionId?: string): Promise<BenchmarkMetrics> {
+  const query = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : "";
+  const res = await daemonFetch(`/metrics${query}`);
+  if (!res.ok) throw new Error(`Failed to get metrics (HTTP ${res.status})`);
+  return (await res.json()) as BenchmarkMetrics;
+}

@@ -106,6 +106,36 @@ db.run(`
     )
 `);
 
+db.run(`
+    CREATE TABLE IF NOT EXISTS tool_calls (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        cmd TEXT NOT NULL,
+        args_json TEXT NOT NULL DEFAULT '{}',
+        duration_ms INTEGER NOT NULL DEFAULT 0,
+        in_chars INTEGER NOT NULL DEFAULT 0,
+        in_tokens INTEGER NOT NULL DEFAULT 0,
+        out_chars INTEGER NOT NULL DEFAULT 0,
+        out_tokens INTEGER NOT NULL DEFAULT 0,
+        approx_chars INTEGER NOT NULL DEFAULT 0,
+        approx_tokens INTEGER NOT NULL DEFAULT 0,
+        has_image INTEGER NOT NULL DEFAULT 0,
+        is_error INTEGER NOT NULL DEFAULT 0,
+        source TEXT NOT NULL DEFAULT 'mcp',
+        preview TEXT,
+        element_role TEXT,
+        element_name TEXT,
+        step_count INTEGER DEFAULT 0,
+        created_at INTEGER NOT NULL
+    )
+`);
+try { db.run(`ALTER TABLE tool_calls ADD COLUMN in_chars INTEGER DEFAULT 0`); } catch {}
+try { db.run(`ALTER TABLE tool_calls ADD COLUMN in_tokens INTEGER DEFAULT 0`); } catch {}
+try { db.run(`ALTER TABLE tool_calls ADD COLUMN out_chars INTEGER DEFAULT 0`); } catch {}
+try { db.run(`ALTER TABLE tool_calls ADD COLUMN out_tokens INTEGER DEFAULT 0`); } catch {}
+db.run(`CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_tool_calls_cmd ON tool_calls(cmd)`);
+
 const HOSTS_STORE_CAP = 50;
 const HOSTS_NAME_SHOW_CAP = 5;
 
@@ -690,3 +720,333 @@ export function deleteFlow(id: string): boolean {
     const res = db.query(`DELETE FROM flows WHERE id = ?`).run(id);
     return res.changes > 0;
 }
+
+// --- Benchmark & Token Analytics ---
+
+export interface ToolCallRecordInput {
+    sessionId: string;
+    cmd: string;
+    args: Record<string, unknown>;
+    durationMs: number;
+    inChars?: number;
+    inTokens?: number;
+    outChars?: number;
+    outTokens?: number;
+    approxChars: number;
+    approxTokens: number;
+    hasImage: boolean;
+    isError: boolean;
+    source: string;
+    preview: string;
+    elementRole?: string;
+    elementName?: string;
+    stepCount?: number;
+    createdAt?: number;
+}
+
+export function recordToolCallDetail(input: ToolCallRecordInput): void {
+    try {
+        const inChars = input.inChars ?? (JSON.stringify(input.args ?? {}).length + input.cmd.length);
+        const inTokens = input.inTokens ?? Math.max(1, Math.round(inChars / 4));
+        const outChars = input.outChars ?? (input.approxChars > inChars ? input.approxChars - inChars : input.approxChars);
+        const outTokens = input.outTokens ?? Math.max(1, Math.round(outChars / 4));
+        const totalTokens = inTokens + outTokens;
+
+        db.query(
+            `INSERT INTO tool_calls (
+                session_id, cmd, args_json, duration_ms, in_chars, in_tokens,
+                out_chars, out_tokens, approx_chars, approx_tokens, has_image,
+                is_error, source, preview, element_role, element_name,
+                step_count, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+            input.sessionId,
+            input.cmd,
+            JSON.stringify(input.args ?? {}),
+            input.durationMs,
+            inChars,
+            inTokens,
+            outChars,
+            outTokens,
+            inChars + outChars,
+            totalTokens,
+            input.hasImage ? 1 : 0,
+            input.isError ? 1 : 0,
+            input.source,
+            input.preview,
+            input.elementRole ?? null,
+            input.elementName ?? null,
+            input.stepCount ?? 0,
+            input.createdAt ?? Date.now(),
+        );
+    } catch (e) {
+        console.error("[dataStore] Failed to record tool call detail:", e);
+    }
+}
+
+export interface BenchmarkMetrics {
+    summary: {
+        sessionId: string;
+        sessionName: string;
+        startedAt: number;
+        totalCalls: number;
+        totalInTokens: number;
+        totalOutTokens: number;
+        totalTokens: number;
+        totalInChars: number;
+        totalOutChars: number;
+        avgInTokensPerCall: number;
+        avgOutTokensPerCall: number;
+        avgTokensPerCall: number;
+        avgDurationMs: number;
+        totalDurationMs: number;
+        errorCount: number;
+        errorRatePct: number;
+        flowStepTotal: number;
+    };
+    tokenSavings: {
+        estimatedSavedTokens: number;
+        savingsBreakdown: {
+            fromFlowBatching: number;
+            fromCompactSnapshots: number;
+            fromDocsBlocks: number;
+        };
+    };
+    byCommand: Array<{
+        cmd: string;
+        count: number;
+        inTokens: number;
+        outTokens: number;
+        totalTokens: number;
+        avgTokens: number;
+        totalDurationMs: number;
+        avgDurationMs: number;
+        errorCount: number;
+        pctOfTokens: number;
+    }>;
+    recentCalls: Array<{
+        id: number;
+        cmd: string;
+        durationMs: number;
+        inTokens: number;
+        outTokens: number;
+        approxTokens: number;
+        isError: boolean;
+        source: string;
+        preview: string;
+        elementRole?: string;
+        elementName?: string;
+        stepCount?: number;
+        createdAt: number;
+        argsSummary: string;
+    }>;
+}
+
+export function getBenchmarkMetrics(sessionId?: string): BenchmarkMetrics {
+    const sessionRow = sessionId
+        ? (db.query(`SELECT * FROM sessions WHERE id = ?`).get(sessionId) as {
+              id: string;
+              name: string;
+              started_at: number;
+          } | undefined)
+        : (db
+              .query(`SELECT * FROM sessions ORDER BY started_at DESC LIMIT 1`)
+              .get() as { id: string; name: string; started_at: number } | undefined);
+
+    const activeSessionId = sessionId ?? sessionRow?.id ?? "current";
+    const sessionName = sessionRow?.name || "Active Session";
+    const startedAt = sessionRow?.started_at || Date.now();
+
+    interface CallRow {
+        id: number;
+        cmd: string;
+        args_json: string;
+        duration_ms: number;
+        in_chars?: number;
+        in_tokens?: number;
+        out_chars?: number;
+        out_tokens?: number;
+        approx_chars: number;
+        approx_tokens: number;
+        is_error: number;
+        source: string;
+        preview: string;
+        element_role: string | null;
+        element_name: string | null;
+        step_count: number;
+        created_at: number;
+    }
+
+    const rows = db
+        .query(
+            `SELECT * FROM tool_calls WHERE session_id = ? ORDER BY created_at DESC LIMIT 100`,
+        )
+        .all(activeSessionId) as CallRow[];
+
+    interface AggRow {
+        cmd: string;
+        count: number;
+        total_in_tokens: number;
+        total_out_tokens: number;
+        total_tokens: number;
+        total_duration: number;
+        error_count: number;
+        step_total: number;
+    }
+
+    const aggRows = db
+        .query(
+            `SELECT cmd, COUNT(*) as count,
+                    SUM(COALESCE(in_tokens, 0)) as total_in_tokens,
+                    SUM(COALESCE(out_tokens, approx_tokens)) as total_out_tokens,
+                    SUM(approx_tokens) as total_tokens,
+                    SUM(duration_ms) as total_duration,
+                    SUM(is_error) as error_count,
+                    SUM(step_count) as step_total
+             FROM tool_calls
+             WHERE session_id = ?
+             GROUP BY cmd
+             ORDER BY total_tokens DESC`,
+        )
+        .all(activeSessionId) as AggRow[];
+
+    let totalCalls = 0;
+    let totalInTokens = 0;
+    let totalOutTokens = 0;
+    let totalTokens = 0;
+    let totalInChars = 0;
+    let totalOutChars = 0;
+    let totalDurationMs = 0;
+    let errorCount = 0;
+    let flowStepTotal = 0;
+
+    for (const r of rows) {
+        totalCalls++;
+        const inTok = (r.in_tokens && r.in_tokens > 0) ? r.in_tokens : Math.max(1, Math.round((r.args_json.length + r.cmd.length) / 4));
+        const outTok = (r.out_tokens && r.out_tokens > 0) ? r.out_tokens : Math.max(1, (r.approx_tokens > inTok ? r.approx_tokens - inTok : r.approx_tokens));
+        const inChar = (r.in_chars && r.in_chars > 0) ? r.in_chars : (r.args_json.length + r.cmd.length);
+        const outChar = (r.out_chars && r.out_chars > 0) ? r.out_chars : (r.approx_chars > inChar ? r.approx_chars - inChar : r.approx_chars);
+
+        totalInTokens += inTok;
+        totalOutTokens += outTok;
+        totalTokens += (inTok + outTok);
+        totalInChars += inChar;
+        totalOutChars += outChar;
+        totalDurationMs += r.duration_ms || 0;
+        if (r.is_error === 1) errorCount++;
+        flowStepTotal += r.step_count || 0;
+    }
+
+    const byCommand = aggRows.map((a) => {
+        const inTok = (a.total_in_tokens && a.total_in_tokens > 0) ? a.total_in_tokens : Math.max(1, Math.round(a.count * 15));
+        const outTok = (a.total_out_tokens && a.total_out_tokens > 0) ? a.total_out_tokens : Math.max(1, a.total_tokens - inTok);
+        const total = inTok + outTok;
+        return {
+            cmd: a.cmd,
+            count: a.count,
+            inTokens: inTok,
+            outTokens: outTok,
+            totalTokens: total,
+            avgTokens: a.count > 0 ? Math.round(total / a.count) : 0,
+            totalDurationMs: a.total_duration || 0,
+            avgDurationMs: a.count > 0 ? Math.round((a.total_duration || 0) / a.count) : 0,
+            errorCount: a.error_count || 0,
+            pctOfTokens: totalTokens > 0 ? Math.round((total / totalTokens) * 100) : 0,
+        };
+    });
+
+    // Estimate accurate token savings for this specific session:
+    // 1. Flow Batching: each batched step avoids 1 extra tool round-trip (~350 tokens of prompt+reasoning overhead)
+    const runFlowCount =
+        aggRows.find((a) => a.cmd === "run_flow" || a.cmd === "explore_flow")
+            ?.count ?? 0;
+    const fromFlowBatching = Math.max(
+        0,
+        (flowStepTotal - runFlowCount) * 350,
+    );
+
+    // 2. Compact snapshot savings: ~75% whitespace/JSON overhead avoided
+    const compactSnapshots = rows.filter(
+        (r) => r.cmd === "snapshot" && r.args_json.includes('"compact":true'),
+    );
+    const fromCompactSnapshots = compactSnapshots.reduce(
+        (acc, r) => acc + Math.round(r.approx_tokens * 2.5),
+        0,
+    );
+
+    // 3. Docs blocks instead of full text reading dump into LLM context:
+    const docsRow = db
+        .query(
+            `SELECT SUM(char_count) as total_chars FROM docs_blocks WHERE session_id = ?`,
+        )
+        .get(activeSessionId) as { total_chars: number | null } | undefined;
+    const fromDocsBlocks = Math.round((docsRow?.total_chars ?? 0) / 4);
+
+    const estimatedSavedTokens =
+        fromFlowBatching + fromCompactSnapshots + fromDocsBlocks;
+
+    const recentCalls = rows.map((r) => {
+        let argsSummary = "";
+        try {
+            const parsed = JSON.parse(r.args_json);
+            if (parsed.url) argsSummary = parsed.url;
+            else if (parsed.nodeId) argsSummary = `nodeId: ${parsed.nodeId}`;
+            else if (parsed.query) argsSummary = `"${parsed.query}"`;
+            else if (parsed.selector) argsSummary = `"${parsed.selector}"`;
+            else if (parsed.action) argsSummary = parsed.action;
+        } catch {}
+
+        const inTok = (r.in_tokens && r.in_tokens > 0) ? r.in_tokens : Math.max(1, Math.round((r.args_json.length + r.cmd.length) / 4));
+        const outTok = (r.out_tokens && r.out_tokens > 0) ? r.out_tokens : Math.max(1, (r.approx_tokens > inTok ? r.approx_tokens - inTok : r.approx_tokens));
+
+        return {
+            id: r.id,
+            cmd: r.cmd,
+            durationMs: r.duration_ms,
+            inTokens: inTok,
+            outTokens: outTok,
+            approxTokens: inTok + outTok,
+            isError: r.is_error === 1,
+            source: r.source,
+            preview: r.preview,
+            elementRole: r.element_role ?? undefined,
+            elementName: r.element_name ?? undefined,
+            stepCount: r.step_count || undefined,
+            createdAt: r.created_at,
+            argsSummary,
+        };
+    });
+
+    return {
+        summary: {
+            sessionId: activeSessionId,
+            sessionName,
+            startedAt,
+            totalCalls,
+            totalInTokens,
+            totalOutTokens,
+            totalTokens,
+            totalInChars,
+            totalOutChars,
+            avgInTokensPerCall: totalCalls > 0 ? Math.round(totalInTokens / totalCalls) : 0,
+            avgOutTokensPerCall: totalCalls > 0 ? Math.round(totalOutTokens / totalCalls) : 0,
+            avgTokensPerCall: totalCalls > 0 ? Math.round(totalTokens / totalCalls) : 0,
+            avgDurationMs: totalCalls > 0 ? Math.round(totalDurationMs / totalCalls) : 0,
+            totalDurationMs,
+            errorCount,
+            errorRatePct: totalCalls > 0 ? Math.round((errorCount / totalCalls) * 100) : 0,
+            flowStepTotal,
+        },
+        tokenSavings: {
+            estimatedSavedTokens,
+            savingsBreakdown: {
+                fromFlowBatching,
+                fromCompactSnapshots,
+                fromDocsBlocks,
+            },
+        },
+        byCommand,
+        recentCalls,
+    };
+}
+

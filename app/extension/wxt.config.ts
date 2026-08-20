@@ -19,8 +19,16 @@ export default defineConfig({
     // in the manifest — WXT only adds it automatically for a popup
     // entrypoint, which we deliberately don't have (the toolbar icon opens
     // the side panel directly, not a popup). Empty object, no
-    // default_popup, is enough to make the namespace exist.
     action: {},
+    commands: {
+      _execute_action: {
+        suggested_key: {
+          default: 'Ctrl+Shift+B',
+          mac: 'Command+Shift+B',
+        },
+        description: 'Toggle BrowserControl Side Panel',
+      },
+    },
   },
   vite: () => ({
     plugins: [tailwindcss()],

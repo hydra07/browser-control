@@ -183,8 +183,21 @@ export async function getFullSnapshot(
     return buildSnapshotNodes(axTreeResult?.nodes || []);
 }
 
+export function formatCompactSnapshot(nodes: SnapshotEntry[]): string {
+    return nodes
+        .map((node) => {
+            const idPart = node.i != null ? `[${node.i}] ` : "";
+            const rolePart = node.r ?? "node";
+            const namePart = node.n ? ` "${node.n.replace(/\n+/g, " ").trim()}"` : "";
+            const valPart = node.v ? ` (v: "${node.v.replace(/\n+/g, " ").trim()}")` : "";
+            return `${idPart}${rolePart}${namePart}${valPart}`;
+        })
+        .join("\n");
+}
+
 export async function handleSnapshotCommand(
     target: chrome.debugger.Debuggee,
+    opts: { compact?: boolean; format?: string } = {},
 ): Promise<Record<string, unknown>> {
     const axTreeResult = await sendCommand(
         target,
@@ -193,11 +206,14 @@ export async function handleSnapshotCommand(
     );
     const nodes = axTreeResult?.nodes || [];
     const filteredNodes = buildSnapshotNodes(nodes);
+    const isCompact = opts.compact === true || opts.format === "compact";
     return {
         message: "Extracted and Filtered Accessibility Tree",
         totalRawNodes: nodes.length,
         filteredNodesCount: filteredNodes.length,
-        nodes: filteredNodes,
+        ...(isCompact
+            ? { compactNodes: formatCompactSnapshot(filteredNodes) }
+            : { nodes: filteredNodes }),
     };
 }
 

@@ -22,6 +22,13 @@ import {
     performScroll,
     performDrag,
 } from "../lib/actions.js";
+import {
+    handleInspectMemory,
+    handleInspectProcess,
+    handleAnalyzeHar,
+    handleDebugLayout,
+    handleEmulate,
+} from "../lib/devtools.js";
 import { runFlowSteps } from "../lib/flow.js";
 import {
     handleSnapshotCommand,
@@ -355,7 +362,11 @@ async function dispatchCommand(
     // browser_act's run_flow steps already always use.
     const animated = getSettingsSync().animationsEnabled;
 
-    if (cmd === "snapshot") return await handleSnapshotCommand(target);
+    if (cmd === "snapshot")
+        return await handleSnapshotCommand(target, {
+            compact: data.compact,
+            format: data.format,
+        });
 
     if (cmd === "query_region")
         return await handleQueryRegionCommand(target, data.selector);
@@ -436,6 +447,7 @@ async function dispatchCommand(
         }
         return await runFlowSteps(target, data.steps, {
             captureEachStep: cmd === "explore_flow",
+            returnSnapshot: data.returnSnapshot,
         });
     }
 
@@ -452,7 +464,15 @@ async function dispatchCommand(
             data.fromY,
             data.toX,
             data.toY,
-            { fast: !animated },
+            {
+                fast: !animated,
+                shape: data.shape,
+                shapeParams: data.shapeParams,
+                path: data.path,
+                stepsCount: data.stepsCount,
+                easing: data.easing,
+                button: data.button,
+            },
         );
     }
 
@@ -495,6 +515,31 @@ async function dispatchCommand(
     if (cmd === "network_clear") {
         clearNetworkRequests();
         return { success: true, message: "Network log cleared." };
+    }
+
+    if (cmd === "dev_memory") {
+        return await handleInspectMemory(target, { focus: data.focus });
+    }
+
+    if (cmd === "dev_process") {
+        return await handleInspectProcess(target, { focus: data.focus });
+    }
+
+    if (cmd === "dev_har") {
+        return await handleAnalyzeHar(target, { filter: data.filter, includeBodies: data.includeBodies });
+    }
+
+    if (cmd === "dev_layout") {
+        return await handleDebugLayout(target, { selector: data.selector, nodeId: data.nodeId, focus: data.focus });
+    }
+
+    if (cmd === "dev_emulate") {
+        return await handleEmulate(target, {
+            device: data.device,
+            network: data.network,
+            cpuSlowdown: data.cpuSlowdown,
+            touch: data.touch,
+        });
     }
 
     if (cmd === "evaluate") {

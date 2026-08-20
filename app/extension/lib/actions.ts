@@ -427,70 +427,119 @@ export async function performScroll(
     return { success: true, message: `Scrolled by (${deltaX}, ${deltaY})` };
 }
 
+import { compileTrajectory, type TrajectoryConfig, type Point } from "./geometry.js";
+
+let lastCursorPosition: Point = { x: 400, y: 300 };
+
+export function getLastCursorPosition(): Point {
+    return { ...lastCursorPosition };
+}
+
+export function setLastCursorPosition(x: number, y: number): void {
+    lastCursorPosition = { x: Math.round(x), y: Math.round(y) };
+}
+
+export interface DragOptions {
+    fast: boolean;
+    shape?: TrajectoryConfig["shape"];
+    shapeParams?: Record<string, unknown>;
+    path?: Array<Point | [number, number]>;
+    stepsCount?: number;
+    easing?: TrajectoryConfig["easing"];
+    button?: "left" | "right" | "middle";
+    currentCursor?: Point;
+}
+
 // For canvas-based UI (a whiteboard, a drawing app) where there's no DOM
-// element per shape to click/type into — click/type/press_key all resolve
-// a target by nodeId; this is the one action addressed by raw viewport
-// coordinates instead, a real mousedown->mousemove(*n)->mouseup sequence
-// (not a single jump) so the target sees an actual drag path, which matters
-// for anything that tracks drag distance/velocity, not just start/end.
+// element per shape to click/type into — supports straight lines, geometric
+// shapes (circle, arc, bezier, spiral, wave/zigzag) and multi-point paths.
 export async function performDrag(
     target: chrome.debugger.Debuggee,
-    fromX: number,
-    fromY: number,
-    toX: number,
-    toY: number,
-    opts: { fast: boolean },
+    fromX?: number,
+    fromY?: number,
+    toX?: number,
+    toY?: number,
+    opts: DragOptions = { fast: false },
 ): Promise<ActionResult> {
+    const trajectoryConfig: TrajectoryConfig = {
+        shape: opts.shape,
+        fromX,
+        fromY,
+        toX,
+        toY,
+        points: opts.path,
+        steps: opts.stepsCount,
+        easing: opts.easing,
+        ...(opts.shapeParams ?? {}),
+    };
+
+    const currentCursor = opts.currentCursor ?? lastCursorPosition;
+    const points = compileTrajectory(trajectoryConfig, currentCursor);
+    if (points.length < 2) {
+        return {
+            error: "Drag trajectory requires at least 2 points",
+            hint: "Check coordinates (fromX/fromY/toX/toY), shape parameters, or path array.",
+        };
+    }
+
+    const start = points[0];
+    const end = points[points.length - 1];
+    const button = opts.button ?? "left";
+
+    // 1. Move cursor to start
     await evalOnPage(
         target,
-        `(${moveCursorTo.toString()})(${fromX}, ${fromY}, ${opts.fast})`,
+        `(${moveCursorTo.toString()})(${start.x}, ${start.y}, ${opts.fast})`,
         true,
     );
     void evalOnPage(target, `(${pulseCursorPress.toString()})(true)`);
+
+    // 2. Mouse Press
     await sendCommand(target, "Input.dispatchMouseEvent", {
         type: "mousePressed",
-        x: fromX,
-        y: fromY,
-        button: "left",
+        x: start.x,
+        y: start.y,
+        button,
         clickCount: 1,
     });
 
-    // Real intermediate points, not a teleport — fast mode still moves
-    // through them (functionally required for a real drag), just skips the
-    // per-step pacing delay and the visual cursor's follow-along glide.
-    const steps = opts.fast ? 6 : 14;
-    for (let i = 1; i <= steps; i++) {
-        const t = i / steps;
-        const x = fromX + (toX - fromX) * t;
-        const y = fromY + (toY - fromY) * t;
+    // 3. Move through every calculated trajectory point
+    const perStepDelay = opts.fast ? 0 : Math.max(5, Math.min(25, Math.round(250 / points.length)));
+    for (let i = 1; i < points.length; i++) {
+        const pt = points[i];
         await sendCommand(target, "Input.dispatchMouseEvent", {
             type: "mouseMoved",
-            x,
-            y,
-            button: "left",
+            x: pt.x,
+            y: pt.y,
+            button,
         });
-        if (!opts.fast) {
-            void evalOnPage(target, `(${moveCursorTo.toString()})(${x}, ${y}, true)`);
-            await pageDelay(target, 20);
+        if (!opts.fast && i % 2 === 0) {
+            void evalOnPage(target, `(${moveCursorTo.toString()})(${pt.x}, ${pt.y}, true)`);
+        }
+        if (perStepDelay > 0) {
+            await pageDelay(target, perStepDelay);
         }
     }
 
+    // 4. Ripple & Mouse Release
     void evalOnPage(
         target,
-        `(${showClickRipple.toString()})(${toX}, ${toY}, 'click', ${opts.fast})`,
+        `(${showClickRipple.toString()})(${end.x}, ${end.y}, 'click', ${opts.fast})`,
     );
     void evalOnPage(target, `(${pulseCursorPress.toString()})(false)`);
     await sendCommand(target, "Input.dispatchMouseEvent", {
         type: "mouseReleased",
-        x: toX,
-        y: toY,
-        button: "left",
+        x: end.x,
+        y: end.y,
+        button,
         clickCount: 1,
     });
+    setLastCursorPosition(end.x, end.y);
     await waitForStableDom(target);
 
+    const shapeNote = opts.shape && opts.shape !== "straight" ? ` (${opts.shape} trajectory, ${points.length} points)` : "";
     return {
         success: true,
-        message: `Dragged from (${fromX}, ${fromY}) to (${toX}, ${toY})`,
+        message: `Dragged from (${start.x}, ${start.y}) to (${end.x}, ${end.y})${shapeNote}`,
     };
 }

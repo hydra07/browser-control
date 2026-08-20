@@ -38,7 +38,12 @@ export const FLOW_STEP_ITEM_SCHEMA = {
     fromX: { type: "number", description: "Drag start x, viewport pixels (action: 'drag')." },
     fromY: { type: "number", description: "Drag start y, viewport pixels (action: 'drag')." },
     toX: { type: "number", description: "Drag end x, viewport pixels (action: 'drag')." },
-    toY: { type: "number", description: "Drag end y, viewport pixels (action: 'drag')." },
+    shape: { type: "string", enum: ["straight", "circle", "arc", "ellipse", "bezier", "sine", "zigzag", "spiral", "waypoints", "polygon", "star", "heart", "flower", "rectangle", "box", "parametric", "polar", "function"], description: "Geometric or mathematical function trajectory shape (action: 'drag')." },
+    shapeParams: { type: "object", description: "Parameters for shape drag: math formulas {fnX, fnY, fnR, tMin, tMax}, center {cx, cy}, radius {radius, radiusX, radiusY}, angles {startAngle, endAngle}, or presets {petals, numPoints, outerRadius, innerRadius, size, width, height}." },
+    path: { type: "array", description: "Array of [x, y] or {x, y} coordinate waypoints for path dragging (action: 'drag')." },
+    stepsCount: { type: "number", description: "Number of intermediate interpolation steps for drag." },
+    easing: { type: "string", enum: ["linear", "easeIn", "easeOut", "easeInOut"], description: "Easing function for drag movement." },
+    button: { type: "string", enum: ["left", "right", "middle"], description: "Mouse button for drag (default 'left')." },
     timeoutMs: { type: "number", description: "Max time in ms to poll for the target to appear (action: 'wait_for'), default 3000." },
     confirmRisky: { type: "boolean", description: "Set true to proceed past a step whose target looks destructive/irreversible (delete, cancel, sign out, pay, confirm, ...) — only after confirming with your user that this step is intended." },
   },
@@ -47,14 +52,25 @@ export const FLOW_STEP_ITEM_SCHEMA = {
 
 /** Read once at MCP session start (not per-call) — workflow/judgment guidance that doesn't fit in any one tool's description. Uses `gateway.action` shorthand for `browser_gateway({action:"action", ...})`. */
 export const INSTRUCTIONS = `
-This server exposes 5 GATEWAY tools instead of one tool per action —
+This server exposes 6 GATEWAY tools instead of one tool per action —
 browser_act, browser_inspect, browser_session, browser_bulk,
-browser_knowledge — each taking an \`action\` enum plus that action's own
-params, e.g. browser_act({action:"click", nodeId}). Below, \`gateway.action\`
-is shorthand for that call shape (\`session.navigate\` means
+browser_knowledge, browser_dev — each taking an \`action\` enum plus that
+action's own params, e.g. browser_act({action:"click", nodeId}). Below,
+\`gateway.action\` is shorthand for that call shape (\`session.navigate\` means
 browser_session({action:"navigate", ...})). Call the matching gateway's
 inputSchema to see every action's exact param list — this instructions
 block covers workflow and judgment calls, not full param reference.
+
+Dual-Mode & Progressive Disclosure Principle:
+- Agent Execution Mode (Default): Optimize aggressively for tokens. Always receive clean, compact high-level overviews first (~20-40 tokens). When a specific problem is identified, use \`focus\` / \`detail\` parameters to drill down into that specific element/request without dumping giant JSON trees into context.
+- End-User / Tool UI Mode: When user requests full diagnostics or exports, provide maximum fidelity (HAR 1.2 file exports, full visual snapshots, and Sidepanel Benchmark/DevTools integration).
+  Use plain act.run_flow (returnSnapshot defaults to false), use
+  inspect.snapshot({compact:true}) or inspect.find for element location,
+  and use inspect.select_content / bulk.batch_crawl for data extraction.
+  Call session.get_metrics anytime to inspect token usage & savings.
+- End-User / Tool UI Mode: When user requests full visual inspect, UI
+  debugging, or panel interaction, provide maximum fidelity (visual:true,
+  inspect_element, returnSnapshot:true, or open the Sidepanel Benchmark tab).
 
 BrowserControl drives real Chrome tabs (grouped as "🤖 AI Workspace") via
 your everyday browser's debugger, not a headless/isolated instance. Every
@@ -137,13 +153,15 @@ Workflow for interacting with a page:
 4. act.type only inserts text — it never submits anything on its own. To
    submit a search box or form, or navigate a custom dropdown, follow it
    with act.press_key (Enter, Tab, Escape, arrows, ...).
-5. After any action that changes the page (navigation, opening a modal,
-   submitting a form), take a fresh snapshot before reusing an id — ids are
-   backend DOM node ids and go stale once the page re-renders.
-6. For a KNOWN multi-step flow (login, a multi-field form, a wizard), don't
-   drive it one act.click/act.type call at a time — that costs one round
-   trip (and one reasoning pass) per step. Instead, write the whole
-   sequence as steps referencing elements by role+name (from the snapshot)
+5. Prefer batching ALL sequential actions into act.run_flow: If you need
+   to perform more than 1 action (e.g. type then press Enter, multiple
+   navigation keys, drag sequences, scrolling, filling a form), NEVER call
+   act.click / act.type / act.press_key / act.drag / act.scroll one by one in
+   a loop. Pack them all into one act.run_flow call. This turns 5-10
+   slow roundtrips into 1 single fast execution.
+6. For a multi-step flow (login, form fill, search, navigation), don't
+   drive it one call at a time — write the whole sequence as steps
+   referencing elements by role+name (from the snapshot) or CSS selector
    and send it in one act.run_flow call. Default to plain act.run_flow, not
    explore:true — explore:true is for validating ONE uncertain sequence
    against an unfamiliar UI, not a general substitute for a plain run.
@@ -288,7 +306,7 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
 - scroll: scroll by a pixel delta (deltaX/deltaY).
 - drag: a real mousedown->mousemove(*n)->mouseup sequence between two viewport points (fromX/fromY/toX/toY), not a click — for canvas-based UI (a whiteboard, a drawing app) with no DOM element per shape to click/type into.
 - evaluate: run arbitrary JavaScript (expression) for reading state (localStorage, computed values) or test setup/teardown — NOT a shortcut for clicking buttons or filling fields: setting element.value via JS does not reliably trigger React/Vue's onChange, so a broken input can look like it works when it doesn't. If you used this to fill a form, say so explicitly rather than reporting it as a tested interaction.
-- run_flow: run a list of steps (click/type/press_key/drag/wait_for/assert_text/scroll) in ONE call instead of one round trip per step. Steps target elements by role+name (from a prior snapshot) or a CSS selector, resolved fresh against the live page at execution time — except drag, addressed by raw viewport coordinates. Stops at the first step that doesn't resolve or fails, returns a compact per-step report plus a final snapshot. Two modes: plain (default) for a sequence you're already confident in, one clean run. \`explore:true\` adds a \`delta\` (added/changed/removed elements vs. the previous step) to every step's result — use it ONCE to validate a best-guess sequence against an unfamiliar UI before switching back to plain mode; it is NOT a safe preview, every step still has the same real side effects. Don't default to explore:true once a sequence is validated — repeated explore calls for a flow you already know works is the most common way this wastes tokens (on a real multi-scenario test session, 10 explore:true calls alone accounted for over 75% of that session's total tool-call tokens). A step whose target looks destructive/irreversible (delete, cancel, sign out, pay, confirm, ...) is blocked by default in both modes; if that's actually intended, confirm with your user and re-run with that step's confirmRisky:true.`,
+- run_flow: run a list of steps (click/type/press_key/drag/wait_for/assert_text/scroll) in ONE call instead of one round trip per step. Steps target elements by role+name (from a prior snapshot) or a CSS selector, resolved fresh against the live page at execution time — except drag, addressed by raw viewport coordinates. Stops at the first step that doesn't resolve or fails, returns a compact per-step report. Plain mode (default) omits full final snapshot to save tokens (set \`returnSnapshot:true\` if needed). Two modes: plain (default) for a sequence you're already confident in, one clean run. \`explore:true\` adds a \`delta\` (added/changed/removed elements vs. the previous step) to every step's result — use it ONCE to validate a best-guess sequence against an unfamiliar UI before switching back to plain mode; it is NOT a safe preview, every step still has the same real side effects. Don't default to explore:true once a sequence is validated — repeated explore calls for a flow you already know works is the most common way this wastes tokens (on a real multi-scenario test session, 10 explore:true calls alone accounted for over 75% of that session's total tool-call tokens). A step whose target looks destructive/irreversible (delete, cancel, sign out, pay, confirm, ...) is blocked by default in both modes; if that's actually intended, confirm with your user and re-run with that step's confirmRisky:true.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -302,9 +320,16 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
         fromY: { type: "number", description: "Drag start y, viewport pixels (action: 'drag')." },
         toX: { type: "number", description: "Drag end x, viewport pixels (action: 'drag')." },
         toY: { type: "number", description: "Drag end y, viewport pixels (action: 'drag')." },
+        shape: { type: "string", enum: ["straight", "circle", "arc", "ellipse", "bezier", "sine", "zigzag", "spiral", "waypoints", "polygon", "star", "heart", "flower", "rectangle", "box", "parametric", "polar", "function"], description: "Geometric or mathematical function trajectory shape (action: 'drag')." },
+        shapeParams: { type: "object", description: "Parameters for shape drag: math formulas {fnX, fnY, fnR, tMin, tMax}, center {cx, cy}, radius {radius, radiusX, radiusY}, angles {startAngle, endAngle}, or presets {petals, numPoints, outerRadius, innerRadius, size, width, height}." },
+        path: { type: "array", description: "Array of [x, y] or {x, y} coordinate waypoints for path dragging (action: 'drag')." },
+        stepsCount: { type: "number", description: "Number of intermediate interpolation steps for drag." },
+        easing: { type: "string", enum: ["linear", "easeIn", "easeOut", "easeInOut"], description: "Easing function for drag movement." },
+        button: { type: "string", enum: ["left", "right", "middle"], description: "Mouse button for drag (default 'left')." },
         expression: { type: "string", description: "JavaScript to evaluate (action: 'evaluate')." },
         steps: { type: "array", description: "Ordered list of steps (action: 'run_flow'). Stops at the first step that doesn't resolve or fails.", items: FLOW_STEP_ITEM_SCHEMA },
         explore: { type: "boolean", description: "(action: 'run_flow') Add a per-step delta to validate an unfamiliar/best-guess sequence once, instead of a plain run. Don't default to this once a flow is validated — see the tool description." },
+        returnSnapshot: { type: "boolean", description: "(action: 'run_flow') Set true to return full final accessibility snapshot after completing the flow. Defaults to false to conserve tokens." },
         ...TAB_ID_PROPERTY,
       },
       required: ["action"],
@@ -314,7 +339,7 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
     name: "browser_inspect",
     description: `Read/observe the current page without acting on it. Set \`action\` to one of: snapshot, find, reading_mode, inspect_element, screenshot, select_content, network_requests, network_clear.
 
-- snapshot: the default way to see what's on the page before clicking/typing. Plain call: a flat text list, {i,r,n,v?} per entry (i=node id for browser_act/inspect_element, r=role, n=accessible name, v=current value if any). \`visual:true\` also returns a screenshot with a numbered box over every interactive element (same ids) — use before clicking anything you're not 100% sure about (custom dropdowns, icon-only buttons, ambiguous labels). \`selector:"..."\` scopes to one container (a form/panel/row) and returns a NESTED tree instead of a flat list — a field's label ends up as its sibling in the same \`children\` array; capped at 150 elements, narrow the selector if truncated. If both are set, visual wins (selector-scoped + visual together isn't supported).
+- snapshot: the default way to see what's on the page before clicking/typing. Plain call: a flat list, {i,r,n,v?} per entry (i=node id for browser_act/inspect_element, r=role, n=accessible name, v=current value if any). Set \`compact:true\` to get a dense single-line format saving ~75% token whitespace. \`visual:true\` also returns a screenshot with a numbered box over every interactive element (same ids) — use before clicking anything you're not 100% sure about (custom dropdowns, icon-only buttons, ambiguous labels). \`selector:"..."\` scopes to one container (a form/panel/row) and returns a NESTED tree instead of a flat list — a field's label ends up as its sibling in the same \`children\` array; capped at 150 elements, narrow the selector if truncated. If both are set, visual wins (selector-scoped + visual together isn't supported).
 - find: Ctrl+F-style — jump straight to elements matching text/CSS selector/XPath (\`query\`) instead of scanning a full snapshot. Much cheaper than snapshot when you already know what you're looking for on a large/data-heavy page. Returns the same {i,r,n} shape as snapshot, usable directly with browser_act. Flashes a highlight on the first match.
 - reading_mode: clean article/main-content text (title + body, chrome like nav/ads/sidebars stripped) — like a browser's reader view. Far cheaper than snapshot when the goal is READING content, not acting on interactive elements. Says so and returns nothing useful on non-article pages (an app UI, a form, a dashboard) — fall back to snapshot there.
 - inspect_element: deep-dive on ONE element by nodeId — outerHTML, which CSS rule/selector set its computed styles, key computed layout properties, and any event listeners attached (type only, not handler source). Expensive relative to snapshot — use only for the specific element you need to explain, not in a loop.
@@ -326,6 +351,7 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
       type: "object",
       properties: {
         action: { type: "string", enum: ["snapshot", "find", "reading_mode", "inspect_element", "screenshot", "select_content", "network_requests", "network_clear"] },
+        compact: { type: "boolean", description: "(action: 'snapshot') Return dense 1-line-per-node text format instead of multi-line JSON, saving ~75% tokens. Recommended for large DOMs." },
         visual: { type: "boolean", description: "(action: 'snapshot') Also return an annotated screenshot with numbered boxes over interactive elements." },
         selector: { type: "string", description: "CSS selector — scopes into a nested tree (action: 'snapshot'), or the elements to extract (action: 'select_content')." },
         query: { type: "string", description: "Text, CSS selector, or XPath to search for (action: 'find')." },
@@ -346,7 +372,7 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
   },
   {
     name: "browser_session",
-    description: `Manage tabs and the current daemon session — not page content. Set \`action\` to one of: navigate, list_tabs, switch_tab, close_tab, set_session_name, start_recording, stop_recording.
+    description: `Manage tabs and the current daemon session — not page content. Set \`action\` to one of: navigate, list_tabs, switch_tab, close_tab, set_session_name, start_recording, stop_recording, get_metrics.
 
 - navigate: go to a URL. By default reuses whichever tab is currently active. Pass newTab:true to open this URL in a NEW tab instead, keeping the current one where it is — the response's \`tabId\` is then what you pass as \`tabId\` on later browser_act/browser_inspect calls to keep driving that specific tab. Pass an existing \`tabId\` to re-navigate that specific tab in place. If the response includes a skillHint field, a skill already exists for this domain (see browser_knowledge's list_skills/save_skill) — read it before exploratory work.
 - list_tabs: list tabs currently in the "🤖 AI Workspace" tab group — including tabs the USER dragged in themselves, not just ones you navigated to. Each entry has isNew:true if it wasn't there the last time you called this — the only notification channel for a tab the user handed you, since nothing can interrupt you mid-turn. Call at the start of a session, or whenever the user references a tab they already have open.
@@ -354,15 +380,17 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
 - close_tab: close a tab by id (from navigate/list_tabs) — tidy up a tab opened with navigate({newTab:true}).
 - set_session_name: label this daemon session with a short human-readable name so \`mise run data:sessions\`/\`data:show\` can identify it later instead of just a timestamp. Not required — sessions auto-name from the hostnames visited; use this when that's not descriptive enough.
 - start_recording: start recording the active tab as video (no audio, no other tabs) — for a multi-step flow (wizard, drag, animation) you want to review as motion rather than a stack of screenshots. Only one recording at a time. Call stop_recording when done.
-- stop_recording: stop the recording, save it as a .webm file, and return its path. Errors if none is in progress.`,
+- stop_recording: stop the recording, save it as a .webm file, and return its path. Errors if none is in progress.
+- get_metrics: get real-time token benchmark analytics for the current session (or allSessions:true) — total tokens, tool call count, duration, breakdown by command, recent call history, and estimated token savings.`,
     inputSchema: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["navigate", "list_tabs", "switch_tab", "close_tab", "set_session_name", "start_recording", "stop_recording"] },
+        action: { type: "string", enum: ["navigate", "list_tabs", "switch_tab", "close_tab", "set_session_name", "start_recording", "stop_recording", "get_metrics"] },
         url: { type: "string", description: "(action: 'navigate')" },
         newTab: { type: "boolean", description: "Open in a new tab instead of reusing the current one (action: 'navigate'). Ignored if tabId is set." },
         tabId: { type: "number", description: "Target tab. For 'navigate': re-navigate this specific existing tab instead of the current/a new one. For 'switch_tab'/'close_tab': the tab to act on (required)." },
         name: { type: "string", description: "(action: 'set_session_name')" },
+        allSessions: { type: "boolean", description: "(action: 'get_metrics') Include metrics across all sessions instead of just current session." },
       },
       required: ["action"],
     },
@@ -434,6 +462,34 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
         blockId: { type: "number", description: "Required for docsAction:'read' — id from a prior 'list' or 'search' result." },
         allSessions: { type: "boolean", description: "For docsAction 'list'/'search': include every session's blocks, not just the current one. Default false." },
         limit: { type: "number", description: "Max results for docsAction 'list'/'search', default 20/50." },
+      },
+      required: ["action"],
+    },
+  },
+  {
+    name: "browser_dev",
+    description: `Deep DevTools diagnostics, performance profiling, memory/RAM analytics, HAR export, UI/layout debugging, and device emulation. Follows Progressive Disclosure: returns a compact high-level summary (~20-40 tokens) by default; use \`focus\` to drill down into specific bottlenecks. Set \`action\` to one of: inspect_memory, inspect_process, analyze_har, export_har, debug_layout, emulate.
+
+- inspect_memory: measure JS Heap usage (used/total MB), active DOM nodes, documents, and event listeners. Detects GC pressure and potential memory leaks. Set \`focus:'dom'\` for top container element counts, \`focus:'listeners'\` for event listener analysis, or \`focus:'gc'\` to trigger V8 garbage collection.
+- inspect_process: analyze CPU execution time, breakdown of ScriptDuration, LayoutDuration (reflows), and RecalcStyleDuration. Identifies whether performance is CPU/Script-bound or Layout-bound. Set \`focus:'long_tasks'\` for blocking Long Tasks (>50ms).
+- analyze_har: analyze network traffic summary (total requests, transfer size, failed API calls, slowest request duration) without dumping raw headers into context. Set \`filter\` to scope by URL substring.
+- export_har: generate and save a standard W3C HAR 1.2 file to disk (data/har/session-*.har) containing complete network logs (requests, responses, timings) that can be directly imported into Chrome DevTools Network Tab or Wireshark.
+- debug_layout: deep inspection of Box Model (margin/border/padding quads), Computed CSS, Stacking Context creation (z-index, opacity, transform, isolation), and viewport visibility for a specific element (pass \`selector\` or \`nodeId\`). Set \`focus:'computed'\` or \`focus:'box_model'\` for deep styling details.
+- emulate: simulate device viewports (iphone14, pixel7, ipad, desktop), touch emulation, network throttling (offline, slow_3g, fast_3g, none), and CPU slowdown (2x, 4x, 6x).`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["inspect_memory", "inspect_process", "analyze_har", "export_har", "debug_layout", "emulate"] },
+        focus: { type: "string", description: "Drill down target for progressive disclosure: 'overview' (default), 'dom', 'listeners', 'gc' (for inspect_memory); 'long_tasks', 'rendering' (for inspect_process); 'box_model', 'computed', 'stacking' (for debug_layout)." },
+        selector: { type: "string", description: "CSS selector of element to inspect (action: 'debug_layout')." },
+        nodeId: { type: "number", description: "Node id from snapshot to inspect (action: 'debug_layout')." },
+        filter: { type: "string", description: "URL substring filter for network analysis (action: 'analyze_har'/'export_har')." },
+        includeBodies: { type: "boolean", description: "Include response bodies in HAR export, default false (action: 'export_har')." },
+        device: { type: "string", enum: ["iphone14", "pixel7", "ipad", "desktop"], description: "Emulate device screen metrics & touch (action: 'emulate')." },
+        network: { type: "string", enum: ["offline", "slow_3g", "fast_3g", "none"], description: "Emulate network speed & latency (action: 'emulate')." },
+        cpuSlowdown: { type: "number", description: "CPU throttling slowdown factor, e.g. 2, 4, 6 (action: 'emulate')." },
+        touch: { type: "boolean", description: "Enable touch event emulation (action: 'emulate')." },
+        ...TAB_ID_PROPERTY,
       },
       required: ["action"],
     },

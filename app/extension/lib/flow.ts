@@ -161,7 +161,7 @@ function diffSnapshots(
 export async function runFlowSteps(
     target: chrome.debugger.Debuggee,
     steps: FlowStep[],
-    opts: { captureEachStep: boolean },
+    opts: { captureEachStep: boolean; returnSnapshot?: boolean },
 ): Promise<FlowReport> {
     if (steps.length > MAX_FLOW_STEPS) {
         return {
@@ -289,20 +289,22 @@ export async function runFlowSteps(
                 );
                 break;
             case "drag":
-                actionResult =
-                    step.fromX != null && step.fromY != null && step.toX != null && step.toY != null
-                        ? await performDrag(
-                              target,
-                              step.fromX,
-                              step.fromY,
-                              step.toX,
-                              step.toY,
-                              { fast: true },
-                          )
-                        : {
-                              error: "Missing fromX/fromY/toX/toY",
-                              hint: "action:'drag' needs all four viewport coordinates.",
-                          };
+                actionResult = await performDrag(
+                    target,
+                    step.fromX,
+                    step.fromY,
+                    step.toX,
+                    step.toY,
+                    {
+                        fast: true,
+                        shape: step.shape,
+                        shapeParams: step.shapeParams,
+                        path: step.path,
+                        stepsCount: step.stepsCount,
+                        easing: step.easing,
+                        button: step.button,
+                    },
+                );
                 break;
             case "wait_for":
                 actionResult = {
@@ -357,11 +359,19 @@ export async function runFlowSteps(
         }
     }
 
-    // Reuse the last step's already-captured snapshot instead of a
-    // redundant extra fetch when explore_flow already has it fresh.
-    const finalSnapshot =
-        opts.captureEachStep && previousSnapshot
-            ? previousSnapshot
-            : await getFullSnapshot(target);
-    return { success: true, steps: results, finalSnapshot };
+    // Only capture finalSnapshot if explicitly requested or in explore mode.
+    // Plain agent runs omit it by default to save thousands of tokens.
+    let finalSnapshot: SnapshotEntry[] | undefined;
+    if (opts.returnSnapshot || opts.captureEachStep) {
+        finalSnapshot =
+            opts.captureEachStep && previousSnapshot
+                ? previousSnapshot
+                : await getFullSnapshot(target);
+    }
+    return {
+        success: true,
+        message: `Successfully executed ${steps.length} step(s).`,
+        steps: results,
+        ...(finalSnapshot ? { finalSnapshot } : {}),
+    };
 }

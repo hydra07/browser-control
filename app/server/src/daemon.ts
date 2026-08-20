@@ -181,6 +181,16 @@ const httpServer = serve({
       );
     }
 
+    if (req.method === "GET" && url.pathname === "/metrics") {
+      try {
+        const querySessionId = url.searchParams.get("sessionId") || SESSION_ID;
+        const metrics = dataStore.getBenchmarkMetrics(querySessionId);
+        return new Response(JSON.stringify(metrics), { headers: JSON_CORS_HEADERS });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }), { status: 500, headers: JSON_CORS_HEADERS });
+      }
+    }
+
     const deleteMatch = req.method === "DELETE" ? url.pathname.match(/^\/flows\/([^/]+)$/) : null;
     if (deleteMatch) {
       const flowId = decodeURIComponent(deleteMatch[1]);
