@@ -15,6 +15,28 @@ export interface FlowMeta {
   updatedAt: number;
 }
 
+export interface FlowStep {
+  action: "click" | "type" | "press_key" | "wait_for" | "assert_text" | "scroll" | "drag";
+  selector?: string;
+  role?: string;
+  name?: string;
+  text?: string;
+  key?: string;
+  contains?: string;
+  deltaX?: number;
+  deltaY?: number;
+  fromX?: number;
+  fromY?: number;
+  toX?: number;
+  toY?: number;
+  timeoutMs?: number;
+  confirmRisky?: boolean;
+}
+
+export interface FlowFull extends FlowMeta {
+  steps: FlowStep[];
+}
+
 // Mirrors flow.ts's FlowReport shape (app/extension/lib/flow.ts) — only the
 // fields the panel actually renders.
 export interface FlowRunResult {
@@ -45,15 +67,38 @@ export async function listFlows(): Promise<FlowMeta[]> {
   return data.flows;
 }
 
+export async function getFlow(id: string): Promise<FlowFull> {
+  const res = await daemonFetch(`/flows/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error(`Failed to get flow (HTTP ${res.status})`);
+  const data = (await res.json()) as { flow: FlowFull };
+  return data.flow;
+}
+
+export interface DaemonStatus {
+  extensionConnected: boolean;
+  version: string;
+}
+
+export async function getStatus(): Promise<DaemonStatus> {
+  const res = await daemonFetch("/status");
+  if (!res.ok) throw new Error(`Failed to get status (HTTP ${res.status})`);
+  return (await res.json()) as DaemonStatus;
+}
+
+export async function deleteFlow(id: string): Promise<void> {
+  const res = await daemonFetch(`/flows/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(data?.error ?? `Failed to delete flow (HTTP ${res.status})`);
+  }
+}
+
 export async function runFlow(id: string): Promise<FlowRunResult> {
   const res = await daemonFetch(`/flows/${encodeURIComponent(id)}/run`, {
     method: "POST",
   });
-  // A route-level failure (unknown flow id, extension not connected) is a
-  // plain {error, hint} with no `success` field at all — distinct from a
-  // FlowReport, which always has `success` even when the flow itself
-  // failed partway through. Parse as an untyped record first so checking
-  // for that shape doesn't fight FlowRunResult's own type narrowing.
   const data = (await res.json()) as Record<string, unknown>;
   if (typeof data.success !== "boolean") {
     throw new Error(

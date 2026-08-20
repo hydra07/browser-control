@@ -166,6 +166,43 @@ installScreencastFrameRelay(() => lastActiveTabId);
 ensureOffscreenDocument();
 chrome.runtime.onStartup.addListener(ensureOffscreenDocument);
 
+// chrome.debugger can't attach to its own extension pages, chrome://
+// internals, the Web Store, etc. — matches attach's own restriction
+// (undocumented exact list, but these prefixes cover what actually shows
+// up as "the active tab" in practice: chrome://newtab as a fresh window's
+// default tab, chrome://extensions where a human just reloaded us, this
+// extension's own side panel/offscreen document).
+function isAttachableUrl(url: string | undefined): boolean {
+    if (!url) return false;
+    return !/^(chrome|chrome-extension|edge|devtools|chrome-untrusted|chrome-search|about):/i.test(
+        url,
+    );
+}
+
+// Best-effort "which tab does a human mean" for a caller with no MCP
+// session (no prior navigate/switch_tab) and no explicit tabId — the side
+// panel's Run button being the motivating case. Prefers the active tab of
+// the most recently focused normal window; if that happens to be a
+// chrome://-style page (e.g. the tab the human used to reload the
+// extension), falls back to the most recently accessed attachable tab
+// anywhere, rather than giving up immediately.
+async function findAttachableFallbackTab(): Promise<number | null> {
+    const [activeTab] = await chrome.tabs.query({
+        active: true,
+        lastFocusedWindow: true,
+    });
+    if (activeTab?.id != null && isAttachableUrl(activeTab.url)) {
+        return activeTab.id;
+    }
+    const allTabs = await chrome.tabs.query({});
+    const candidates = allTabs.filter(
+        (t) => t.id != null && isAttachableUrl(t.url),
+    );
+    if (candidates.length === 0) return null;
+    candidates.sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0));
+    return candidates[0].id ?? null;
+}
+
 async function attachDebuggerIfNeeded(tabId: number) {
     if (attachedTabIds.has(tabId)) return;
     // attach's callback fires on failure too (e.g. DevTools already
@@ -247,9 +284,26 @@ async function dispatchCommand(
     // Explicit tabId targets that tab regardless of what's "current";
     // omitted, it falls back to lastActiveTabId — today's single-tab
     // behavior, unchanged for any caller that never passes tabId.
-    const targetTabId = data.tabId ?? lastActiveTabId;
+    let targetTabId = data.tabId ?? lastActiveTabId;
     if (!targetTabId) {
-        return { error: "No active session. Call navigate first." };
+        // lastActiveTabId is in-memory and only ever gets set by
+        // browser_navigate/browser_switch_tab — an MCP session that hasn't
+        // called either yet. But the side panel's Run button (see
+        // daemon.ts's POST /flows/:id/run) has no MCP session at all, just
+        // a human clicking a button — for that caller "no active session"
+        // is a dead end, not a real error: fall back to whatever real page
+        // tab looks like the one a human clicking Run obviously means.
+        const fallbackTab = await findAttachableFallbackTab();
+        if (fallbackTab != null) {
+            targetTabId = fallbackTab;
+            lastActiveTabId = targetTabId;
+        }
+    }
+    if (!targetTabId) {
+        return {
+            error: "No active session. Call navigate first.",
+            hint: "No tabId was given and no attachable browser tab could be found to fall back to (chrome://, the extension's own pages, and similar internal URLs can't be debugged). Open a normal web page tab, or call browser_navigate first.",
+        };
     }
     await attachDebuggerIfNeeded(targetTabId);
     const target = { tabId: targetTabId };
@@ -304,6 +358,34 @@ async function dispatchCommand(
                 error: "Missing steps",
                 hint: "Pass a non-empty array of flow steps, e.g. [{action:'click', role:'button', name:'Login'}].",
             };
+        }
+        // FlowStep has no "navigate" action — a flow only ever interacts
+        // with whatever page is already loaded. That's fine for an
+        // MCP-driven browser_run_flow (the agent just navigated seconds
+        // ago), but a SAVED flow run from the panel's Run button (see
+        // daemon.ts's POST /flows/:id/run, which passes the flow's own
+        // `domain` through as data.domain) has no such guarantee — the
+        // active/last-used tab could be on whatever page a previous flow
+        // or manual browsing left it on. Every step then resolves against
+        // the wrong page and fails at step 0 with a confusing "found no
+        // element matching X", which reads like a broken selector when the
+        // real problem is "wrong page entirely". Auto-navigate first
+        // whenever the current tab's host doesn't already match.
+        if (data.domain) {
+            let currentHost: string | undefined;
+            try {
+                currentHost = new URL((await chrome.tabs.get(targetTabId)).url ?? "")
+                    .hostname;
+            } catch {
+                // Tab has no readable URL yet (e.g. still on about:blank) —
+                // treat as a mismatch, same as any other domain.
+            }
+            if (currentHost !== data.domain) {
+                const navResult = await handleNavigate(`https://${data.domain}`, {
+                    tabId: targetTabId,
+                });
+                if ("error" in navResult) return navResult;
+            }
         }
         return await runFlowSteps(target, data.steps, {
             captureEachStep: cmd === "explore_flow",

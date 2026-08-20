@@ -40,6 +40,33 @@ export async function getAxInfoForNode(
     return { role: node?.role?.value, name: node?.name?.value };
 }
 
+// Some sites keep a second, not-yet/never-laid-out copy of an element with
+// the same accessible name (a hidden mobile-nav duplicate, a search
+// suggestion still mid fade-in) — resolveStepTarget's role+name match (or a
+// plain nodeId from a snapshot taken moments earlier) can land on it, and
+// CDP's DOM.scrollIntoViewIfNeeded then fails with "Node does not have a
+// layout object" (-32000). Almost always transient — the real node finishes
+// laying out a beat later — so one short retry clears most cases instead of
+// failing the whole click/type/press_key outright.
+async function scrollIntoViewWithRetry(
+    target: chrome.debugger.Debuggee,
+    backendNodeId: number,
+): Promise<void> {
+    try {
+        await sendCommand(target, "DOM.scrollIntoViewIfNeeded", {
+            backendNodeId,
+        });
+    } catch (e) {
+        if (!errorMessage(e).includes("does not have a layout object")) {
+            throw e;
+        }
+        await pageDelay(target, 300);
+        await sendCommand(target, "DOM.scrollIntoViewIfNeeded", {
+            backendNodeId,
+        });
+    }
+}
+
 // Flags a target whose accessible name suggests a destructive/irreversible
 // action. Standalone click/type attach this as an advisory `_riskWarning`
 // (the AI was told to act on this one element); run_flow/explore_flow use
@@ -71,7 +98,7 @@ export async function performClick(
     backendNodeId: number,
     opts: { fast: boolean },
 ): Promise<ActionResult> {
-    await sendCommand(target, "DOM.scrollIntoViewIfNeeded", { backendNodeId });
+    await scrollIntoViewWithRetry(target, backendNodeId);
     const boxModel = await sendCommand(target, "DOM.getBoxModel", {
         backendNodeId,
     });
@@ -145,9 +172,7 @@ export async function performType(
 ): Promise<ActionResult> {
     let axInfo: AxInfo = {};
     if (backendNodeId != null) {
-        await sendCommand(target, "DOM.scrollIntoViewIfNeeded", {
-            backendNodeId,
-        });
+        await scrollIntoViewWithRetry(target, backendNodeId);
 
         try {
             await sendCommand(target, "DOM.focus", { backendNodeId });
@@ -297,9 +322,7 @@ export async function performPressKey(
 
     let axInfo: AxInfo = {};
     if (backendNodeId != null) {
-        await sendCommand(target, "DOM.scrollIntoViewIfNeeded", {
-            backendNodeId,
-        });
+        await scrollIntoViewWithRetry(target, backendNodeId);
         try {
             await sendCommand(target, "DOM.focus", { backendNodeId });
         } catch (e) {

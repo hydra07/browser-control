@@ -408,6 +408,29 @@ const httpServer = serve({
       return new Response(JSON.stringify({ flows: dataStore.listFlows() }), { headers: JSON_CORS_HEADERS });
     }
 
+    const getFlowMatch = req.method === "GET" ? url.pathname.match(/^\/flows\/([^/]+)$/) : null;
+    if (getFlowMatch) {
+      const flowId = decodeURIComponent(getFlowMatch[1]);
+      const flow = dataStore.getFlow(flowId);
+      if (!flow) {
+        return new Response(JSON.stringify({ error: `No flow with id "${flowId}"` }), { status: 404, headers: JSON_CORS_HEADERS });
+      }
+      return new Response(JSON.stringify({ flow }), { headers: JSON_CORS_HEADERS });
+    }
+
+    // Polled by the side panel to show a connection badge — the daemon
+    // itself being reachable only proves this HTTP server is up; the thing
+    // that actually determines whether any tool call (an MCP client's or
+    // the panel's own Run button) will work is whether the extension's
+    // background worker has a live WebSocket here (see the `open`/`close`
+    // websocket handlers below that set/clear extensionSocket).
+    if (req.method === "GET" && url.pathname === "/status") {
+      return new Response(
+        JSON.stringify({ extensionConnected: extensionSocket != null, version: PACKAGE_VERSION }),
+        { headers: JSON_CORS_HEADERS },
+      );
+    }
+
     const runMatch = req.method === "POST" ? url.pathname.match(/^\/flows\/([^/]+)\/run$/) : null;
     if (runMatch) {
       const flowId = decodeURIComponent(runMatch[1]);
@@ -418,9 +441,19 @@ const httpServer = serve({
       if (!extensionSocket) {
         return new Response(JSON.stringify({ error: "Extension not connected", hint: "Open chrome://extensions, make sure BrowserControl Agent is enabled, and reload it." }), { status: 503, headers: JSON_CORS_HEADERS });
       }
-      return executeCommand("run_flow", { steps: flow.steps })
+      return executeCommand("run_flow", { steps: flow.steps, domain: flow.domain ?? undefined })
         .then((report) => new Response(JSON.stringify(report), { headers: JSON_CORS_HEADERS }))
         .catch((e) => new Response(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }), { status: 500, headers: JSON_CORS_HEADERS }));
+    }
+
+    const deleteMatch = req.method === "DELETE" ? url.pathname.match(/^\/flows\/([^/]+)$/) : null;
+    if (deleteMatch) {
+      const flowId = decodeURIComponent(deleteMatch[1]);
+      const deleted = dataStore.deleteFlow(flowId);
+      if (!deleted) {
+        return new Response(JSON.stringify({ error: `No flow with id "${flowId}"` }), { status: 404, headers: JSON_CORS_HEADERS });
+      }
+      return new Response(JSON.stringify({ success: true }), { headers: JSON_CORS_HEADERS });
     }
 
     return new Response("BrowserControl Daemon is running.\n");
@@ -745,6 +778,40 @@ const FLOW_STEP_ITEM_SCHEMA = {
   required: ["action"],
 } as const;
 
+// Mirrors flow.ts's runtime `needsTarget`/resolveStepTarget logic — a step
+// that needs a target but has neither a selector nor a complete role+name
+// pair will resolve to null every single time it runs (role alone or name
+// alone doesn't match anything: lib/flow.ts's resolveStepTarget requires
+// `step.role && step.name` both truthy). Catching that here, at save time,
+// turns a flow that's silently DOA into an immediate, specific error
+// instead of a confusing "found no element matching X" only discovered
+// whenever someone finally hits Run in the panel.
+function findBadFlowStep(
+  steps: FlowStep[],
+): { index: number; reason: string } | null {
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    const needsTarget =
+      step.action !== "scroll" &&
+      step.action !== "drag" &&
+      !(step.action === "press_key" && !step.role && !step.selector);
+    if (!needsTarget) continue;
+    const hasSelector = typeof step.selector === "string" && step.selector.trim() !== "";
+    const hasRoleName =
+      typeof step.role === "string" && step.role.trim() !== "" &&
+      typeof step.name === "string" && step.name.trim() !== "";
+    if (hasSelector || hasRoleName) continue;
+    const reason =
+      step.role && !hasRoleName
+        ? `has role "${step.role}" but no (or empty) name`
+        : step.name && !hasRoleName
+          ? `has name "${step.name}" but no role`
+          : "has neither a selector nor a role+name pair";
+    return { index: i, reason };
+  }
+  return null;
+}
+
 const FLOW_STEPS_SCHEMA = {
   type: "object",
   properties: {
@@ -835,6 +902,15 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             domain: { type: "string", description: "Only list flows saved with this domain." },
           },
+        },
+      },
+      {
+        name: "browser_delete_flow",
+        description: "Delete a saved flow by id (from browser_list_flows) — removes it from storage and from the extension's side panel. Use this to clean up a flow that turned out broken (e.g. a step whose role/name no longer resolves) instead of leaving it cluttering the panel; the human can also delete it directly from the panel.",
+        inputSchema: {
+          type: "object",
+          properties: { id: { type: "string" } },
+          required: ["id"],
         },
       },
       {
@@ -1090,6 +1166,14 @@ async function handleToolCall(request: CallToolRequest): Promise<ToolCallRespons
             isError: true,
           };
         }
+        const badStep = findBadFlowStep(steps as FlowStep[]);
+        if (badStep) {
+          const badAction = (steps as FlowStep[])[badStep.index].action;
+          return {
+            content: [{ type: "text", text: `Error: Step ${badStep.index} (${badAction}) ${badStep.reason} — it will never resolve at run time (role alone or name alone never matches anything). Re-check against a fresh browser_snapshot/browser_explore_flow and pass a complete role+name pair or a CSS selector before saving.` }],
+            isError: true,
+          };
+        }
         const saved = dataStore.saveFlow({
           id: typeof args?.id === "string" ? args.id : undefined,
           name,
@@ -1103,6 +1187,20 @@ async function handleToolCall(request: CallToolRequest): Promise<ToolCallRespons
       case "browser_list_flows":
         result = { flows: dataStore.listFlows({ domain: args?.domain as string | undefined }) };
         break;
+      case "browser_delete_flow": {
+        const id = typeof args?.id === "string" ? args.id : "";
+        if (!id) {
+          return {
+            content: [{ type: "text", text: `Error: Missing id (hint: get it from browser_list_flows).` }],
+            isError: true,
+          };
+        }
+        const deleted = dataStore.deleteFlow(id);
+        result = deleted
+          ? { success: true, message: `Deleted flow ${id}.` }
+          : { error: `No flow with id "${id}"`, hint: "Call browser_list_flows again — it may already be deleted." };
+        break;
+      }
       case "browser_evaluate":
         result = await executeCommand("evaluate", { expression: args?.expression, tabId: args?.tabId });
         break;
