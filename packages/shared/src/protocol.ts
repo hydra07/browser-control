@@ -52,8 +52,8 @@ export type BrowserCommand = WithTabId<
   | { cmd: 'network_clear' }
   | { cmd: 'inspect_element'; nodeId: number }
   | { cmd: 'evaluate'; expression: string }
-  | { cmd: 'run_flow'; steps: FlowStep[] }
-  | { cmd: 'explore_flow'; steps: FlowStep[] }
+  | { cmd: 'run_flow'; steps: FlowStep[]; domain?: string }
+  | { cmd: 'explore_flow'; steps: FlowStep[]; domain?: string }
   | { cmd: 'list_tabs' }
   | { cmd: 'switch_tab'; tabId: number }
   | { cmd: 'start_capture' }
