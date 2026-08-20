@@ -4,7 +4,11 @@
   "private": true,
   "description": "The daemon and CLI tools — run directly via Bun, never built.",
   "scripts": {
-    "check": "tsc"
+    "check": "tsc",
+    "dev": "bun run src/daemon.ts",
+    "replay": "bun run src/replay.ts",
+    "replay:list": "bun run src/replay.ts --list",
+    "data": "bun run src/dataCli.ts"
   },
   "dependencies": {
     "@browsercontrol/shared": "workspace:*",
