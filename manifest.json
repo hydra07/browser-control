@@ -8,7 +8,8 @@
     "tabGroups",
     "scripting",
     "debugger",
-    "offscreen"
+    "offscreen",
+    "sidePanel"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -30,5 +31,8 @@
   "background": {
     "service_worker": "dist/extension/background.js",
     "type": "module"
+  },
+  "side_panel": {
+    "default_path": "dist/extension/sidepanel/index.html"
   }
 }

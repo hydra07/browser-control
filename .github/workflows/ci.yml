@@ -32,9 +32,14 @@ jobs:
       # built, so this is its only real type-check.
       - run: bun run check:server
 
+      # Side panel (src/extension/sidepanel/) — excluded from check:extension
+      # since it needs JSX; bundled by build:sidepanel, not tsc.
+      - run: bun run check:sidepanel
+
       # Full build (also runs the manifest.json -> package.json version
-      # sync and the offscreen.html asset copy) — catches anything the
-      # noEmit type-checks above wouldn't.
+      # sync, the offscreen.html/sidepanel html asset copy, and the side
+      # panel's React bundle) — catches anything the noEmit type-checks
+      # above wouldn't.
       - run: bun run build
 
       - name: Fail if version:sync left package.json dirty

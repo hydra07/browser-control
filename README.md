@@ -90,6 +90,10 @@ over the WebSocket/HTTP wire, never by importing each other's code:
 
 - `src/extension/` — the Chrome extension (service worker, offscreen
   document, content script), built by `tsc` into `dist/`.
+  `src/extension/sidepanel/` is the one exception — a small React app
+  bundled separately by `bun build` (see [Side panel](#side-panel--saved-flows)),
+  excluded from the plain `tsc` build since it needs JSX/bundling, not
+  per-file emit.
 - `src/server/` — the daemon and CLI tools, run directly via Bun (never
   built; `bun run check:server` type-checks them without emitting).
 - `src/shared/` — the wire-protocol types both sides import via `import
@@ -163,6 +167,7 @@ between every step.
 | `browser_query_docs` | List/search/read content saved by the extraction tools above — see [Data management](#data-management) |
 | `browser_set_session_name` | Label the current session so it's identifiable later in `mise run data:sessions` |
 | `browser_list_skills` / `browser_save_skill` | List/persist durable per-site notes (selectors, flows) so a future session skips rediscovery |
+| `browser_list_flows` / `browser_save_flow` | List/persist a validated `browser_run_flow` step sequence as a named, reusable flow — see [Side panel](#side-panel--saved-flows) |
 
 ## Behavior worth knowing about
 
@@ -263,6 +268,37 @@ git commit -m "chore: bump version to vX.Y.Z"
 git tag vX.Y.Z
 git push && git push --tags   # this is what triggers release.yml
 ```
+
+## Side panel & saved flows
+
+Click the extension's toolbar icon to open a side panel (React, bundled
+with Bun's own bundler — no extra build-tool dependency) listing every flow
+saved with `browser_save_flow`: name, description, domain badge, step
+count. Click the ▶ button and it runs immediately against the current tab
+— same `runFlowSteps` engine `browser_run_flow` itself uses, driven through
+the daemon's existing `127.0.0.1:8765` HTTP server (`GET /flows`, `POST
+/flows/:id/run`), since the panel is a browser page, not an MCP client.
+
+A flow is meant for something you (or your agent) already validated and
+expect to re-run — not authored in the panel itself. The panel polls every
+5s so a flow saved from any session shows up without a manual refresh.
+
+**Deliberately not built (yet)**:
+- **Visual flow composition** (chaining/branching steps as a node graph,
+  the way some other browser-automation extensions do with a full DAG
+  editor) — flows here stay linear `FlowStep[]` sequences run through the
+  existing engine. A much bigger surface; revisit only if linear sequences
+  turn out to be a real limitation in practice.
+- **A chat box in the panel that messages the agent** — not achievable
+  without browsercontrol itself embedding an LLM/agent loop the way some
+  similar projects do (their own server calls an LLM API directly with its
+  own sessions); this daemon is deliberately just an MCP tool *provider*
+  with no reference to, or channel into, whatever external MCP client
+  (Claude Code, Antigravity, ...) is calling it. If this is wanted later,
+  the realistic version within this architecture is a pollable inbox (the
+  panel writes a note, a new MCP tool lets the agent check for it on its
+  own next turn — the same poll pattern `browser_task_status` already
+  uses), not a live push channel.
 
 ## Known limitations
 

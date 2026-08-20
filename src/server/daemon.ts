@@ -11,7 +11,7 @@ import * as dataStore from "./lib/dataStore.js";
 import { startJob, getJobStatusText, jobExists, MAX_JOB_TASKS, MAX_CONCURRENT_JOBS } from "./lib/jobs.js";
 import type { JobTaskInput } from "./lib/jobs.js";
 import { startDeepCrawl, getDeepCrawlStatusText, crawlExists, MAX_CRAWL_DEPTH, MAX_CRAWL_PAGES, MAX_CONCURRENT_CRAWLS } from "./lib/crawl.js";
-import type { ExtensionResponse } from "../shared/protocol.js";
+import type { ExtensionResponse, FlowStep } from "../shared/protocol.js";
 
 // One id for the whole daemon process, used everywhere a "session" needs
 // naming: the log filename, the dataStore sessions row, and every docs
@@ -400,6 +400,32 @@ const httpServer = serve({
       }).catch(() => new Response("Invalid Request", { status: 400 }));
     }
 
+    // Talked to directly by the side panel (a browser page, not an MCP
+    // client) via plain fetch() — same pattern as /execute above, just for
+    // browsing/running saved flows instead of relaying a raw command.
+    // host_permissions already covers this origin so CORS shouldn't be an
+    // issue, but the header costs nothing and removes any doubt.
+    const JSON_CORS_HEADERS = { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" };
+
+    if (req.method === "GET" && url.pathname === "/flows") {
+      return new Response(JSON.stringify({ flows: dataStore.listFlows() }), { headers: JSON_CORS_HEADERS });
+    }
+
+    const runMatch = req.method === "POST" ? url.pathname.match(/^\/flows\/([^/]+)\/run$/) : null;
+    if (runMatch) {
+      const flowId = decodeURIComponent(runMatch[1]);
+      const flow = dataStore.getFlow(flowId);
+      if (!flow) {
+        return new Response(JSON.stringify({ error: `No flow with id "${flowId}"` }), { status: 404, headers: JSON_CORS_HEADERS });
+      }
+      if (!extensionSocket) {
+        return new Response(JSON.stringify({ error: "Extension not connected", hint: "Open chrome://extensions, make sure BrowserControl Agent is enabled, and reload it." }), { status: 503, headers: JSON_CORS_HEADERS });
+      }
+      return executeCommand("run_flow", { steps: flow.steps })
+        .then((report) => new Response(JSON.stringify(report), { headers: JSON_CORS_HEADERS }))
+        .catch((e) => new Response(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }), { status: 500, headers: JSON_CORS_HEADERS }));
+    }
+
     return new Response("BrowserControl Daemon is running.\n");
   },
   websocket: {
@@ -672,6 +698,14 @@ so that's your job: surface the blocked step to your user, and only re-run
 with that step's confirmRisky:true once they've confirmed it's intended.
 Don't set confirmRisky:true reflexively just to get the flow to complete.
 
+Once a browser_run_flow sequence is validated and working, browser_save_flow
+persists it (name + the same steps array) as a reusable flow — it then shows
+up with a Run button in the extension's side panel, so a human can re-run it
+without you. Save one when you've worked out something worth re-running
+later (a login flow, a recurring form), not for a one-off sequence you'll
+never use again. Check browser_list_flows first and pass that flow's id
+back to browser_save_flow to update it instead of creating a near-duplicate.
+
 If a command times out or errors, check the returned "hint" field before
 retrying blindly — it usually points at the actual cause (stale node id,
 extension not connected, unhandled dialog, etc).
@@ -689,6 +723,31 @@ const TAB_ID_PROPERTY = {
   tabId: { type: "number", description: "Target this specific tab (id from browser_navigate's response or browser_list_tabs) instead of the currently active one. Omit to use the current tab, same as always." },
 } as const;
 
+// Shared between browser_run_flow's inputSchema and browser_save_flow's —
+// a saved flow is the exact same FlowStep[] shape run_flow already runs, so
+// the two tool schemas describe steps identically rather than drifting.
+const FLOW_STEP_ITEM_SCHEMA = {
+  type: "object",
+  properties: {
+    action: { type: "string", enum: ["click", "type", "press_key", "wait_for", "assert_text", "scroll", "drag"] },
+    role: { type: "string", description: "Accessibility role of the target, from a prior browser_snapshot (e.g. 'button', 'textbox')." },
+    name: { type: "string", description: "Accessible name of the target, paired with role." },
+    selector: { type: "string", description: "CSS selector, as an alternative to role+name." },
+    text: { type: "string", description: "Text to type (action: 'type')." },
+    key: { type: "string", description: "Key to press (action: 'press_key') — a named key or a single character, see browser_press_key." },
+    contains: { type: "string", description: "Substring the target's accessible name must contain (action: 'assert_text')." },
+    deltaX: { type: "number", description: "Scroll delta (action: 'scroll')." },
+    deltaY: { type: "number", description: "Scroll delta (action: 'scroll')." },
+    fromX: { type: "number", description: "Drag start x, viewport pixels (action: 'drag')." },
+    fromY: { type: "number", description: "Drag start y, viewport pixels (action: 'drag')." },
+    toX: { type: "number", description: "Drag end x, viewport pixels (action: 'drag')." },
+    toY: { type: "number", description: "Drag end y, viewport pixels (action: 'drag')." },
+    timeoutMs: { type: "number", description: "Max time in ms to poll for the target to appear (action: 'wait_for'), default 3000." },
+    confirmRisky: { type: "boolean", description: "Set true to proceed past a step whose target looks destructive/irreversible (delete, cancel, sign out, pay, confirm, ...) — only after confirming with your user that this step is intended." },
+  },
+  required: ["action"],
+} as const;
+
 const FLOW_STEPS_SCHEMA = {
   type: "object",
   properties: {
@@ -697,27 +756,7 @@ const FLOW_STEPS_SCHEMA = {
     steps: {
       type: "array",
       description: "Ordered list of steps to run in one call. Stops at the first step that doesn't resolve or fails.",
-      items: {
-        type: "object",
-        properties: {
-          action: { type: "string", enum: ["click", "type", "press_key", "wait_for", "assert_text", "scroll", "drag"] },
-          role: { type: "string", description: "Accessibility role of the target, from a prior browser_snapshot (e.g. 'button', 'textbox')." },
-          name: { type: "string", description: "Accessible name of the target, paired with role." },
-          selector: { type: "string", description: "CSS selector, as an alternative to role+name." },
-          text: { type: "string", description: "Text to type (action: 'type')." },
-          key: { type: "string", description: "Key to press (action: 'press_key') — a named key or a single character, see browser_press_key." },
-          contains: { type: "string", description: "Substring the target's accessible name must contain (action: 'assert_text')." },
-          deltaX: { type: "number", description: "Scroll delta (action: 'scroll')." },
-          deltaY: { type: "number", description: "Scroll delta (action: 'scroll')." },
-          fromX: { type: "number", description: "Drag start x, viewport pixels (action: 'drag')." },
-          fromY: { type: "number", description: "Drag start y, viewport pixels (action: 'drag')." },
-          toX: { type: "number", description: "Drag end x, viewport pixels (action: 'drag')." },
-          toY: { type: "number", description: "Drag end y, viewport pixels (action: 'drag')." },
-          timeoutMs: { type: "number", description: "Max time in ms to poll for the target to appear (action: 'wait_for'), default 3000." },
-          confirmRisky: { type: "boolean", description: "Set true to proceed past a step whose target looks destructive/irreversible (delete, cancel, sign out, pay, confirm, ...) — only after confirming with your user that this step is intended." },
-        },
-        required: ["action"],
-      },
+      items: FLOW_STEP_ITEM_SCHEMA,
     },
   },
   required: ["steps"],
@@ -775,6 +814,31 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "browser_run_flow",
         description: "Run a list of steps (click/type/press_key/drag/wait_for/assert_text/scroll) in ONE call instead of one round trip per step — collapses a multi-step flow (login, a multi-field form, a wizard, drawing a diagram) that would otherwise cost N separate tool calls into a single one. Steps target elements by role+name (from a prior browser_snapshot) or a CSS selector, resolved fresh against the live page at execution time — except drag, addressed by raw viewport coordinates since canvas-based UI has no per-shape DOM element. Stops at the first step that doesn't resolve or fails, and returns a compact per-step report plus a final snapshot. Two modes: plain (default) is for a sequence you're already confident in, one clean run. `explore:true` adds a `delta` (added/changed/removed elements vs. the previous step, not a full snapshot) to every step's result — use it ONCE to validate a best-guess sequence against an unfamiliar UI (confirm role/name guesses, see what each step actually changed) before switching back to plain mode for repeat runs; it is NOT a safe preview — every step still has the same real side effects (submitting a form, following a link, drawing a shape), there's no way to know a later step's UI without actually executing the earlier ones. Don't default to explore:true once a sequence is validated — repeated explore calls for a flow you already know works is the most common way this tool burns tokens unnecessarily. A step whose target looks destructive/irreversible (delete, cancel, sign out, pay, confirm, ...) is blocked by default in both modes; if that's actually intended, confirm with your user and re-run with that step's confirmRisky:true.",
         inputSchema: FLOW_STEPS_SCHEMA,
+      },
+      {
+        name: "browser_save_flow",
+        description: "Persist a step sequence (same shape as browser_run_flow's `steps`) as a named, reusable flow — so it shows up in the extension's side panel with a Run button, instead of only existing inline in the one browser_run_flow call that used it. Validate the sequence first (browser_explore_flow or a plain browser_run_flow that actually succeeded) before saving it — this does not run the steps, only stores them. Pass an existing flow's `id` to overwrite it (e.g. after fixing a broken step) instead of creating a near-duplicate; omit `id` to create a new one.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Existing flow id to overwrite. Omit to create a new flow." },
+            name: { type: "string", description: "Human-readable name shown in the side panel." },
+            description: { type: "string" },
+            domain: { type: "string", description: "Hostname this flow targets (e.g. \"github.com\") — shown as a badge in the panel, and usable as a filter with browser_list_flows." },
+            steps: { type: "array", items: FLOW_STEP_ITEM_SCHEMA },
+          },
+          required: ["name", "steps"],
+        },
+      },
+      {
+        name: "browser_list_flows",
+        description: "List saved flows — metadata only (id, name, description, domain, step count), same cheap-list shape as browser_list_skills. Use before browser_save_flow to check whether a similar flow already exists (update it instead of duplicating), or to find a flow's id.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            domain: { type: "string", description: "Only list flows saved with this domain." },
+          },
+        },
       },
       {
         name: "browser_evaluate",
@@ -1019,6 +1083,28 @@ async function handleToolCall(request: CallToolRequest): Promise<ToolCallRespons
         break;
       case "browser_run_flow":
         result = await executeCommand(args?.explore ? "explore_flow" : "run_flow", { steps: args?.steps, tabId: args?.tabId });
+        break;
+      case "browser_save_flow": {
+        const name = typeof args?.name === "string" ? args.name : "";
+        const steps = Array.isArray(args?.steps) ? args.steps : undefined;
+        if (!name || !steps || steps.length === 0) {
+          return {
+            content: [{ type: "text", text: `Error: Missing name or steps (hint: browser_save_flow needs a non-empty \`name\` and a non-empty \`steps\` array, same shape as browser_run_flow.)` }],
+            isError: true,
+          };
+        }
+        const saved = dataStore.saveFlow({
+          id: typeof args?.id === "string" ? args.id : undefined,
+          name,
+          description: typeof args?.description === "string" ? args.description : undefined,
+          domain: typeof args?.domain === "string" ? args.domain : undefined,
+          steps: steps as FlowStep[],
+        });
+        result = { ...saved, message: `Saved flow "${saved.name}" (id ${saved.id}) — it now shows up in the extension's side panel.` };
+        break;
+      }
+      case "browser_list_flows":
+        result = { flows: dataStore.listFlows({ domain: args?.domain as string | undefined }) };
         break;
       case "browser_evaluate":
         result = await executeCommand("evaluate", { expression: args?.expression, tabId: args?.tabId });

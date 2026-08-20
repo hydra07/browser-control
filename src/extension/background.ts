@@ -68,6 +68,15 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 installTabGroupBadge();
 
+// Without this, side_panel.default_path in manifest.json only makes the
+// panel reachable via Chrome's own side-panel picker — the extension's own
+// toolbar icon does nothing on click, since there's no action.default_popup
+// either. This makes clicking the icon open the panel directly, the
+// behavior most people expect from a toolbar icon.
+chrome.sidePanel
+    .setPanelBehavior({ openPanelOnActionClick: true })
+    .catch((e) => console.error("[browsercontrol] setPanelBehavior failed:", e));
+
 // chrome.debugger is unavailable in offscreen documents, so offscreen holds
 // the daemon WebSocket + recording canvas/MediaRecorder (lib/capture.ts)
 // while this service worker does all CDP work, connected via

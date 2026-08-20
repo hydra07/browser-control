@@ -36,6 +36,7 @@ jobs:
 
       - run: bun run check:extension
       - run: bun run check:server
+      - run: bun run check:sidepanel
       - run: bun run build
 
       - name: Package extension
