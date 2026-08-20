@@ -13,6 +13,14 @@ export default defineConfig({
     description: 'AI Workspace extension for controlling browser via CDP',
     permissions: ['tabs', 'tabGroups', 'scripting', 'debugger', 'offscreen'],
     host_permissions: ['<all_urls>'],
+    // chrome.action (used by lib/tabs.ts's toolbar badge, and required for
+    // chrome.sidePanel.setPanelBehavior's "click icon -> open panel" to
+    // have an icon to attach to) doesn't exist at all unless "action" is
+    // in the manifest — WXT only adds it automatically for a popup
+    // entrypoint, which we deliberately don't have (the toolbar icon opens
+    // the side panel directly, not a popup). Empty object, no
+    // default_popup, is enough to make the namespace exist.
+    action: {},
   },
   vite: () => ({
     plugins: [tailwindcss()],
