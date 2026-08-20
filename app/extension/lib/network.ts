@@ -127,7 +127,7 @@ export async function getNetworkRequestDetail(
   if (!entry) {
     return {
       error: "Unknown requestId",
-      hint: "Call browser_network_requests again — the buffer may have rotated it out, or it belongs to a request from before the last navigate/network_clear.",
+      hint: "Call browser_inspect({action:\"network_requests\"}) again — the buffer may have rotated it out, or it belongs to a request from before the last navigate/network_clear.",
     };
   }
 

@@ -22,6 +22,13 @@ try {
 
 const db = new Database(join(DATA_DIR, "index.sqlite"));
 db.exec("PRAGMA journal_mode = WAL");
+// Without this, a writer (a tool call recording an artifact/session row)
+// and a reader (the side panel's GET /flows poll, every 5s) landing on the
+// same millisecond throw SQLITE_BUSY immediately instead of waiting a beat
+// — which surfaced as the daemon looking intermittently "unreachable" from
+// the extension even though the process was up the whole time. 5s covers
+// any write this module does; WAL readers rarely contend this long.
+db.exec("PRAGMA busy_timeout = 5000");
 
 db.run(`
     CREATE TABLE IF NOT EXISTS sessions (
@@ -83,7 +90,7 @@ try {
     );
 }
 
-// Saved browser_run_flow step sequences — durable, reusable knowledge (same
+// Saved browser_act run_flow step sequences — durable, reusable knowledge (same
 // category as skills/), not scoped to a session_id: the side panel is
 // browser-side and outlives any one daemon session, so it needs to list
 // flows regardless of which session saved them.
@@ -133,7 +140,7 @@ export function recordToolCall(sessionId: string): void {
     } catch {}
 }
 
-/** Dedups into hosts_json (capped) and, unless the session has a custom name, recomputes `name` from the visited-hostname list — the zero-effort default a session gets without anyone calling browser_set_session_name. */
+/** Dedups into hosts_json (capped) and, unless the session has a custom name, recomputes `name` from the visited-hostname list — the zero-effort default a session gets without anyone calling browser_session's set_session_name action. */
 export function recordHostVisit(sessionId: string, hostname: string): void {
     if (!hostname) return;
     try {
@@ -166,7 +173,7 @@ export function recordHostVisit(sessionId: string, hostname: string): void {
     } catch {}
 }
 
-/** Explicit override — sets name_is_custom so recordHostVisit stops touching `name`. Used by browser_set_session_name and dataCli.ts's `rename`. */
+/** Explicit override — sets name_is_custom so recordHostVisit stops touching `name`. Used by browser_session's set_session_name action and dataCli.ts's `rename`. */
 export function setSessionName(sessionId: string, name: string): void {
     db.query(
         `UPDATE sessions SET name = ?, name_is_custom = 1 WHERE id = ?`,
@@ -242,7 +249,7 @@ export interface DocsBlockResult {
  * per call instead of one more chunk glued onto a single ever-growing
  * per-session markdown file. `source` is a short label (a URL, a selector,
  * "job task: <url>") describing where this content came from; browse it via
- * listDocsBlocks/searchDocsBlocks/getDocsBlock (browser_query_docs), not by
+ * listDocsBlocks/searchDocsBlocks/getDocsBlock (browser_knowledge's query_docs), not by
  * reading a file path.
  */
 export function addDocsBlock(
@@ -279,7 +286,7 @@ export function addDocsBlock(
     return { blockId, charCount, sessionTotalChars: totalRow.total };
 }
 
-/** Metadata only (id, source, title, charCount, createdAt) — same "cheap list, fetch detail separately" shape as browser_list_skills/browser_snapshot. */
+/** Metadata only (id, source, title, charCount, createdAt) — same "cheap list, fetch detail separately" shape as browser_knowledge's list_skills / browser_inspect's snapshot. */
 export function listDocsBlocks(
     opts: { sessionId?: string; limit?: number } = {},
 ): DocsBlockMeta[] {
@@ -569,7 +576,7 @@ export function dbFileSizeBytes(): number {
     }
 }
 
-// --- Saved flows (browser_save_flow / browser_list_flows / side panel) ---
+// --- Saved flows (browser_knowledge's save_flow / list_flows / side panel) ---
 
 export interface FlowMeta {
     id: string;
@@ -611,7 +618,7 @@ function metaFromFlowRow(row: FlowRow): FlowMeta {
     };
 }
 
-/** Creates a new flow (omit `id`) or overwrites an existing one (pass its id) — same upsert shape as browser_save_skill. */
+/** Creates a new flow (omit `id`) or overwrites an existing one (pass its id) — same upsert shape as browser_knowledge's save_skill. */
 export function saveFlow(input: {
     id?: string;
     name: string;
@@ -653,7 +660,7 @@ export function saveFlow(input: {
     };
 }
 
-/** Metadata only (no steps) — same "cheap list" shape as listDocsBlocks/browser_list_skills. */
+/** Metadata only (no steps) — same "cheap list" shape as listDocsBlocks/browser_knowledge's list_skills. */
 export function listFlows(opts: { domain?: string } = {}): FlowMeta[] {
     const rows = (
         opts.domain

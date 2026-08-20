@@ -228,7 +228,7 @@ export async function handleQueryRegionCommand(
     if (!queryResult?.nodeId) {
         return {
             error: `No element matched selector "${selector}"`,
-            hint: "Check the selector against the page source, or use browser_snapshot first to find a container to scope into.",
+            hint: "Check the selector against the page source, or use browser_inspect({action:\"snapshot\"}) first to find a container to scope into.",
         };
     }
 
@@ -252,7 +252,7 @@ export async function handleQueryRegionCommand(
     const nodeCount = countTreeNodes(tree);
 
     return {
-        message: `Scoped to "${selector}" (${describeResult.node.nodeName}): ${nodeCount} element(s), nested by DOM structure — a field's label is its sibling in the same "children" array.${truncated ? ` Truncated at ${MAX_REGION_NODES} elements; use a narrower selector to see the rest.` : ""} Use these ids with browser_click/browser_type/browser_inspect_element.`,
+        message: `Scoped to "${selector}" (${describeResult.node.nodeName}): ${nodeCount} element(s), nested by DOM structure — a field's label is its sibling in the same "children" array.${truncated ? ` Truncated at ${MAX_REGION_NODES} elements; use a narrower selector to see the rest.` : ""} Use these ids with browser_act's click/type or browser_inspect's inspect_element.`,
         selector,
         truncated,
         tree,
@@ -297,7 +297,7 @@ export async function handleVisualSnapshotCommand(
     if ("error" in shot) return shot;
 
     return {
-        message: `Annotated ${boxes.length} interactive element(s) on screen. Each numbered box in the screenshot is a node id you can pass to browser_click/browser_type.`,
+        message: `Annotated ${boxes.length} interactive element(s) on screen. Each numbered box in the screenshot is a node id you can pass to browser_act's click/type.`,
         nodes: filteredNodes,
         format: shot.format,
         dataBase64: shot.dataBase64,

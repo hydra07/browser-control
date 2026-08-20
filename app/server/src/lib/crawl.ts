@@ -1,5 +1,5 @@
-// browser_deep_crawl / browser_deep_crawl_status — automatic recursive
-// crawl on top of browser_batch_crawl's per-URL fetch+extract.
+// browser_bulk's deep_crawl/task_status actions — automatic recursive
+// crawl on top of the batch_crawl action's per-URL fetch+extract.
 //
 // A real frontier, not depth-by-depth batches: one shared {url, depth}
 // queue and N persistent workers pulling from it. A worker that finishes a
@@ -79,13 +79,13 @@ export function startDeepCrawl(
     if (seedUrls.length === 0 && !input.searchQuery?.trim()) {
         return {
             error: "Missing seedUrls or searchQuery",
-            hint: "Provide at least one root URL in seedUrls, or a searchQuery to discover roots automatically via browser_search.",
+            hint: "Provide at least one root URL in seedUrls, or a searchQuery to discover roots automatically via browser_bulk({action:\"search\"}).",
         };
     }
     if (crawls.size >= MAX_CONCURRENT_CRAWLS) {
         return {
             error: `${MAX_CONCURRENT_CRAWLS} deep crawls are already running`,
-            hint: "Poll browser_deep_crawl_status on an existing crawlId until it completes (it's dropped automatically once fully delivered), or that one may be stuck.",
+            hint: "Poll browser_bulk({action:\"task_status\"}) on an existing crawlId until it completes (it's dropped automatically once fully delivered), or that one may be stuck.",
         };
     }
 
@@ -259,8 +259,8 @@ async function crawlOnePage(
 }
 
 // See jobs.ts's matching jobExists — lets daemon.ts's unified
-// browser_task_status tell a crawl id from a job id without either module
-// knowing about the other's internal Map.
+// browser_bulk task_status action tell a crawl id from a job id without
+// either module knowing about the other's internal Map.
 export function crawlExists(crawlId: string): boolean {
     return crawls.has(crawlId);
 }
@@ -291,7 +291,7 @@ export function getDeepCrawlStatusText(crawlId: string): string {
                     : `❌ [d${p.depth}] ${p.url} — ${p.error}`,
             );
         }
-        lines.push("", `Each page saved as its own docs block — query via browser_query_docs.`);
+        lines.push("", `Each page saved as its own docs block — query via browser_knowledge({action:"query_docs"}).`);
     } else {
         lines.push("(nothing new since your last check)");
     }

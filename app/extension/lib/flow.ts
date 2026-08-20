@@ -167,7 +167,7 @@ export async function runFlowSteps(
         return {
             success: false,
             reason: "too_many_steps",
-            message: `Flow has ${steps.length} steps; max is ${MAX_FLOW_STEPS} per call. Split into multiple browser_run_flow/browser_explore_flow calls.`,
+            message: `Flow has ${steps.length} steps; max is ${MAX_FLOW_STEPS} per call. Split into multiple browser_act({action:"run_flow"}) calls.`,
             steps: [],
         };
     }
@@ -233,7 +233,7 @@ export async function runFlowSteps(
                     return stop(
                         i,
                         "not_found",
-                        `Step ${i} (${step.action}) found no element matching ${describeStepTarget(step)}. Stopped before continuing — take a fresh browser_snapshot/browser_explore_flow and correct this step.`,
+                        `Step ${i} (${step.action}) found no element matching ${describeStepTarget(step)}. Stopped before continuing — take a fresh browser_inspect({action:"snapshot"}) and correct this step.`,
                     );
                 }
             }

@@ -385,7 +385,7 @@ export async function handleBatchCrawlCommand(opts: {
     if (rawUrls.length > MAX_BATCH_URLS) {
         return {
             error: `Too many urls: ${rawUrls.length} (max ${MAX_BATCH_URLS} per call)`,
-            hint: "Split into multiple browser_batch_crawl calls — each one still appends to the same session docs file, so nothing is lost by batching.",
+            hint: "Split into multiple browser_bulk({action:\"batch_crawl\"}) calls — each one still appends to the same session docs file, so nothing is lost by batching.",
         };
     }
 

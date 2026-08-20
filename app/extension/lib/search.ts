@@ -88,7 +88,7 @@ export async function handleWebSearchCommand(opts: {
             message:
                 results.length > 0
                     ? `Found ${results.length} result(s) for "${query}".`
-                    : `No results parsed for "${query}" — DuckDuckGo may have changed its result markup, or blocked this request. Try browser_navigate to a search URL and browser_snapshot as a fallback.`,
+                    : `No results parsed for "${query}" — DuckDuckGo may have changed its result markup, or blocked this request. Try browser_session({action:"navigate"}) to a search URL and browser_inspect({action:"snapshot"}) as a fallback.`,
             query,
             results,
         };

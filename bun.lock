@@ -4,6 +4,9 @@
   "workspaces": {
     "": {
       "name": "browsercontrol",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.30.0",
+      },
       "devDependencies": {
         "turbo": "^2.10.11",
       },

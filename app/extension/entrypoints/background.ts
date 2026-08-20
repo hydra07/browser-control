@@ -12,6 +12,7 @@ import {
     installScreencastFrameRelay,
     startScreencastRelay,
     stopScreencastRelay,
+    isRecording,
 } from "../lib/screencast.js";
 import { showPillCaption } from "../lib/overlay.js";
 import {
@@ -40,6 +41,7 @@ import {
     addTabToWorkspaceGroup,
 } from "../lib/tabs.js";
 import { waitForStableDom } from "../lib/wait.js";
+import { getSettingsSync } from "../lib/settings.js";
 
 // WXT requires a `defineBackground` default export to recognize this file as
 // the background entrypoint — everything below (previously plain top-level
@@ -57,19 +59,48 @@ const EXTENSION_VERSION = chrome.runtime.getManifest().version;
 // attachedTabIds tracks CDP-attach state per tab (a Set, not one global
 // flag) — what makes multi-tab work: two tabs can stay attached at once,
 // so switch_tab doesn't have to detach one to attach the other.
+// lastActivityAt backs the idle-detach alarm below.
 let lastActiveTabId: number | null = null;
 const attachedTabIds = new Set<number>();
+const lastActivityAt = new Map<number, number>();
 
 // Chrome can detach a debugger session out from under us (DevTools infobar
 // closed, OS debugger limit hit, ...) — clear the flag so the next command
 // re-attaches instead of failing confusingly against a dead session.
 chrome.debugger.onDetach.addListener((source) => {
-    if (source.tabId != null) attachedTabIds.delete(source.tabId);
+    if (source.tabId != null) {
+        attachedTabIds.delete(source.tabId);
+        lastActivityAt.delete(source.tabId);
+    }
+});
+
+// Chrome shows a "BrowserControl Agent is controlling this browser" infobar
+// on every tab with an attached debugger, for as long as it stays attached
+// — which used to be the tab's whole lifetime, since nothing ever detached
+// proactively. Detach after a few idle minutes instead; attachDebuggerIfNeeded
+// already re-attaches (and re-enables every CDP domain) transparently on the
+// next command against that tab, so this only costs one extra round trip
+// the next time it's actually used.
+const IDLE_DETACH_MINUTES = 3;
+
+chrome.alarms.create("idle-debugger-detach", { periodInMinutes: 1 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name !== "idle-debugger-detach") return;
+    const cutoff = Date.now() - IDLE_DETACH_MINUTES * 60_000;
+    for (const tabId of attachedTabIds) {
+        // Recording rides the same CDP session but doesn't call any command
+        // (frames stream via a CDP event, not dispatchCommand) — never
+        // detach the tab it's riding on mid-recording.
+        if (isRecording() && tabId === lastActiveTabId) continue;
+        if ((lastActivityAt.get(tabId) ?? 0) > cutoff) continue;
+        chrome.debugger.detach({ tabId }, () => void chrome.runtime.lastError);
+    }
 });
 
 // A closed tab can't be re-attached to, or stay the default target.
 chrome.tabs.onRemoved.addListener((tabId) => {
     attachedTabIds.delete(tabId);
+    lastActivityAt.delete(tabId);
     if (lastActiveTabId === tabId) lastActiveTabId = null;
 });
 
@@ -98,7 +129,7 @@ async function ensureOffscreenDocument(): Promise<void> {
         // AUDIO_PLAYBACK it has no auto-close timer.
         reasons: ["WORKERS" as chrome.offscreen.Reason],
         justification:
-            "Holds a persistent WebSocket connection to the local BrowserControl daemon, and hosts the canvas/MediaRecorder pipeline for browser_start_recording/browser_stop_recording.",
+            "Holds a persistent WebSocket connection to the local BrowserControl daemon, and hosts the canvas/MediaRecorder pipeline for browser_session's start_recording/stop_recording actions.",
     });
 }
 
@@ -118,7 +149,7 @@ chrome.runtime.onMessage.addListener(
 );
 
 // The offscreen document opens a long-lived Port (not one-off sendMessage)
-// to stream screencast frames for browser_start_recording — see
+// to stream screencast frames for browser_session's start_recording — see
 // lib/screencast.ts for why this rides CDP's Page.startScreencast instead
 // of chrome.tabCapture.
 chrome.runtime.onConnect.addListener((port) => {
@@ -136,7 +167,7 @@ async function handleCaptureConnection(
     if (!lastActiveTabId) {
         port.postMessage({
             error: "No active tab",
-            hint: "Call browser_navigate or browser_switch_tab first to establish which tab to record.",
+            hint: "Call browser_session({action:\"navigate\"}) or browser_session({action:\"switch_tab\"}) first to establish which tab to record.",
         });
         port.disconnect();
         return;
@@ -204,6 +235,7 @@ async function findAttachableFallbackTab(): Promise<number | null> {
 }
 
 async function attachDebuggerIfNeeded(tabId: number) {
+    lastActivityAt.set(tabId, Date.now());
     if (attachedTabIds.has(tabId)) return;
     // attach's callback fires on failure too (e.g. DevTools already
     // debugging this tab) — must check lastError, or the failure is
@@ -318,6 +350,10 @@ async function dispatchCommand(
     }
     await attachDebuggerIfNeeded(targetTabId);
     const target = { tabId: targetTabId };
+    // User-configurable (lib/settings.ts) — off routes standalone
+    // click/type/press_key/scroll/drag through the same fast path
+    // browser_act's run_flow steps already always use.
+    const animated = getSettingsSync().animationsEnabled;
 
     if (cmd === "snapshot") return await handleSnapshotCommand(target);
 
@@ -347,19 +383,19 @@ async function dispatchCommand(
                 error: "Missing nodeId",
                 hint: "Call snapshot first and pass one of the returned node ids.",
             };
-        return await performClick(target, data.nodeId, { fast: false });
+        return await performClick(target, data.nodeId, { fast: !animated });
     }
 
     if (cmd === "type") {
         if (!data.text) return { error: "Missing text" };
         return await performType(target, data.nodeId, data.text, {
-            fast: false,
+            fast: !animated,
         });
     }
 
     if (cmd === "press_key") {
         return await performPressKey(target, data.key, data.nodeId, {
-            fast: false,
+            fast: !animated,
         });
     }
 
@@ -405,7 +441,7 @@ async function dispatchCommand(
 
     if (cmd === "scroll") {
         return await performScroll(target, data.deltaX || 0, data.deltaY || 0, {
-            fast: false,
+            fast: !animated,
         });
     }
 
@@ -416,7 +452,7 @@ async function dispatchCommand(
             data.fromY,
             data.toX,
             data.toY,
-            { fast: false },
+            { fast: !animated },
         );
     }
 
@@ -495,7 +531,7 @@ async function handleNavigate(
     let windowId: number | undefined;
     let tabId: number;
     let reuseExistingTab: boolean;
-    // background:true (browser_start_job's worker tabs, see jobs.ts) must
+    // background:true (browser_bulk's start_job worker tabs, see jobs.ts) must
     // not touch lastActiveTabId or steal window focus — a job runs
     // alongside the caller's own foreground session, not instead of it.
     const active = !opts.background;
@@ -509,7 +545,7 @@ async function handleNavigate(
         } catch {
             return {
                 error: `No tab with id ${opts.tabId}`,
-                hint: "Call browser_list_tabs to see currently open tabs, or omit tabId to open a new one.",
+                hint: "Call browser_session({action:\"list_tabs\"}) to see currently open tabs, or omit tabId to open a new one.",
             };
         }
         tabId = opts.tabId;

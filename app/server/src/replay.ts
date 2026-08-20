@@ -40,8 +40,9 @@ interface LogEntry {
   elementName?: string;
 }
 
-// The compact shape browser_snapshot/browser_visual_snapshot return per
-// element (see background.ts's toCompactEntry) — i=nodeId, r=role, n=name.
+// The compact shape browser_inspect's snapshot/visual_snapshot actions
+// return per element (see background.ts's toCompactEntry) — i=nodeId,
+// r=role, n=name.
 interface SnapshotNode {
   i?: number;
   r?: string;
@@ -121,10 +122,13 @@ async function replay(
   let failures = 0;
   for (let i = 0; i < lines.length; i++) {
     const entry = JSON.parse(lines[i]) as LogEntry;
-    // Logged cmd is the MCP tool name (browser_click); the daemon's HTTP
-    // relay expects the internal extension command (click) — every tool
-    // maps to its internal command by dropping the "browser_" prefix 1:1,
-    // with args passed through unchanged (see daemon.ts's handleToolCall).
+    // Logged cmd is already the internal extension command (click,
+    // navigate, ...) the daemon's HTTP relay expects — daemon.ts logs by
+    // action, not by the browser_act/browser_inspect/... gateway tool name
+    // that carried it (see its CallToolRequestSchema handler). The
+    // "browser_" strip below is now a no-op kept only for old log files
+    // recorded before the gateway-tool refactor, whose cmd field still has
+    // the pre-refactor per-action MCP tool name (browser_click, ...).
     const cmd = String(entry.cmd).replace(/^browser_/, "");
     let args: Record<string, unknown> = entry.args ?? {};
 
