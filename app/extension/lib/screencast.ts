@@ -6,6 +6,7 @@
 // screenshot instead, authorized once via the "debugger" permission.
 import type { Protocol } from "devtools-protocol";
 import { sendCommand, errorMessage } from "./cdp.js";
+import { getSettings } from "./settings.js";
 
 // The offscreen document's connection for the recording in progress, if
 // any — only one recording runs at a time.
@@ -60,22 +61,23 @@ export async function startScreencastRelay(
     if (capturePort) {
         return {
             error: "Already recording",
-            hint: "Only one recording can run at a time — call browser_stop_recording first.",
+            hint: "Only one recording can run at a time — call browser_session({action:\"stop_recording\"}) first.",
         };
     }
     relayedFrameCount = 0;
     try {
-        // Capped well below native/4K resolution so each frame stays a
-        // small-enough JPEG for the offscreen canvas pipeline to decode,
-        // draw, and re-encode in real time — decode+encode latency directly
-        // caps frame rate (frames are ack'd one at a time), so a smaller,
-        // lower-quality frame means more of them land during a ~1s cursor
-        // glide, which reads as motion instead of a slideshow.
+        // Defaults (see lib/settings.ts) are capped well below native/4K
+        // resolution so each frame stays a small-enough JPEG for the
+        // offscreen canvas pipeline to decode, draw, and re-encode in real
+        // time — decode+encode latency directly caps frame rate (frames are
+        // ack'd one at a time), so raising quality/resolution trades away
+        // smoothness, it isn't free.
+        const { recordingQuality, recordingMaxWidth, recordingMaxHeight } = await getSettings();
         await sendCommand(target, "Page.startScreencast", {
             format: "jpeg",
-            quality: 50,
-            maxWidth: 1280,
-            maxHeight: 900,
+            quality: recordingQuality,
+            maxWidth: recordingMaxWidth,
+            maxHeight: recordingMaxHeight,
             everyNthFrame: 1,
         });
     } catch (e) {
@@ -86,6 +88,11 @@ export async function startScreencastRelay(
     }
     capturePort = port;
     return { success: true };
+}
+
+/** Whether a recording is currently in progress — background.ts's idle-detach check must never detach the tab a recording is riding on. */
+export function isRecording(): boolean {
+    return capturePort !== null;
 }
 
 export async function stopScreencastRelay(

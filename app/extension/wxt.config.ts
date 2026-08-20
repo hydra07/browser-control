@@ -11,7 +11,7 @@ export default defineConfig({
   manifest: {
     name: 'BrowserControl Agent',
     description: 'AI Workspace extension for controlling browser via CDP',
-    permissions: ['tabs', 'tabGroups', 'scripting', 'debugger', 'offscreen'],
+    permissions: ['tabs', 'tabGroups', 'scripting', 'debugger', 'offscreen', 'alarms', 'storage'],
     host_permissions: ['<all_urls>'],
     // chrome.action (used by lib/tabs.ts's toolbar badge, and required for
     // chrome.sidePanel.setPanelBehavior's "click icon -> open panel" to

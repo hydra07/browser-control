@@ -9,6 +9,12 @@
     "build": "turbo run build",
     "check": "turbo run check"
   },
+  "bin": {
+    "browsercontrol": "app/server/src/daemon.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0"
+  },
   "devDependencies": {
     "turbo": "^2.10.11"
   }

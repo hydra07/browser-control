@@ -1,9 +1,9 @@
-// browser_start_job / browser_job_status — async multi-tab task runner.
-// browser_start_job returns almost immediately (work continues via
-// executeCommand, the same channel every other tool uses) instead of
+// browser_bulk's start_job/task_status actions — async multi-tab task
+// runner. start_job returns almost immediately (work continues via
+// executeCommand, the same channel every other action uses) instead of
 // blocking on however long N real navigations take.
 //
-// Each task carries a `delivered` flag so browser_job_status only returns
+// Each task carries a `delivered` flag so task_status only returns
 // tasks that finished since the LAST poll, instead of re-reporting the same
 // results (and burning tokens) every check-in. A job is dropped from the
 // registry once every task has been delivered at least once.
@@ -74,13 +74,13 @@ export function startJob(
     if (tasks.length > MAX_JOB_TASKS) {
         return {
             error: `Too many tasks: ${tasks.length} (max ${MAX_JOB_TASKS} per job)`,
-            hint: "Split into multiple browser_start_job calls.",
+            hint: "Split into multiple browser_bulk({action:\"start_job\"}) calls.",
         };
     }
     if (jobs.size >= MAX_CONCURRENT_JOBS) {
         return {
             error: `${MAX_CONCURRENT_JOBS} jobs are already running`,
-            hint: "Poll browser_job_status on an existing jobId until it completes (completed jobs are dropped automatically), or that job may be stuck.",
+            hint: "Poll browser_bulk({action:\"task_status\"}) on an existing jobId until it completes (completed jobs are dropped automatically), or that job may be stuck.",
         };
     }
 
@@ -137,7 +137,7 @@ async function runTask(
             // the caller's own foreground session is doing on lastActiveTabId
             // right now. Without it, concurrent job workers hijack the
             // default tab target (and steal OS window focus) out from under
-            // any interactive browser_click/browser_snapshot/etc. call that
+            // any interactive browser_act/browser_inspect/etc. call that
             // omits tabId while the job is still running.
             "navigate",
             { url: task.url, newTab: true, background: true },
@@ -158,7 +158,7 @@ async function runTask(
             task.title = task.url;
             task.chars = blocks.reduce((n, b) => n + b.length, 0);
             // One docs_blocks row per matched element, same reasoning as
-            // daemon.ts's own browser_select_content handler.
+            // daemon.ts's own browser_inspect select_content handler.
             task.blockIds = blocks.map(
                 (b, i) =>
                     addDocsBlock(
@@ -215,7 +215,7 @@ async function runTask(
     }
 }
 
-// Lets daemon.ts's unified browser_task_status tool tell a job id from a
+// Lets daemon.ts's unified browser_bulk task_status action tell a job id from a
 // deep-crawl id (crawl.ts has the matching crawlExists) without either
 // module needing to know about the other's internal Map.
 export function jobExists(jobId: string): boolean {
@@ -246,7 +246,7 @@ export function getJobStatusText(jobId: string): string {
         for (const t of newlyDone) {
             lines.push(
                 t.status === "success"
-                    ? `✅ ${t.title || t.url} — ${t.chars ?? 0} chars, saved as docs block${(t.blockIds?.length ?? 0) > 1 ? "s" : ""} [${(t.blockIds ?? []).join(", ")}] (browser_query_docs)`
+                    ? `✅ ${t.title || t.url} — ${t.chars ?? 0} chars, saved as docs block${(t.blockIds?.length ?? 0) > 1 ? "s" : ""} [${(t.blockIds ?? []).join(", ")}] (browser_knowledge({action:"query_docs"}))`
                     : `❌ ${t.url} — ${t.error}`,
             );
         }

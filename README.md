@@ -111,96 +111,92 @@ never by importing each other's code:
 
 ## Tools
 
-Every tool defaults to whichever tab `browser_navigate`/`browser_switch_tab`
-last pointed at. Pass `tabId` (returned by `browser_navigate` or
-`browser_list_tabs`) on any tool call to target a specific tab instead —
+Instead of one MCP tool per action (~30 of them at last count — a flat list
+that size measurably hurts a model's tool-selection accuracy), this server
+exposes **5 gateway tools**. Each takes an `action` enum plus that action's
+own params, e.g. `browser_act({action:"click", nodeId})`. Below,
+`gateway.action` is shorthand for that call shape — `session.navigate`
+means `browser_session({action:"navigate", ...})`. Every action defaults to
+whichever tab `session.navigate`/`session.switch_tab` last pointed at. Pass
+`tabId` (returned by `session.navigate` or `session.list_tabs`) on any
+`browser_act`/`browser_inspect` call to target a specific tab instead —
 useful for driving two tabs at once without a `switch_tab` round trip
 between every step.
 
-**Navigate & tabs**
+**`browser_session`** — tabs & session lifecycle
 
-| Tool | Does |
+| Action | Does |
 |---|---|
-| `browser_navigate` | Go to a URL. `newTab`/`background` open a fresh tab without disturbing the current one |
-| `browser_list_tabs` | List tabs in the "🤖 AI Workspace" group — including ones you dragged in yourself, flagged `isNew` |
-| `browser_switch_tab` | Make a listed tab the active one instead of navigating fresh |
-| `browser_close_tab` | Close a tab you opened with `newTab` |
+| `navigate` | Go to a URL. `newTab` opens a fresh tab without disturbing the current one |
+| `list_tabs` | List tabs in the "🤖 AI Workspace" group — including ones you dragged in yourself, flagged `isNew` |
+| `switch_tab` | Make a listed tab the active one instead of navigating fresh |
+| `close_tab` | Close a tab you opened with `newTab` |
+| `set_session_name` | Label the current session so it's identifiable later in `mise run data:sessions` |
+| `start_recording` / `stop_recording` | Capture a multi-step flow as video instead of a pile of screenshots |
 
-**See the page**
+**`browser_inspect`** — see the page
 
-| Tool | Does |
+| Action | Does |
 |---|---|
-| `browser_snapshot` | Flat, deduplicated list of interactive elements (id, role, name, value). `visual:true` overlays numbered boxes on a screenshot; `selector:"..."` scopes to one container as a nested tree |
-| `browser_find` | Ctrl+F-style: jump straight to elements matching text/CSS/XPath instead of scanning a full snapshot |
-| `browser_reading_mode` | Clean article text (title + body), cheaper than a snapshot when the goal is reading, not acting |
-| `browser_select_content` | Extract clean Markdown from element(s) into a queryable docs block — see [Data management](#data-management) |
-| `browser_inspect_element` | Deep dive on one element: outerHTML, matched CSS rules, computed style, event listeners |
-| `browser_screenshot` | Viewport or full-page screenshot, saved to disk |
+| `snapshot` | Flat, deduplicated list of interactive elements (id, role, name, value). `visual:true` overlays numbered boxes on a screenshot; `selector:"..."` scopes to one container as a nested tree |
+| `find` | Ctrl+F-style: jump straight to elements matching text/CSS/XPath instead of scanning a full snapshot |
+| `reading_mode` | Clean article text (title + body), cheaper than a snapshot when the goal is reading, not acting |
+| `select_content` | Extract clean Markdown from element(s) into a queryable docs block — see [Data management](#data-management) |
+| `inspect_element` | Deep dive on one element: outerHTML, matched CSS rules, computed style, event listeners |
+| `screenshot` | Viewport or full-page screenshot, saved to disk |
+| `network_requests` | List XHR/Fetch/Document/WebSocket calls since the last navigate/clear, or full detail for one request by id |
+| `network_clear` | Clear the log (also happens automatically on navigate) |
 
-**Act on the page**
+**`browser_act`** — act on the page
 
-| Tool | Does |
+| Action | Does |
 |---|---|
-| `browser_click` / `browser_type` / `browser_press_key` | Real, trusted mouse/keyboard events — the only tools that count as testing actual user interaction |
-| `browser_scroll` | Scroll by a pixel delta |
-| `browser_drag` | Real mousedown→move→up sequence, for canvas/whiteboard UI with no DOM element per shape |
-| `browser_run_flow` | A whole click/type/press_key/drag/wait_for/assert_text/scroll sequence in ONE call. `explore:true` adds a per-step diff for validating an unfamiliar UI once |
-| `browser_evaluate` | Run arbitrary JS for reading state or test setup — not a substitute for click/type |
+| `click` / `type` / `press_key` | Real, trusted mouse/keyboard events — the only actions that count as testing actual user interaction |
+| `scroll` | Scroll by a pixel delta |
+| `drag` | Real mousedown→move→up sequence, for canvas/whiteboard UI with no DOM element per shape |
+| `run_flow` | A whole click/type/press_key/drag/wait_for/assert_text/scroll sequence in ONE call. `explore:true` adds a per-step diff for validating an unfamiliar UI once |
+| `evaluate` | Run arbitrary JS for reading state or test setup — not a substitute for click/type |
 
-**Network**
+**`browser_bulk`** — bulk reading & crawling, async, returns an id immediately, poll `task_status`
 
-| Tool | Does |
+| Action | Does |
 |---|---|
-| `browser_network_requests` | List XHR/Fetch/Document/WebSocket calls since the last navigate/clear, or full detail for one request by id |
-| `browser_network_clear` | Clear the log (also happens automatically on navigate) |
+| `batch_crawl` | Concurrent `fetch()`-based crawler for public/static pages — no tabs, no login session, scales to dozens of URLs |
+| `deep_crawl` | Recursively follows outbound links from seeds/a search query, to a depth you set |
+| `start_job` | Multi-tab task runner for pages that need a real login session or client-side rendering |
+| `search` | Clean `{title, url, snippet}` web search results to feed any of the above |
+| `task_status` | Poll a job/crawl id — each call reports only what finished since your last check |
 
-**Recording**
+**`browser_knowledge`** — docs, saved flows & skills
 
-| Tool | Does |
+| Action | Does |
 |---|---|
-| `browser_start_recording` / `browser_stop_recording` | Capture a multi-step flow as video instead of a pile of screenshots |
-
-**Bulk reading & crawling** — async, return an id immediately, poll `browser_task_status`
-
-| Tool | Does |
-|---|---|
-| `browser_batch_crawl` | Concurrent `fetch()`-based crawler for public/static pages — no tabs, no login session, scales to dozens of URLs |
-| `browser_deep_crawl` | Recursively follows outbound links from seeds/a search query, to a depth you set |
-| `browser_start_job` | Multi-tab task runner for pages that need a real login session or client-side rendering |
-| `browser_search` | Clean `{title, url, snippet}` web search results to feed any of the above |
-| `browser_task_status` | Poll a job/crawl id — each call reports only what finished since your last check |
-
-**Docs, sessions & skills**
-
-| Tool | Does |
-|---|---|
-| `browser_query_docs` | List/search/read content saved by the extraction tools above — see [Data management](#data-management) |
-| `browser_set_session_name` | Label the current session so it's identifiable later in `mise run data:sessions` |
-| `browser_list_skills` / `browser_save_skill` | List/persist durable per-site notes (selectors, flows) so a future session skips rediscovery |
-| `browser_list_flows` / `browser_save_flow` | List/persist a validated `browser_run_flow` step sequence as a named, reusable flow — see [Side panel](#side-panel--saved-flows) |
+| `query_docs` | List/search/read content saved by `browser_inspect`'s `select_content`/`browser_bulk`'s crawl+job actions — see [Data management](#data-management). Its own list/search/read sub-action goes in `docsAction`, a separate field from this gateway's `action` |
+| `list_skills` / `save_skill` | List/persist durable per-site notes (selectors, flows) so a future session skips rediscovery |
+| `list_flows` / `save_flow` / `delete_flow` | List/persist a validated `run_flow` step sequence as a named, reusable flow, or remove one — see [Side panel](#side-panel--saved-flows) |
 
 ## Behavior worth knowing about
 
 **Per-domain skills** (`skills/<name>/SKILL.md`, mirrors Claude Code's own
 `SKILL.md` convention) are durable notes on how to work with a site — pay
 the discovery cost once, reuse it forever across sessions on this machine.
-`browser_navigate` auto-surfaces a matching skill via `skillHint`.
+`session.navigate` auto-surfaces a matching skill via `skillHint`.
 `skills/` is gitignored by default (a skill can end up holding selectors/
 flows for an internal or otherwise private site) — remove it from
 `.gitignore` yourself if you specifically want to commit and share yours.
 
 **"🤖 AI Workspace" is a two-way handoff.** Drag an already-open tab into
-that group yourself and `browser_list_tabs` is how the agent finds out
+that group yourself and `session.list_tabs` is how the agent finds out
 (`isNew: true`) — there's no other notification channel, since MCP can't
 push anything into the agent's reasoning loop uninvited.
 
-**Visible-by-design actions.** `browser_click`/`browser_type`/
-`browser_press_key` glide a cursor to the target, pause, then click/type
+**Visible-by-design actions.** `act.click`/`act.type`/
+`act.press_key` glide a cursor to the target, pause, then click/type
 with a ripple + highlight — a multi-second animation so a human watching
-can follow along, not a bug. `browser_run_flow` steps use a faster, lighter
+can follow along, not a bug. `act.run_flow` steps use a faster, lighter
 version so a multi-step script doesn't crawl.
 
-**`browser_run_flow` resolves targets live, never a stale id** — steps
+**`act.run_flow` resolves targets live, never a stale id** — steps
 reference elements by `role`+`name` or a CSS selector, resolved fresh at
 execution time, since a script is written before later steps' DOM state
 exists. It stops at the first step that fails, and blocks any step whose
@@ -214,17 +210,19 @@ across just 10 calls.
 
 - **Session flow warnings** — the daemon watches recent tool-call history
   and attaches a `_flowWarning` when it spots a known-bad pattern
-  (`browser_evaluate` simulating clicks, screenshot spam, acting without a
+  (`act.evaluate` simulating clicks, screenshot spam, acting without a
   snapshot, the same node clicked twice) — a live nudge, since `instructions`
   is only read once at session start.
 - **Tool-call logging** — every call lands in
   `data/logs/session-<id>.jsonl` (`cmd`, `args`, `durationMs`,
   `approxTokens`, `hasImage`), so token cost is auditable from real data.
+  `cmd` is the internal action name (`click`, `navigate`, ...), not the
+  gateway tool name, so a log line still identifies exactly what ran.
 - **Replay** — `mise run replay -- data/logs/session-xxx.jsonl` re-runs a
   recorded session's exact tool calls against the live daemon, to reproduce
   a bug or a demo without an LLM re-deriving the flow.
 
-Set `BROWSERCONTROL_INLINE_IMAGES=true` to have `browser_screenshot`
+Set `BROWSERCONTROL_INLINE_IMAGES=true` to have `inspect.screenshot`
 include the image inline in the response too (off by default — some MCP
 clients can't handle inline image content, and a mishandled screenshot can
 land in the model's context as ~230k tokens of raw base64).
@@ -288,16 +286,29 @@ git push && git push --tags   # this is what triggers release.yml
 
 Click the extension's toolbar icon to open a side panel
 (`entrypoints/sidepanel/` — React + Tailwind v4, built by WXT/Vite) listing
-every flow saved with `browser_save_flow`: name, description, domain
-badge, step count. Click the ▶ button and it runs immediately against the
-current tab — same `runFlowSteps` engine `browser_run_flow` itself uses,
+every flow saved with `browser_knowledge`'s `save_flow` action: name,
+description, domain badge, step count. Search/filter by name, description,
+or domain; click a card to expand its behavior sequence (each step with a
+color-coded action badge, copyable as JSON) before deciding whether to run
+it. Click ▶ and it runs immediately against the current tab — auto-navigating
+there first if the active tab isn't already on the flow's saved domain —
+same `runFlowSteps` engine `browser_act`'s `run_flow` action itself uses,
 driven through the daemon's existing `127.0.0.1:8765` HTTP server (`GET
-/flows`, `POST /flows/:id/run`), since the panel is a browser page, not an
-MCP client.
+/flows`, `GET /flows/:id`, `POST /flows/:id/run`, `DELETE /flows/:id`),
+since the panel is a browser page, not an MCP client. Delete (two clicks,
+the second to confirm) removes it from both the panel and storage — the
+same as `browser_knowledge`'s `delete_flow` action.
 
 A flow is meant for something you (or your agent) already validated and
 expect to re-run — not authored in the panel itself. The panel polls every
 5s so a flow saved from any session shows up without a manual refresh.
+
+The ⚙️ tab covers everything else: a live daemon connection badge (backed
+by `GET /status`) with a one-click latency ping, a ready-to-copy MCP client
+config snippet, and behavior settings — the "🤖 AI Workspace" tab group's
+name/color, the visible-cursor-animation toggle for standalone
+click/type/press_key/scroll/drag, and recording quality/resolution — all
+persisted via `chrome.storage.local` (`lib/settings.ts`).
 
 **Deliberately not built (yet)**:
 - **Visual flow composition** (chaining/branching steps as a node graph,
@@ -312,9 +323,9 @@ expect to re-run — not authored in the panel itself. The panel polls every
   with no reference to, or channel into, whatever external MCP client
   (Claude Code, Antigravity, ...) is calling it. If this is wanted later,
   the realistic version within this architecture is a pollable inbox (the
-  panel writes a note, a new MCP tool lets the agent check for it on its
-  own next turn — the same poll pattern `browser_task_status` already
-  uses), not a live push channel.
+  panel writes a note, a new MCP action lets the agent check for it on its
+  own next turn — the same poll pattern `browser_bulk`'s `task_status`
+  already uses), not a live push channel.
 
 ## Known limitations
 
@@ -323,6 +334,12 @@ expect to re-run — not authored in the panel itself. The panel polls every
 - No auth on the WebSocket/HTTP bridge — it binds to `127.0.0.1` only, so
   the threat model is "other processes on this machine," same as most local
   browser-automation MCP servers.
-- `browser_evaluate`-based input (`el.value = ...`) doesn't reliably trigger
-  React/Vue's `onChange` — use `browser_click`/`browser_type` for anything
+- `act.evaluate`-based input (`el.value = ...`) doesn't reliably trigger
+  React/Vue's `onChange` — use `act.click`/`act.type` for anything
   you want to count as tested interaction.
+- Collapsing ~30 tools into 5 gateways trades per-action JSON-Schema
+  `required` validation for a flat, loosely-typed `params` bag (same
+  runtime-checked-not-schema-enforced style the daemon already used for
+  `act.run_flow`'s steps) — a malformed call surfaces as a runtime
+  error from the action handler, not a schema-validation rejection before
+  the call even reaches it.

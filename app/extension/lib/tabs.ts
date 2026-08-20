@@ -1,33 +1,33 @@
-// list_tabs/switch_tab: the "🤖 AI Workspace" tab group as a shared handoff
-// surface — the user drags tabs into it, the AI discovers them via
-// list_tabs. Neither needs a CDP session, and both must work before any
-// navigate has happened.
+// list_tabs/switch_tab: the "🤖 AI Workspace" tab group (name/color
+// user-configurable, see lib/settings.ts) as a shared handoff surface — the
+// user drags tabs into it, the AI discovers them via list_tabs. Neither
+// needs a CDP session, and both must work before any navigate has happened.
 import { evalOnPage } from "./cdp.js";
 import { showPillCaption } from "./overlay.js";
-
-export const GROUP_NAME = "🤖 AI Workspace";
+import { getSettings } from "./settings.js";
 
 // handleNavigate used to look up/create this group inline with its own
 // await chrome.tabGroups.query(...) / chrome.tabs.group(...) pair. That's
 // safe for one navigate at a time, but browser_start_job fires several
 // "navigate" commands concurrently (one per worker) — two calls landing
 // between the query and the create both see "no group yet" and each create
-// their own "🤖 AI Workspace" group, splitting tabs across duplicates.
-// Serializing every add-to-group op through this single promise chain means
-// only the first concurrent caller ever does the create; the rest just wait
-// their turn and join the group it made.
+// their own group, splitting tabs across duplicates. Serializing every
+// add-to-group op through this single promise chain means only the first
+// concurrent caller ever does the create; the rest just wait their turn and
+// join the group it made.
 let groupOpChain: Promise<unknown> = Promise.resolve();
 
 export async function addTabToWorkspaceGroup(tabId: number): Promise<void> {
     const run = groupOpChain.then(async () => {
-        const groups = await chrome.tabGroups.query({ title: GROUP_NAME });
+        const { tabGroupName, tabGroupColor } = await getSettings();
+        const groups = await chrome.tabGroups.query({ title: tabGroupName });
         if (groups.length > 0) {
             await chrome.tabs.group({ tabIds: tabId, groupId: groups[0].id });
         } else {
             const groupId = await chrome.tabs.group({ tabIds: tabId });
             await chrome.tabGroups.update(groupId, {
-                title: GROUP_NAME,
-                color: "red",
+                title: tabGroupName,
+                color: tabGroupColor,
             });
         }
     });
@@ -69,7 +69,7 @@ export function installTabGroupBadge(): void {
         if (changeInfo.groupId == null || changeInfo.groupId < 0) return;
         try {
             const group = await chrome.tabGroups.get(changeInfo.groupId);
-            if (group.title !== GROUP_NAME) return;
+            if (group.title !== (await getSettings()).tabGroupName) return;
         } catch {
             return;
         }
@@ -81,7 +81,8 @@ export function installTabGroupBadge(): void {
 export async function handleListTabsCommand(
     lastActiveTabId: number | null,
 ): Promise<Record<string, unknown>> {
-    const groups = await chrome.tabGroups.query({ title: GROUP_NAME });
+    const { tabGroupName } = await getSettings();
+    const groups = await chrome.tabGroups.query({ title: tabGroupName });
     if (groups.length === 0) return { tabs: [] };
     const tabs = await chrome.tabs.query({ groupId: groups[0].id });
     const result = tabs
@@ -121,7 +122,7 @@ export async function handleSwitchTabCommand(
     } catch {
         return {
             error: `No tab with id ${tabId}`,
-            hint: "Call browser_list_tabs again — it may have been closed.",
+            hint: "Call browser_session({action:\"list_tabs\"}) again — it may have been closed.",
         };
     }
     const tab = await chrome.tabs.update(tabId, { active: true });

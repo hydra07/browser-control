@@ -94,7 +94,7 @@ export async function startCapture(): Promise<CaptureAck | CaptureError> {
     if (recorder) {
         return {
             error: "Already recording",
-            hint: "Call browser_stop_recording first, or ignore if you meant to keep recording — this call was a no-op.",
+            hint: "Call browser_session({action:\"stop_recording\"}) first, or ignore if you meant to keep recording — this call was a no-op.",
         };
     }
 
@@ -214,7 +214,7 @@ export async function stopCapture(): Promise<CaptureResult | CaptureError> {
     if (!recorder || !port) {
         return {
             error: "Not recording",
-            hint: "Call browser_start_recording first.",
+            hint: "Call browser_session({action:\"start_recording\"}) first.",
         };
     }
     const finishedRecorder = recorder;
