@@ -5,3 +5,11 @@ data/
 
 test/
 skills/*
+
+# WXT (app/extension) — build output and its generated type-gen cache.
+.output/
+.wxt/
+web-ext.config.ts
+
+# Turborepo's local task cache.
+.turbo/

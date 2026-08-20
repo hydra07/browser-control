@@ -13,8 +13,9 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import type { FlowStep } from "@browsercontrol/shared";
 
-const DATA_DIR = join(import.meta.dir, "..", "..", "..", "data");
+const DATA_DIR = join(import.meta.dir, "..", "..", "..", "..", "data");
 try {
     mkdirSync(DATA_DIR, { recursive: true });
 } catch {}
@@ -81,6 +82,22 @@ try {
         e instanceof Error ? e.message : String(e),
     );
 }
+
+// Saved browser_run_flow step sequences — durable, reusable knowledge (same
+// category as skills/), not scoped to a session_id: the side panel is
+// browser-side and outlives any one daemon session, so it needs to list
+// flows regardless of which session saved them.
+db.run(`
+    CREATE TABLE IF NOT EXISTS flows (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        domain TEXT,
+        steps_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+    )
+`);
 
 const HOSTS_STORE_CAP = 50;
 const HOSTS_NAME_SHOW_CAP = 5;
@@ -550,4 +567,119 @@ export function dbFileSizeBytes(): number {
     } catch {
         return 0;
     }
+}
+
+// --- Saved flows (browser_save_flow / browser_list_flows / side panel) ---
+
+export interface FlowMeta {
+    id: string;
+    name: string;
+    description: string | null;
+    domain: string | null;
+    stepCount: number;
+    createdAt: number;
+    updatedAt: number;
+}
+
+export interface FlowFull extends FlowMeta {
+    steps: FlowStep[];
+}
+
+interface FlowRow {
+    id: string;
+    name: string;
+    description: string | null;
+    domain: string | null;
+    steps_json: string;
+    created_at: number;
+    updated_at: number;
+}
+
+function metaFromFlowRow(row: FlowRow): FlowMeta {
+    let stepCount = 0;
+    try {
+        stepCount = (JSON.parse(row.steps_json) as unknown[]).length;
+    } catch {}
+    return {
+        id: row.id,
+        name: row.name,
+        description: row.description,
+        domain: row.domain,
+        stepCount,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+    };
+}
+
+/** Creates a new flow (omit `id`) or overwrites an existing one (pass its id) — same upsert shape as browser_save_skill. */
+export function saveFlow(input: {
+    id?: string;
+    name: string;
+    description?: string;
+    domain?: string;
+    steps: FlowStep[];
+}): FlowMeta {
+    const id = input.id ?? crypto.randomUUID();
+    const now = Date.now();
+    const stepsJson = JSON.stringify(input.steps);
+    const existing = db
+        .query(`SELECT created_at FROM flows WHERE id = ?`)
+        .get(id) as { created_at: number } | undefined;
+    const createdAt = existing?.created_at ?? now;
+    db.query(
+        `INSERT INTO flows (id, name, description, domain, steps_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name, description = excluded.description,
+            domain = excluded.domain, steps_json = excluded.steps_json,
+            updated_at = excluded.updated_at`,
+    ).run(
+        id,
+        input.name,
+        input.description ?? null,
+        input.domain ?? null,
+        stepsJson,
+        createdAt,
+        now,
+    );
+    return {
+        id,
+        name: input.name,
+        description: input.description ?? null,
+        domain: input.domain ?? null,
+        stepCount: input.steps.length,
+        createdAt,
+        updatedAt: now,
+    };
+}
+
+/** Metadata only (no steps) — same "cheap list" shape as listDocsBlocks/browser_list_skills. */
+export function listFlows(opts: { domain?: string } = {}): FlowMeta[] {
+    const rows = (
+        opts.domain
+            ? db
+                  .query(
+                      `SELECT * FROM flows WHERE domain = ? ORDER BY updated_at DESC`,
+                  )
+                  .all(opts.domain)
+            : db.query(`SELECT * FROM flows ORDER BY updated_at DESC`).all()
+    ) as FlowRow[];
+    return rows.map(metaFromFlowRow);
+}
+
+export function getFlow(id: string): FlowFull | undefined {
+    const row = db.query(`SELECT * FROM flows WHERE id = ?`).get(id) as
+        | FlowRow
+        | undefined;
+    if (!row) return undefined;
+    let steps: FlowStep[] = [];
+    try {
+        steps = JSON.parse(row.steps_json);
+    } catch {}
+    return { ...metaFromFlowRow(row), steps };
+}
+
+export function deleteFlow(id: string): boolean {
+    const res = db.query(`DELETE FROM flows WHERE id = ?`).run(id);
+    return res.changes > 0;
 }

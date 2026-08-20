@@ -2,7 +2,7 @@
 // explore_flow (a snapshot delta after every step) — same steps, same real
 // side effects, explore_flow just reports more per step for validating an
 // unfamiliar UI before switching to run_flow for repeat runs.
-import type { FlowStep } from "../../shared/protocol.js";
+import type { FlowStep } from "@browsercontrol/shared";
 import { sendCommand } from "./cdp.js";
 import { pageDelay } from "./overlay.js";
 import { getAxInfoForNode, isRiskyTarget, performClick, performDrag, performPressKey, performScroll, performType } from "./actions.js";

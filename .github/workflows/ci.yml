@@ -25,22 +25,12 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      # Extension (src/extension/, src/shared/) — built by tsc into dist/.
-      - run: bun run check:extension
+      # Type-checks every workspace (app/extension, app/server,
+      # packages/shared) via Turborepo — see turbo.json and each
+      # workspace's own "check" script.
+      - run: bun run check
 
-      # Server (src/server/, src/shared/) — run directly via Bun, never
-      # built, so this is its only real type-check.
-      - run: bun run check:server
-
-      # Full build (also runs the manifest.json -> package.json version
-      # sync and the offscreen.html asset copy) — catches anything the
-      # noEmit type-checks above wouldn't.
+      # Builds every workspace with a build step — currently just
+      # app/extension (WXT: bundles background/offscreen/sidepanel,
+      # generates manifest.json from wxt.config.ts + package.json).
       - run: bun run build
-
-      - name: Fail if version:sync left package.json dirty
-        run: |
-          if ! git diff --quiet -- package.json; then
-            echo "::error::package.json's version doesn't match manifest.json. Run 'bun run version:sync' locally and commit the result."
-            git diff -- package.json
-            exit 1
-          fi

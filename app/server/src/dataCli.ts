@@ -18,7 +18,7 @@ import { statSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import * as dataStore from "./lib/dataStore.js";
 
-const DATA_DIR = join(import.meta.dir, "..", "..", "data");
+const DATA_DIR = join(import.meta.dir, "..", "..", "..", "data");
 
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`;

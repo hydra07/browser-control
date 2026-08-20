@@ -1,45 +1,52 @@
-import type { BrowserCommand } from "../shared/protocol.js";
-import { installDialogAutoHandler } from "./lib/dialog.js";
+import type { BrowserCommand } from "@browsercontrol/shared";
+import { installDialogAutoHandler } from "../lib/dialog.js";
 import {
     installNetworkCollector,
     listNetworkRequests,
     getNetworkRequestDetail,
     clearNetworkRequests,
-} from "./lib/network.js";
-import { sendCommand, errorMessage, evalOnPage } from "./lib/cdp.js";
-import { captureScreenshot } from "./lib/screenshot.js";
+} from "../lib/network.js";
+import { sendCommand, errorMessage, evalOnPage } from "../lib/cdp.js";
+import { captureScreenshot } from "../lib/screenshot.js";
 import {
     installScreencastFrameRelay,
     startScreencastRelay,
     stopScreencastRelay,
-} from "./lib/screencast.js";
-import { showPillCaption } from "./lib/overlay.js";
+} from "../lib/screencast.js";
+import { showPillCaption } from "../lib/overlay.js";
 import {
     performClick,
     performType,
     performPressKey,
     performScroll,
     performDrag,
-} from "./lib/actions.js";
-import { runFlowSteps } from "./lib/flow.js";
+} from "../lib/actions.js";
+import { runFlowSteps } from "../lib/flow.js";
 import {
     handleSnapshotCommand,
     handleQueryRegionCommand,
     handleVisualSnapshotCommand,
-} from "./lib/snapshot.js";
-import { inspectElement } from "./lib/inspect.js";
+} from "../lib/snapshot.js";
+import { inspectElement } from "../lib/inspect.js";
 import {
     handleReadingModeCommand,
     handleFindCommand,
     handleSelectContentCommand,
-} from "./lib/read.js";
+} from "../lib/read.js";
 import {
     installTabGroupBadge,
     handleListTabsCommand,
     handleSwitchTabCommand,
     addTabToWorkspaceGroup,
-} from "./lib/tabs.js";
-import { waitForStableDom } from "./lib/wait.js";
+} from "../lib/tabs.js";
+import { waitForStableDom } from "../lib/wait.js";
+
+// WXT requires a `defineBackground` default export to recognize this file as
+// the background entrypoint — everything below (previously plain top-level
+// code) now runs inside its callback. Purely a wrapper: nothing here is
+// re-timed or re-ordered, module evaluation still happens once, immediately,
+// same as before.
+export default defineBackground(() => {
 
 // Single source of truth is manifest.json — bump its "version" whenever the
 // extension changes, so a stale loaded build is easy to spot instead of
@@ -68,11 +75,20 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 installTabGroupBadge();
 
+// Without this, side_panel.default_path in manifest.json only makes the
+// panel reachable via Chrome's own side-panel picker — the extension's own
+// toolbar icon does nothing on click, since there's no action.default_popup
+// either. This makes clicking the icon open the panel directly, the
+// behavior most people expect from a toolbar icon.
+chrome.sidePanel
+    .setPanelBehavior({ openPanelOnActionClick: true })
+    .catch((e) => console.error("[browsercontrol] setPanelBehavior failed:", e));
+
 // chrome.debugger is unavailable in offscreen documents, so offscreen holds
 // the daemon WebSocket + recording canvas/MediaRecorder (lib/capture.ts)
 // while this service worker does all CDP work, connected via
 // chrome.runtime.sendMessage/Port.
-const OFFSCREEN_DOCUMENT_PATH = "dist/extension/offscreen.html";
+const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 
 async function ensureOffscreenDocument(): Promise<void> {
     if (await chrome.offscreen.hasDocument()) return;
@@ -499,3 +515,5 @@ async function handleNavigate(
     // tab, instead of whichever one is lastActiveTabId by then.
     return { success: true, message: `Navigated to ${url}`, tabId };
 }
+
+});

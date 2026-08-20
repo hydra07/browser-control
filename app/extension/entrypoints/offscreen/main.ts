@@ -8,10 +8,10 @@
 // restart, etc.) close it, and those get a real reconnect-with-backoff
 // instead of waiting for a periodic alarm to notice.
 
-import type { BrowserCommand } from '../shared/protocol.js';
-import { startCapture, stopCapture } from './lib/capture.js';
-import { handleBatchCrawlCommand } from './lib/batch.js';
-import { handleWebSearchCommand } from './lib/search.js';
+import type { BrowserCommand } from '@browsercontrol/shared';
+import { startCapture, stopCapture } from '../../lib/capture.js';
+import { handleBatchCrawlCommand } from '../../lib/batch.js';
+import { handleWebSearchCommand } from '../../lib/search.js';
 
 type IncomingMessage = BrowserCommand & { id: string };
 

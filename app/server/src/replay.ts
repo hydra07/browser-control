@@ -20,14 +20,14 @@
 
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import type { ExtensionResponse } from "../shared/protocol.js";
+import type { ExtensionResponse } from "@browsercontrol/shared";
 
 // Moved under data/ (used to be a top-level logs/ dir) — daemon.ts
 // migrates any legacy logs/*.jsonl into the new location on startup, but
 // replay can run without the daemon ever having been started against this
 // checkout, so fall back to the legacy path if the new one doesn't exist.
-const NEW_LOGS_DIR = join(import.meta.dir, "..", "..", "data", "logs");
-const LEGACY_LOGS_DIR = join(import.meta.dir, "..", "..", "logs");
+const NEW_LOGS_DIR = join(import.meta.dir, "..", "..", "..", "data", "logs");
+const LEGACY_LOGS_DIR = join(import.meta.dir, "..", "..", "..", "logs");
 const LOGS_DIR = existsSync(NEW_LOGS_DIR) ? NEW_LOGS_DIR : LEGACY_LOGS_DIR;
 const DAEMON_URL = "http://127.0.0.1:8765/execute";
 

@@ -1,0 +1,31 @@
+{
+  "name": "@browsercontrol/extension",
+  "description": "The Chrome extension — service worker, offscreen document, and the side panel. Built with WXT.",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wxt",
+    "check": "tsc --noEmit",
+    "build": "wxt build",
+    "zip": "wxt zip",
+    "postinstall": "wxt prepare",
+    "version:bump": "bun run scripts/bump-version.ts"
+  },
+  "dependencies": {
+    "@browsercontrol/shared": "workspace:*",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/chrome": "^0.0.263",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@wxt-dev/module-react": "^1.1.5",
+    "devtools-protocol": "^0.0.1672245",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.4.5",
+    "wxt": "^0.21.4"
+  }
+}

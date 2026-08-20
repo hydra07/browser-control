@@ -2,46 +2,54 @@
 bun = "latest"
 node = "latest"
 
+[tasks.check]
+description = "Type-check every workspace (extension, server, shared) via Turborepo"
+run = "bun run check"
+
+[tasks.build]
+description = "Build every workspace that has a build step (currently just the extension) via Turborepo"
+run = "bun run build"
+
+[tasks.dev]
+description = "Run the daemon standalone (outside an MCP client) — useful for manual testing against the extension"
+run = "bun run --cwd app/server dev"
+
 [tasks.replay]
 description = "Replay a recorded data/logs/session-*.jsonl against the live daemon. Usage: mise run replay -- data/logs/session-xxx.jsonl [--continue] [--delay 500]"
-run = "bun run src/server/replay.ts"
+run = "bun run --cwd app/server replay"
 
 [tasks."replay:list"]
 description = "List recorded session logs available to replay"
-run = "bun run src/server/replay.ts --list"
-
-[tasks."check:daemon"]
-description = "Type-check the server (daemon.ts, replay.ts, shared/) — these run directly via Bun and are never tsc-built, so this is their only real type-check."
-run = "bun run check:server"
+run = "bun run --cwd app/server replay:list"
 
 [tasks."data:status"]
 description = "Overview of data/ usage: logs/images/videos/docs counts and sizes, index DB size"
-run = "bun run src/server/dataCli.ts status"
+run = "bun run --cwd app/server data status"
 
 [tasks."data:sessions"]
 description = "List recorded sessions (id, name, duration, tool calls, artifact counts). Usage: mise run data:sessions -- --limit 20"
-run = "bun run src/server/dataCli.ts sessions"
+run = "bun run --cwd app/server data sessions"
 
 [tasks."data:show"]
 description = "Full artifact + docs-block listing for one session. Usage: mise run data:show -- <sessionId>"
-run = "bun run src/server/dataCli.ts show"
+run = "bun run --cwd app/server data show"
 
 [tasks."data:read"]
 description = "Print one docs block's full content. Usage: mise run data:read -- <blockId>"
-run = "bun run src/server/dataCli.ts read"
+run = "bun run --cwd app/server data read"
 
 [tasks."data:search"]
 description = "Full-text search across saved docs blocks. Usage: mise run data:search -- \"query\" [--session <id>] [--limit N]"
-run = "bun run src/server/dataCli.ts search"
+run = "bun run --cwd app/server data search"
 
 [tasks."data:rename"]
 description = "Set a human-readable name on a session. Usage: mise run data:rename -- <sessionId> \"name\""
-run = "bun run src/server/dataCli.ts rename"
+run = "bun run --cwd app/server data rename"
 
 [tasks."data:gc"]
 description = "Delete old session data (logs/images/videos/docs). Dry-run by default — requires an explicit filter and --yes to actually delete. Usage: mise run data:gc -- --older-than 30d --yes"
-run = "bun run src/server/dataCli.ts gc"
+run = "bun run --cwd app/server data gc"
 
 [tasks."version:bump"]
-description = "Bump manifest.json's version (the source of truth) and sync package.json to match — prints the git commit/tag/push commands to run next. Usage: mise run version:bump -- patch|minor|major|X.Y.Z"
-run = "bun run scripts/bump-version.ts"
+description = "Bump the extension's version (app/extension/package.json — WXT reads it straight from there) — prints the git commit/tag/push commands to run next. Usage: mise run version:bump -- patch|minor|major|X.Y.Z"
+run = "bun run --cwd app/extension version:bump"
