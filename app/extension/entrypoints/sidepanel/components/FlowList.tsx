@@ -1,28 +1,28 @@
-import React, { useState, useMemo, useEffect } from "react";
+import { type MouseEvent, useEffect, useMemo, useState } from "react";
 import {
   deleteFlow,
-  runFlow,
-  getFlow,
-  type FlowMeta,
   type FlowFull,
-  type FlowStep,
+  type FlowMeta,
   type FlowRunResult,
+  type FlowStep,
+  getFlow,
+  runFlow,
 } from "../lib/api";
 import {
-  PlayIcon,
-  TrashIcon,
   CheckIcon,
-  CrossIcon,
-  SearchIcon,
   ChevronDownIcon,
   CopyIcon,
-  MousePointerIcon,
+  CrossIcon,
+  HourglassIcon,
   KeyboardIcon,
   KeyReturnIcon,
-  HourglassIcon,
-  ShieldCheckIcon,
-  ScrollIcon,
+  MousePointerIcon,
   MoveIcon,
+  PlayIcon,
+  ScrollIcon,
+  SearchIcon,
+  ShieldCheckIcon,
+  TrashIcon,
   WorkflowIcon,
 } from "./Icons";
 
@@ -103,9 +103,7 @@ function StepActionBadge({ action }: { action: FlowStep["action"] }) {
 function StepDetails({ step, index }: { step: FlowStep; index: number }) {
   return (
     <div className="group relative flex items-start gap-2.5 rounded-md bg-[#121318] p-2 border border-zinc-800/80 hover:border-zinc-700 transition">
-      <span className="flex-none font-mono text-[10px] text-zinc-500 w-4 text-right pt-0.5">
-        #{index + 1}
-      </span>
+      <span className="flex-none font-mono text-[10px] text-zinc-500 w-4 text-right pt-0.5">#{index + 1}</span>
       <div className="flex-1 min-w-0 space-y-1">
         <div className="flex items-center gap-1.5 flex-wrap">
           <StepActionBadge action={step.action} />
@@ -120,13 +118,15 @@ function StepDetails({ step, index }: { step: FlowStep; index: number }) {
             </span>
           )}
           {step.selector && (
-            <span className="font-mono text-[10px] text-indigo-300 bg-indigo-950/40 px-1 py-0.2 rounded border border-indigo-900/40 truncate max-w-[200px]" title={step.selector}>
+            <span
+              className="font-mono text-[10px] text-indigo-300 bg-indigo-950/40 px-1 py-0.2 rounded border border-indigo-900/40 truncate max-w-[200px]"
+              title={step.selector}
+            >
               {step.selector}
             </span>
           )}
         </div>
 
-        {/* Step parameters */}
         <div className="text-[10.5px] font-mono text-zinc-400 pl-0.5 space-y-0.5">
           {step.text && (
             <div className="text-amber-300/90 truncate">
@@ -153,11 +153,7 @@ function StepDetails({ step, index }: { step: FlowStep; index: number }) {
               drag: ({step.fromX}, {step.fromY}) -&gt; ({step.toX}, {step.toY})
             </div>
           )}
-          {step.timeoutMs && (
-            <div className="text-zinc-500 text-[10px]">
-              timeout: {step.timeoutMs}ms
-            </div>
-          )}
+          {step.timeoutMs && <div className="text-zinc-500 text-[10px]">timeout: {step.timeoutMs}ms</div>}
         </div>
       </div>
     </div>
@@ -206,13 +202,7 @@ function RunReport({ state }: { state: RunState }) {
   );
 }
 
-function FlowCard({
-  flow,
-  onDeleted,
-}: {
-  flow: FlowMeta;
-  onDeleted: (id: string) => void;
-}) {
+function FlowCard({ flow, onDeleted }: { flow: FlowMeta; onDeleted: (id: string) => void }) {
   const [expanded, setExpanded] = useState(false);
   const [fullFlow, setFullFlow] = useState<FlowFull | null>(null);
   const [loadingSteps, setLoadingSteps] = useState(false);
@@ -231,7 +221,7 @@ function FlowCard({
     }
   }, [expanded, flow.id, fullFlow]);
 
-  async function handleRun(e: React.MouseEvent) {
+  async function handleRun(e: MouseEvent) {
     e.stopPropagation();
     setState({ status: "running" });
     try {
@@ -245,7 +235,7 @@ function FlowCard({
     }
   }
 
-  async function handleDelete(e: React.MouseEvent) {
+  async function handleDelete(e: MouseEvent) {
     e.stopPropagation();
     if (!confirmDelete) {
       setConfirmDelete(true);
@@ -265,7 +255,7 @@ function FlowCard({
     }
   }
 
-  function handleCopySteps(e: React.MouseEvent) {
+  function handleCopySteps(e: MouseEvent) {
     e.stopPropagation();
     if (!fullFlow) return;
     void navigator.clipboard.writeText(JSON.stringify(fullFlow.steps, null, 2));
@@ -277,7 +267,6 @@ function FlowCard({
 
   return (
     <div className="rounded-xl border border-zinc-800/80 bg-[#16171d] transition hover:border-zinc-700/80 shadow-sm overflow-hidden">
-      {/* Main Flow Header & Controls */}
       <div className="p-3">
         <div className="flex items-start justify-between gap-2.5">
           <div className="min-w-0 flex-1 cursor-pointer" onClick={() => setExpanded(!expanded)}>
@@ -293,9 +282,7 @@ function FlowCard({
             </div>
 
             {flow.description && (
-              <p className="mt-1 text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
-                {flow.description}
-              </p>
+              <p className="mt-1 text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">{flow.description}</p>
             )}
 
             <div className="mt-2.5 flex items-center gap-2 text-[10.5px] text-zinc-500 font-mono">
@@ -307,7 +294,6 @@ function FlowCard({
             </div>
           </div>
 
-          {/* Actions */}
           <div className="flex flex-none items-center gap-1.5">
             <button
               type="button"
@@ -334,7 +320,9 @@ function FlowCard({
                   : "bg-zinc-900/60 text-zinc-400 border-zinc-800 hover:text-zinc-200 hover:bg-zinc-800"
               }`}
             >
-              <ChevronDownIcon className={`w-3.5 h-3.5 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`} />
+              <ChevronDownIcon
+                className={`w-3.5 h-3.5 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
+              />
             </button>
 
             <button
@@ -356,7 +344,6 @@ function FlowCard({
         <RunReport state={state} />
       </div>
 
-      {/* Expanded Behavior / Steps Inspector Drawer */}
       {expanded && (
         <div className="border-t border-zinc-800/80 bg-[#0f1015] p-3 space-y-2 animate-in fade-in duration-200">
           <div className="flex items-center justify-between pb-1">
@@ -378,9 +365,7 @@ function FlowCard({
           </div>
 
           {loadingSteps && (
-            <div className="py-4 text-center font-mono text-[10.5px] text-zinc-500">
-              Loading steps...
-            </div>
+            <div className="py-4 text-center font-mono text-[10.5px] text-zinc-500">Loading steps...</div>
           )}
 
           {fullFlow && (
@@ -396,13 +381,7 @@ function FlowCard({
   );
 }
 
-export function FlowList({
-  flows,
-  onFlowDeleted,
-}: {
-  flows: FlowMeta[];
-  onFlowDeleted: (id: string) => void;
-}) {
+export function FlowList({ flows, onFlowDeleted }: { flows: FlowMeta[]; onFlowDeleted: (id: string) => void }) {
   const [query, setQuery] = useState("");
   const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
 
@@ -430,7 +409,6 @@ export function FlowList({
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      {/* Filter and Search Bar */}
       <div className="flex-none p-2.5 space-y-2 border-b border-zinc-800/80 bg-[#111217]">
         <div className="relative flex items-center">
           <SearchIcon className="absolute left-2.5 h-3.5 w-3.5 text-zinc-500" />
@@ -483,7 +461,6 @@ export function FlowList({
         )}
       </div>
 
-      {/* List Content */}
       <div className="flex-1 space-y-2.5 overflow-y-auto p-2.5">
         {filtered.map((flow) => (
           <FlowCard key={flow.id} flow={flow} onDeleted={onFlowDeleted} />
@@ -500,9 +477,7 @@ export function FlowList({
         )}
 
         {flows.length > 0 && filtered.length === 0 && (
-          <div className="py-10 text-center text-zinc-500 text-[11px] font-mono">
-            No flows match "{query}"
-          </div>
+          <div className="py-10 text-center text-zinc-500 text-[11px] font-mono">No flows match "{query}"</div>
         )}
       </div>
     </div>

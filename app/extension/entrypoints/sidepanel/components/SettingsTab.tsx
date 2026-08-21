@@ -1,21 +1,14 @@
-import React, { useEffect, useRef, useState } from "react";
-import {
-  getCliAgentStatus,
-  queryCliAgent,
-  abortCliAgent,
-  type DaemonStatus,
-  type CliAgentStatusResult,
-  type CliAgentQueryResult,
-} from "../lib/api";
-import { TerminalIcon, CopyIcon, RefreshIcon, SparklesIcon, PinIcon, ChatIcon, CheckIcon, ZapIcon } from "./Icons";
+import { useEffect, useRef, useState } from "react";
 import {
   DEFAULT_SETTINGS,
-  TAB_GROUP_COLORS,
   getSettings,
-  saveSettings,
   type Settings,
+  saveSettings,
+  TAB_GROUP_COLORS,
   type TabGroupColor,
-} from "../../../lib/settings.js";
+} from "../../../configs/settings.js";
+import { abortCliAgent, type CliAgentQueryResult, type DaemonStatus, queryCliAgent } from "../lib/api";
+import { ChatIcon, CheckIcon, CopyIcon, PinIcon, RefreshIcon, SparklesIcon, TerminalIcon, ZapIcon } from "./Icons";
 
 interface SettingsTabProps {
   daemonStatus: DaemonStatus | null;
@@ -57,14 +50,25 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 const inputClass =
   "mt-1.5 w-full rounded bg-zinc-900 border border-zinc-800 px-2 py-1.5 text-[11px] font-mono text-zinc-200 outline-none focus:border-zinc-600 transition";
 
-// Extension behavior settings & Experimental CLI Agent Setup Box
+const MCP_CONFIG = JSON.stringify(
+  {
+    mcpServers: {
+      browsercontrol: {
+        command: "bun",
+        args: ["run", "app/server/src/daemon.ts"],
+      },
+    },
+  },
+  null,
+  2,
+);
+
+const DEFAULT_TEST_PROMPT = "Tóm tắt ngắn gọn các ý chính của trang web này giúp tôi.";
+
 function BehaviorSettings() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [showSaved, setShowSaved] = useState(false);
-  const [agentStatus, setAgentStatus] = useState<CliAgentStatusResult | null>(null);
-  
-  // CLI Test Run State
-  const [testPrompt, setTestPrompt] = useState("Tóm tắt ngắn gọn các ý chính của trang web này giúp tôi.");
+  const [testPrompt, setTestPrompt] = useState(DEFAULT_TEST_PROMPT);
   const [isRunningTest, setIsRunningTest] = useState(false);
   const [testResult, setTestResult] = useState<CliAgentQueryResult | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
@@ -74,7 +78,6 @@ function BehaviorSettings() {
 
   useEffect(() => {
     void getSettings().then(setSettings);
-    void getCliAgentStatus().then(setAgentStatus).catch(() => null);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
       if (savedFlashTimer.current) clearTimeout(savedFlashTimer.current);
@@ -148,7 +151,6 @@ function BehaviorSettings() {
 
   return (
     <>
-      {/* Tab Group Settings */}
       <div className="rounded-md border border-zinc-800 bg-[#16161a] p-3 space-y-3">
         <div className="flex items-center justify-between">
           <div className="font-medium text-zinc-200 text-[11.5px]">Tab group</div>
@@ -190,7 +192,6 @@ function BehaviorSettings() {
         </div>
       </div>
 
-      {/* Animation Setting */}
       <div className="rounded-md border border-zinc-800 bg-[#16161a] p-3">
         <div className="flex items-center justify-between gap-3">
           <div>
@@ -199,14 +200,10 @@ function BehaviorSettings() {
               Glide + ripple on click/type/press_key/scroll/drag. Off is faster but harder to watch.
             </div>
           </div>
-          <Toggle
-            checked={settings.animationsEnabled}
-            onChange={(v) => commit({ animationsEnabled: v })}
-          />
+          <Toggle checked={settings.animationsEnabled} onChange={(v) => commit({ animationsEnabled: v })} />
         </div>
       </div>
 
-      {/* Unified User-Configurable CLI Agent Experiment Box */}
       <div className="rounded-md border border-indigo-900/40 bg-[#13141c] p-3 space-y-3 shadow-sm">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5 font-semibold text-zinc-100 text-[11.5px]">
@@ -219,10 +216,10 @@ function BehaviorSettings() {
         </div>
 
         <p className="text-[10.5px] text-zinc-400 leading-relaxed">
-          Tùy chỉnh lệnh CLI Agent (Claude Code / Antigravity CLI) chạy trong sandbox để tận dụng gói subscription của bạn.
+          Tùy chỉnh lệnh CLI Agent (Claude Code / Antigravity CLI) chạy trong sandbox để tận dụng gói subscription của
+          bạn.
         </p>
 
-        {/* Command Template Input */}
         <label className="block">
           <div className="flex items-center justify-between text-[10.5px] text-zinc-400">
             <span>CLI Command Template</span>
@@ -236,12 +233,11 @@ function BehaviorSettings() {
             className={inputClass}
           />
           <p className="mt-1 text-[9.5px] text-zinc-500 leading-relaxed">
-            Base binary + flags only. When this starts with `claude`, streaming, session resume, and
-            read-only page-inspection tool access are added automatically.
+            Base binary + flags only. When this starts with `claude`, streaming, session resume, and read-only
+            page-inspection tool access are added automatically.
           </p>
         </label>
 
-        {/* Quick Presets */}
         <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
           <span className="text-[10px] text-zinc-500">Presets:</span>
           <button
@@ -268,7 +264,6 @@ function BehaviorSettings() {
           </button>
         </div>
 
-        {/* Toggle Enable Chat Tab */}
         <div className="flex items-center justify-between gap-3 pt-2 border-t border-zinc-800/80">
           <div>
             <div className="font-medium text-zinc-200 text-[11px] flex items-center gap-1.5">
@@ -279,13 +274,9 @@ function BehaviorSettings() {
               Bật tab Chat để trò chuyện, hỏi đáp và ping trang trực tiếp với CLI Agent (Default: Tắt).
             </div>
           </div>
-          <Toggle
-            checked={settings.chatEnabled ?? false}
-            onChange={(v) => commit({ chatEnabled: v })}
-          />
+          <Toggle checked={settings.chatEnabled ?? false} onChange={(v) => commit({ chatEnabled: v })} />
         </div>
 
-        {/* Test / Interactive Ping Section */}
         <div className="pt-2 border-t border-zinc-800/80 space-y-2">
           <div className="text-[10.5px] font-medium text-zinc-300">Test Execution & Ping Context</div>
           <div className="flex items-center gap-1.5">
@@ -318,7 +309,6 @@ function BehaviorSettings() {
             )}
           </div>
 
-          {/* Test Results Output Console */}
           {isRunningTest && (
             <div className="flex items-center gap-2 rounded bg-zinc-950 p-2 text-[10.5px] text-indigo-300 font-mono border border-indigo-900/40 animate-pulse">
               <div className="h-3 w-3 animate-spin rounded-full border border-indigo-400 border-t-transparent flex-none" />
@@ -346,7 +336,6 @@ function BehaviorSettings() {
         </div>
       </div>
 
-      {/* Recording Settings */}
       <div className="rounded-md border border-zinc-800 bg-[#16161a] p-3 space-y-3">
         <div className="font-medium text-zinc-200 text-[11.5px]">Recording</div>
         <label className="block">
@@ -417,19 +406,6 @@ export function SettingsTab({ daemonStatus, onRefresh }: SettingsTabProps) {
   const [pingState, setPingState] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const mcpConfig = JSON.stringify(
-    {
-      mcpServers: {
-        browsercontrol: {
-          command: "bun",
-          args: ["run", "app/server/src/daemon.ts"],
-        },
-      },
-    },
-    null,
-    2,
-  );
-
   async function handlePing() {
     setPinging(true);
     const start = performance.now();
@@ -446,21 +422,22 @@ export function SettingsTab({ daemonStatus, onRefresh }: SettingsTabProps) {
   }
 
   function handleCopy() {
-    void navigator.clipboard.writeText(mcpConfig);
+    void navigator.clipboard.writeText(MCP_CONFIG);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
 
   return (
     <div className="flex-1 overflow-y-auto p-3 space-y-3">
-      {/* Daemon Status Card */}
       <div className="rounded-md border border-zinc-800 bg-[#16161a] p-3 space-y-2.5">
         <div className="flex items-center justify-between">
           <div className="font-medium text-zinc-200 text-[11.5px]">Daemon Connection</div>
           <div className="flex items-center gap-1.5">
             <span
               className={`h-2 w-2 rounded-full ${
-                daemonStatus?.extensionConnected ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" : "bg-amber-400"
+                daemonStatus?.extensionConnected
+                  ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]"
+                  : "bg-amber-400"
               }`}
             />
             <span className="text-[10px] font-mono text-zinc-400">
@@ -503,7 +480,6 @@ export function SettingsTab({ daemonStatus, onRefresh }: SettingsTabProps) {
 
       <BehaviorSettings />
 
-      {/* MCP Client Config */}
       <div className="rounded-md border border-zinc-800 bg-[#16161a] p-3 space-y-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5 font-medium text-zinc-200 text-[11.5px]">
@@ -521,11 +497,10 @@ export function SettingsTab({ daemonStatus, onRefresh }: SettingsTabProps) {
         </div>
 
         <pre className="overflow-x-auto rounded bg-zinc-950 p-2 font-mono text-[10px] text-zinc-300 border border-zinc-800/80">
-          {mcpConfig}
+          {MCP_CONFIG}
         </pre>
       </div>
 
-      {/* System Diagnostics */}
       <div className="rounded-md border border-zinc-800 bg-[#16161a] p-3 space-y-2">
         <div className="font-medium text-zinc-200 text-[11.5px]">Extension Setup</div>
         <div className="space-y-1.5 text-[10.5px]">

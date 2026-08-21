@@ -2,35 +2,75 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    branches: [main, master]
+    paths-ignore:
+      - "**.md"
+      - "data/**"
+      - "skills/**"
   pull_request:
-    branches: [master]
+    branches: [main, master]
+    paths-ignore:
+      - "**.md"
+      - "data/**"
+      - "skills/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  check:
+  verify:
+    name: Fast Verification & Build
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+    timeout-minutes: 10
 
-      - uses: oven-sh/setup-bun@v2
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun runtime
+        uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
-      - name: Cache bun install
-        uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
-          restore-keys: ${{ runner.os }}-bun-
+      - name: Install workspace dependencies
+        run: bun install --frozen-lockfile
 
-      - run: bun install --frozen-lockfile
+      # ------------------------------------------------------------------------
+      # 1. Biome Lint & Format Check (Changed files only on PR, Full on push)
+      # ------------------------------------------------------------------------
+      - name: Biome Check (PR Diff)
+        if: github.event_name == 'pull_request'
+        run: |
+          bun x biome check \
+            --changed \
+            --since=origin/${{ github.base_ref }} \
+            --reporter=github
 
-      # Type-checks every workspace (app/extension, app/server,
-      # packages/shared) via Turborepo — see turbo.json and each
-      # workspace's own "check" script.
-      - run: bun run check
+      - name: Biome Check (Main Push)
+        if: github.event_name == 'push'
+        run: bun x biome check . --reporter=github
 
-      # Builds every workspace with a build step — currently just
-      # app/extension (WXT: bundles background/offscreen/sidepanel,
-      # generates manifest.json from wxt.config.ts + package.json).
-      - run: bun run build
+      # ------------------------------------------------------------------------
+      # 2. TypeScript Typecheck (Affected packages on PR, All on push)
+      # ------------------------------------------------------------------------
+      - name: Typecheck Affected Workspaces (PR Diff)
+        if: github.event_name == 'pull_request'
+        run: bun x turbo run check --filter=...[origin/${{ github.base_ref }}]
+
+      - name: Typecheck Workspaces (Main Push)
+        if: github.event_name == 'push'
+        run: bun run check
+
+      # ------------------------------------------------------------------------
+      # 3. Build Artifacts (Affected packages on PR, All on push)
+      # ------------------------------------------------------------------------
+      - name: Build Affected Packages (PR Diff)
+        if: github.event_name == 'pull_request'
+        run: bun x turbo run build --filter=...[origin/${{ github.base_ref }}]
+
+      - name: Build Packages (Main Push)
+        if: github.event_name == 'push'
+        run: bun run build

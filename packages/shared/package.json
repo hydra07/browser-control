@@ -1,12 +1,12 @@
 {
-  "name": "@browsercontrol/shared",
-  "version": "0.0.0",
-  "private": true,
-  "types": "src/protocol.ts",
-  "scripts": {
-    "check": "tsc --noEmit"
-  },
-  "devDependencies": {
-    "typescript": "^5.4.5"
-  }
+    "name": "@browsercontrol/shared",
+    "version": "0.0.0",
+    "private": true,
+    "types": "src/protocol.ts",
+    "scripts": {
+        "check": "tsc --noEmit"
+    },
+    "devDependencies": {
+        "typescript": "^5.4.5"
+    }
 }

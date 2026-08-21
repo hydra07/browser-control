@@ -1,5 +1,7 @@
-// HTTP client for the daemon's REST endpoints (src/daemon.ts).
-// Used by the side panel React UI to list/run saved flows and check status.
+/** HTTP client for the daemon REST endpoints (src/daemon.ts). */
+import type { FlowStep } from "@browsercontrol/shared";
+
+export type { FlowStep };
 
 const DAEMON_PORT = 8765;
 const DAEMON_URL = `http://127.0.0.1:${DAEMON_PORT}`;
@@ -12,24 +14,6 @@ export interface FlowMeta {
   stepCount: number;
   createdAt: number;
   updatedAt: number;
-}
-
-export interface FlowStep {
-  action: "click" | "type" | "press_key" | "wait_for" | "assert_text" | "scroll" | "drag";
-  selector?: string;
-  role?: string;
-  name?: string;
-  text?: string;
-  key?: string;
-  contains?: string;
-  deltaX?: number;
-  deltaY?: number;
-  fromX?: number;
-  fromY?: number;
-  toX?: number;
-  toY?: number;
-  timeoutMs?: number;
-  confirmRisky?: boolean;
 }
 
 export interface FlowFull extends FlowMeta {
@@ -98,9 +82,7 @@ export async function runFlow(id: string): Promise<FlowRunResult> {
   });
   const data = (await res.json()) as Record<string, unknown>;
   if (typeof data.success !== "boolean") {
-    throw new Error(
-      typeof data.error === "string" ? data.error : `Run failed (HTTP ${res.status})`,
-    );
+    throw new Error(typeof data.error === "string" ? data.error : `Run failed (HTTP ${res.status})`);
   }
   return data as unknown as FlowRunResult;
 }
@@ -262,20 +244,28 @@ export async function streamCliAgent(
       if (!line.startsWith("data: ")) continue;
       try {
         const payload = JSON.parse(line.slice(6));
-        if (payload.type === "start" && callbacks.onStart) {
-          callbacks.onStart(payload.commandUsed);
-        } else if (payload.type === "chunk" && callbacks.onChunk) {
-          callbacks.onChunk(payload.text);
-        } else if (payload.type === "tool_use" && callbacks.onToolUse) {
-          callbacks.onToolUse(payload.name);
-        } else if (payload.type === "tool_result" && callbacks.onToolResult) {
-          callbacks.onToolResult(payload.name, Boolean(payload.isError));
-        } else if (payload.type === "session" && payload.sessionId && callbacks.onSession) {
-          callbacks.onSession(payload.sessionId);
-        } else if (payload.type === "done" && callbacks.onDone) {
-          callbacks.onDone(payload.durationMs);
-        } else if (payload.type === "error" && callbacks.onError) {
-          callbacks.onError(payload.error);
+        switch (payload.type) {
+          case "start":
+            callbacks.onStart?.(payload.commandUsed);
+            break;
+          case "chunk":
+            callbacks.onChunk?.(payload.text);
+            break;
+          case "tool_use":
+            callbacks.onToolUse?.(payload.name);
+            break;
+          case "tool_result":
+            callbacks.onToolResult?.(payload.name, Boolean(payload.isError));
+            break;
+          case "session":
+            if (payload.sessionId) callbacks.onSession?.(payload.sessionId);
+            break;
+          case "done":
+            callbacks.onDone?.(payload.durationMs);
+            break;
+          case "error":
+            callbacks.onError?.(payload.error);
+            break;
         }
       } catch {}
     }
