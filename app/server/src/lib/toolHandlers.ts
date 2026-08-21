@@ -232,8 +232,40 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
         case "network_clear":
           result = await executeCommand("network_clear", { tabId: args?.tabId });
           break;
+        case "peek_screen": {
+          const peek = await executeCommand("peek_screen", {
+            screenshot: args?.screenshot,
+            maxChars: args?.maxChars,
+            tabId: args?.tabId,
+          });
+          if (peek?.error) {
+            return {
+              content: [{ type: "text", text: `Error: ${peek.error}${peek.hint ? ` (${peek.hint})` : ""}` }],
+              isError: true,
+            };
+          }
+          let shotFilePath: string | undefined;
+          if (peek?.screenshotBase64) {
+            try {
+              shotFilePath = saveScreenshotToFile(peek.screenshotBase64 as string, "jpeg");
+            } catch {}
+          }
+          const isWorkspace = peek?.isWorkspaceTab ? "🤖 AI Workspace" : "Personal / Non-Workspace Tab (Read-Only)";
+          let details = `[PEEK ACTIVE SCREEN]\nURL: ${peek?.url}\nTitle: ${peek?.title}\nTab ID: ${peek?.tabId}\nScope: ${isWorkspace}\nPermissions: ${peek?.permissions}`;
+          if (peek?.selectedText) details += `\n\n[SELECTION]\n"${peek.selectedText}"`;
+          if (peek?.h1) details += `\n\nHeading: ${peek.h1}`;
+          if (peek?.text) details += `\n\nPage Text Content (${peek?.textLength} chars):\n${peek.text}`;
+          if (shotFilePath) details += `\n\n[SCREENSHOT] saved to: ${shotFilePath}`;
+
+          return {
+            content: [
+              ...(INLINE_IMAGES && peek?.screenshotBase64 ? [{ type: "image" as const, data: peek.screenshotBase64 as string, mimeType: "image/jpeg" as const }] : []),
+              { type: "text", text: details },
+            ],
+          };
+        }
         default:
-          return unknownAction(name, action, ["snapshot", "find", "reading_mode", "inspect_element", "screenshot", "select_content", "network_requests", "network_clear"]);
+          return unknownAction(name, action, ["snapshot", "find", "reading_mode", "inspect_element", "screenshot", "select_content", "network_requests", "network_clear", "peek_screen"]);
       } break;
 
       case "browser_session": switch (action) {
@@ -251,7 +283,7 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
           break;
         }
         case "list_tabs":
-          result = await executeCommand("list_tabs");
+          result = await executeCommand("list_tabs", { scope: args?.scope });
           break;
         case "switch_tab":
           result = await executeCommand("switch_tab", { tabId: args?.tabId });
@@ -345,11 +377,11 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
           const formattedBlocks = successfulItems.map((item) => {
             const metaLines = [
               `# [${item.title || item.url}](${item.url})`,
-              `> 🌐 **Source URL**: \`${item.url}\``,
-              `> ⏱️ **Crawled At**: \`${new Date().toISOString()}\` | **Latency**: \`${item.fetchDurationMs ?? 0}ms\` | **Reading Time**: \`${item.readingTime || 'N/A'}\``,
-              ...(item.byline ? [`> 👤 **Author**: ${item.byline}`] : []),
-              ...(item.publishedTime ? [`> 📅 **Published**: ${item.publishedTime}`] : []),
-              ...(item.description ? [`> 💬 **Summary**: ${item.description}`] : []),
+              `> **Source URL**: \`${item.url}\``,
+              `> **Crawled At**: \`${new Date().toISOString()}\` | **Latency**: \`${item.fetchDurationMs ?? 0}ms\` | **Reading Time**: \`${item.readingTime || 'N/A'}\``,
+              ...(item.byline ? [`> **Author**: ${item.byline}`] : []),
+              ...(item.publishedTime ? [`> **Published**: ${item.publishedTime}`] : []),
+              ...(item.description ? [`> **Summary**: ${item.description}`] : []),
               "",
               item.markdown,
             ];
@@ -372,17 +404,17 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
           }
 
           const summaryLines = [
-            `⚡ Batch crawled ${crawl?.totalProcessed ?? items.length} URL(s) in ${crawl?.durationMs}ms: ${crawl?.successful} succeeded, ${crawl?.failed} failed${crawl?.duplicatesSkipped ? ` (${crawl.duplicatesSkipped} duplicates skipped)` : ''}.${fileReport}`,
-            `📊 Throughput: ${crawl?.throughputPagesPerSec ?? 0} pages/s | Avg Latency: ${crawl?.avgFetchLatencyMs ?? 0}ms/page | Discovered Outlinks: ${(crawl?.discoveredOutlinks as string[])?.length ?? 0}`,
+            `[BATCH] Crawled ${crawl?.totalProcessed ?? items.length} URL(s) in ${crawl?.durationMs}ms: ${crawl?.successful} succeeded, ${crawl?.failed} failed${crawl?.duplicatesSkipped ? ` (${crawl.duplicatesSkipped} duplicates skipped)` : ''}.${fileReport}`,
+            `[STATS] Throughput: ${crawl?.throughputPagesPerSec ?? 0} pages/s | Avg Latency: ${crawl?.avgFetchLatencyMs ?? 0}ms/page | Discovered Outlinks: ${(crawl?.discoveredOutlinks as string[])?.length ?? 0}`,
             "",
             "### Crawl Results Summary:",
             ...items.map((item, idx) => {
               if (item.status === "success") {
-                return `${idx + 1}. ✅ [${item.title || item.url}](${item.url}) — ${item.fetchDurationMs ? `${item.fetchDurationMs}ms | ` : ''}${item.readingTime || `${item.length} chars`}`;
+                return `${idx + 1}. [OK] [${item.title || item.url}](${item.url}) — ${item.fetchDurationMs ? `${item.fetchDurationMs}ms | ` : ''}${item.readingTime || `${item.length} chars`}`;
               } else if (item.status === "skipped_duplicate") {
-                return `${idx + 1}. ⏭️ ${item.url} (skipped duplicate)`;
+                return `${idx + 1}. [SKIP] ${item.url} (skipped duplicate)`;
               } else {
-                return `${idx + 1}. ❌ ${item.url} — ${item.error || "Failed"}`;
+                return `${idx + 1}. [FAIL] ${item.url} — ${item.error || "Failed"}`;
               }
             }),
           ];

@@ -1,18 +1,21 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { getStatus, listFlows, type DaemonStatus, type FlowMeta } from "./lib/api";
+import { getSettings, type Settings } from "../../lib/settings.js";
 import { FlowList } from "./components/FlowList";
 import { SettingsTab } from "./components/SettingsTab";
 import { BenchmarkTab } from "./components/BenchmarkTab";
+import { ChatTab } from "./components/ChatTab";
 import {
   WorkflowIcon,
   SettingsIcon,
   RefreshIcon,
   ChartBarIcon,
+  ChatIcon,
   AppLogo,
   CrossIcon,
 } from "./components/Icons";
 
-type TabKey = "flows" | "benchmark" | "settings";
+type TabKey = "flows" | "benchmark" | "chat" | "settings";
 
 type LoadState =
   | { status: "loading" }
@@ -25,13 +28,19 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabKey>("flows");
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus | null>(null);
+  const [settings, setSettings] = useState<Settings | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [flows, status] = await Promise.all([listFlows(), getStatus()]);
+      const [flows, status, currentSettings] = await Promise.all([
+        listFlows(),
+        getStatus(),
+        getSettings(),
+      ]);
       setState({ status: "loaded", flows });
       setDaemonStatus(status);
+      setSettings(currentSettings);
     } catch (e) {
       setState({
         status: "unreachable",
@@ -47,6 +56,15 @@ export default function App() {
     return () => clearInterval(timer);
   }, [load]);
 
+  const isChatEnabled = settings?.chatEnabled ?? false;
+
+  // If chat is turned off while on chat tab, fall back to flows
+  useEffect(() => {
+    if (!isChatEnabled && activeTab === "chat") {
+      setActiveTab("flows");
+    }
+  }, [isChatEnabled, activeTab]);
+
   // Global Keyboard Navigation Shortcuts inside Sidepanel
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -58,7 +76,9 @@ export default function App() {
         setActiveTab("flows");
       } else if (e.key === "2") {
         setActiveTab("benchmark");
-      } else if (e.key === "3") {
+      } else if (e.key === "3" && isChatEnabled) {
+        setActiveTab("chat");
+      } else if (e.key === "4" || (e.key === "3" && !isChatEnabled)) {
         setActiveTab("settings");
       } else if (e.key === "r" || e.key === "R") {
         void handleRefresh();
@@ -69,7 +89,7 @@ export default function App() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [isChatEnabled]);
 
   async function handleRefresh() {
     setIsRefreshing(true);
@@ -122,7 +142,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setActiveTab("benchmark")}
-              title="Token Analytics & Telemetry [2]"
+              title="Token Telemetry & Metrics [2]"
               className={`group relative flex h-8 w-8 items-center justify-center rounded-lg transition-all duration-200 active:scale-95 ${
                 activeTab === "benchmark"
                   ? "bg-zinc-800 text-white shadow-sm ring-1 ring-zinc-700/60"
@@ -135,11 +155,30 @@ export default function App() {
               <ChartBarIcon className="w-4 h-4 transition-transform group-hover:scale-110" />
             </button>
 
+            {/* Chat Tab Button (Controlled by Settings Toggle) */}
+            {isChatEnabled && (
+              <button
+                type="button"
+                onClick={() => setActiveTab("chat")}
+                title="CLI Agent Chat [3]"
+                className={`group relative flex h-8 w-8 items-center justify-center rounded-lg transition-all duration-200 active:scale-95 ${
+                  activeTab === "chat"
+                    ? "bg-zinc-800 text-white shadow-sm ring-1 ring-zinc-700/60"
+                    : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
+                }`}
+              >
+                {activeTab === "chat" && (
+                  <span className="absolute -left-1 top-2 bottom-2 w-[2.5px] bg-indigo-400 rounded-r shadow-[0_0_6px_rgba(129,140,248,0.7)]" />
+                )}
+                <ChatIcon className="w-4 h-4 transition-transform group-hover:scale-110" />
+              </button>
+            )}
+
             {/* Settings Tab Button */}
             <button
               type="button"
               onClick={() => setActiveTab("settings")}
-              title="Settings & Diagnostics [3]"
+              title="Settings & Diagnostics"
               className={`group relative flex h-8 w-8 items-center justify-center rounded-lg transition-all duration-200 active:scale-95 ${
                 activeTab === "settings"
                   ? "bg-zinc-800 text-white shadow-sm ring-1 ring-zinc-700/60"
@@ -191,7 +230,9 @@ export default function App() {
                 ? "Automated Flows"
                 : activeTab === "benchmark"
                   ? "Token Telemetry & Metrics"
-                  : "Settings & Setup"}
+                  : activeTab === "chat"
+                    ? "CLI Agent Chat"
+                    : "Settings & Setup"}
             </h2>
             {activeTab === "flows" && flowCount > 0 && (
               <span className="rounded-full bg-zinc-800/80 px-2 py-0.2 font-mono text-[10px] text-zinc-400 border border-zinc-700/40">
@@ -267,6 +308,8 @@ export default function App() {
             </>
           ) : activeTab === "benchmark" ? (
             <BenchmarkTab onRefresh={() => void handleRefresh()} />
+          ) : activeTab === "chat" && isChatEnabled ? (
+            <ChatTab />
           ) : (
             <SettingsTab daemonStatus={daemonStatus} onRefresh={() => void handleRefresh()} />
           )}

@@ -228,7 +228,7 @@ export function BenchmarkTab({ onRefresh }: BenchmarkTabProps) {
           {/* Input (Prompt / Command Args) */}
           <div className="rounded bg-zinc-900/80 p-2 border border-zinc-800/60">
             <div className="flex items-center justify-between text-zinc-400 mb-1">
-              <span className="text-[10px] text-sky-400 font-medium">📥 Input (Prompt / Args)</span>
+              <span className="text-[10px] text-sky-400 font-medium">Input (Prompt / Args)</span>
               <span className="font-mono text-[10px] text-zinc-400">{totalInPct}%</span>
             </div>
             <div className="font-mono text-sm font-bold text-zinc-100">
@@ -242,7 +242,7 @@ export function BenchmarkTab({ onRefresh }: BenchmarkTabProps) {
           {/* Output (Tool Return Payload) */}
           <div className="rounded bg-zinc-900/80 p-2 border border-zinc-800/60">
             <div className="flex items-center justify-between text-zinc-400 mb-1">
-              <span className="text-[10px] text-indigo-400 font-medium">📤 Output (Tool Result)</span>
+              <span className="text-[10px] text-indigo-400 font-medium">Output (Tool Result)</span>
               <span className="font-mono text-[10px] text-zinc-400">{totalOutPct}%</span>
             </div>
             <div className="font-mono text-sm font-bold text-zinc-100">
@@ -340,8 +340,8 @@ export function BenchmarkTab({ onRefresh }: BenchmarkTabProps) {
 
                 <div className="mt-1.5 flex items-center justify-between text-[9px] font-mono text-zinc-500">
                   <div className="flex items-center gap-2">
-                    <span className="text-sky-400/80">📥 {formatTokens(cmd.inTokens)} in</span>
-                    <span className="text-indigo-400/80">📤 {formatTokens(cmd.outTokens)} out</span>
+                    <span className="text-sky-400/80">{formatTokens(cmd.inTokens)} in</span>
+                    <span className="text-indigo-400/80">{formatTokens(cmd.outTokens)} out</span>
                   </div>
                   <span>avg: ~{cmd.avgTokens} tok · {cmd.avgDurationMs}ms</span>
                 </div>

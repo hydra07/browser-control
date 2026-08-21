@@ -246,8 +246,8 @@ export function getJobStatusText(jobId: string): string {
         for (const t of newlyDone) {
             lines.push(
                 t.status === "success"
-                    ? `✅ ${t.title || t.url} — ${t.chars ?? 0} chars, saved as docs block${(t.blockIds?.length ?? 0) > 1 ? "s" : ""} [${(t.blockIds ?? []).join(", ")}] (browser_knowledge({action:"query_docs"}))`
-                    : `❌ ${t.url} — ${t.error}`,
+                    ? `[OK] ${t.title || t.url} — ${t.chars ?? 0} chars, saved as docs block${(t.blockIds?.length ?? 0) > 1 ? "s" : ""} [${(t.blockIds ?? []).join(", ")}] (browser_knowledge({action:"query_docs"}))`
+                    : `[FAIL] ${t.url} — ${t.error}`,
             );
         }
     } else {

@@ -1,6 +1,13 @@
 import React, { useEffect, useRef, useState } from "react";
-import type { DaemonStatus } from "../lib/api";
-import { TerminalIcon, CopyIcon, RefreshIcon } from "./Icons";
+import {
+  getCliAgentStatus,
+  queryCliAgent,
+  abortCliAgent,
+  type DaemonStatus,
+  type CliAgentStatusResult,
+  type CliAgentQueryResult,
+} from "../lib/api";
+import { TerminalIcon, CopyIcon, RefreshIcon, SparklesIcon, PinIcon, ChatIcon, CheckIcon, ZapIcon } from "./Icons";
 import {
   DEFAULT_SETTINGS,
   TAB_GROUP_COLORS,
@@ -15,8 +22,6 @@ interface SettingsTabProps {
   onRefresh: () => void;
 }
 
-// Matches chrome.tabGroups' actual on-screen colors closely enough to
-// preview a choice before saving it.
 const COLOR_SWATCH: Record<TabGroupColor, string> = {
   grey: "#9aa0a6",
   blue: "#8ab4f8",
@@ -52,18 +57,24 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 const inputClass =
   "mt-1.5 w-full rounded bg-zinc-900 border border-zinc-800 px-2 py-1.5 text-[11px] font-mono text-zinc-200 outline-none focus:border-zinc-600 transition";
 
-// Extension behavior settings (chrome.storage-backed, lib/settings.ts) —
-// separate card group from the connection diagnostics above, but same
-// container styling so the panel reads as one settings screen, not two
-// bolted-together ones.
+// Extension behavior settings & Experimental CLI Agent Setup Box
 function BehaviorSettings() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [showSaved, setShowSaved] = useState(false);
+  const [agentStatus, setAgentStatus] = useState<CliAgentStatusResult | null>(null);
+  
+  // CLI Test Run State
+  const [testPrompt, setTestPrompt] = useState("Tóm tắt ngắn gọn các ý chính của trang web này giúp tôi.");
+  const [isRunningTest, setIsRunningTest] = useState(false);
+  const [testResult, setTestResult] = useState<CliAgentQueryResult | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
+
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     void getSettings().then(setSettings);
+    void getCliAgentStatus().then(setAgentStatus).catch(() => null);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
       if (savedFlashTimer.current) clearTimeout(savedFlashTimer.current);
@@ -86,19 +97,67 @@ function BehaviorSettings() {
     else run();
   }
 
+  async function handleRunCliAgentTest() {
+    if (!testPrompt.trim()) return;
+    setIsRunningTest(true);
+    setTestResult(null);
+    setTestError(null);
+
+    try {
+      // Ping active tab context
+      let url = "";
+      let title = "";
+      let selectionText = "";
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab?.id && tab.url) {
+          url = tab.url;
+          title = tab.title || "";
+          const results = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: () => window.getSelection()?.toString() || "",
+          });
+          selectionText = results?.[0]?.result?.trim() || "";
+        }
+      } catch {}
+
+      const res = await queryCliAgent({
+        prompt: testPrompt.trim(),
+        url: url || undefined,
+        title: title || undefined,
+        selectionText: selectionText || undefined,
+        customCommand: settings?.cliAgentCommand,
+      });
+
+      setTestResult(res);
+    } catch (e) {
+      setTestError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setIsRunningTest(false);
+    }
+  }
+
+  async function handleAbortTest() {
+    try {
+      await abortCliAgent();
+      setIsRunningTest(false);
+    } catch {}
+  }
+
   if (!settings) return null;
 
   return (
     <>
+      {/* Tab Group Settings */}
       <div className="rounded-md border border-zinc-800 bg-[#16161a] p-3 space-y-3">
         <div className="flex items-center justify-between">
           <div className="font-medium text-zinc-200 text-[11.5px]">Tab group</div>
           <span
-            className={`text-[10px] font-mono text-emerald-400 transition-opacity duration-300 ${
+            className={`flex items-center gap-1 text-[10px] font-mono text-emerald-400 transition-opacity duration-300 ${
               showSaved ? "opacity-100" : "opacity-0"
             }`}
           >
-            ✓ saved
+            <CheckIcon className="w-2.5 h-2.5" /> saved
           </span>
         </div>
 
@@ -131,6 +190,7 @@ function BehaviorSettings() {
         </div>
       </div>
 
+      {/* Animation Setting */}
       <div className="rounded-md border border-zinc-800 bg-[#16161a] p-3">
         <div className="flex items-center justify-between gap-3">
           <div>
@@ -146,6 +206,147 @@ function BehaviorSettings() {
         </div>
       </div>
 
+      {/* Unified User-Configurable CLI Agent Experiment Box */}
+      <div className="rounded-md border border-indigo-900/40 bg-[#13141c] p-3 space-y-3 shadow-sm">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5 font-semibold text-zinc-100 text-[11.5px]">
+            <SparklesIcon className="w-3.5 h-3.5 text-indigo-400" />
+            <span>CLI Agents Execution (Experiment)</span>
+          </div>
+          <span className="rounded bg-indigo-950/80 px-1.5 py-0.2 font-mono text-[9px] text-indigo-300 border border-indigo-800/60">
+            LABS
+          </span>
+        </div>
+
+        <p className="text-[10.5px] text-zinc-400 leading-relaxed">
+          Tùy chỉnh lệnh CLI Agent (Claude Code / Antigravity CLI) chạy trong sandbox để tận dụng gói subscription của bạn.
+        </p>
+
+        {/* Command Template Input */}
+        <label className="block">
+          <div className="flex items-center justify-between text-[10.5px] text-zinc-400">
+            <span>CLI Command Template</span>
+            <span className="text-[9.5px] font-mono text-zinc-500">Customizable</span>
+          </div>
+          <input
+            type="text"
+            value={settings.cliAgentCommand ?? "claude --print"}
+            onChange={(e) => commit({ cliAgentCommand: e.target.value }, { debounce: true })}
+            placeholder="e.g. claude --print or agy -p"
+            className={inputClass}
+          />
+          <p className="mt-1 text-[9.5px] text-zinc-500 leading-relaxed">
+            Base binary + flags only. When this starts with `claude`, streaming, session resume, and
+            read-only page-inspection tool access are added automatically.
+          </p>
+        </label>
+
+        {/* Quick Presets */}
+        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+          <span className="text-[10px] text-zinc-500">Presets:</span>
+          <button
+            type="button"
+            onClick={() => commit({ cliAgentCommand: "claude --print" })}
+            className="rounded bg-zinc-900 hover:bg-zinc-800 px-2 py-0.5 text-[10px] font-mono text-zinc-300 border border-zinc-800 transition"
+          >
+            Claude Code
+          </button>
+          <button
+            type="button"
+            onClick={() => commit({ cliAgentCommand: "agy -p" })}
+            className="rounded bg-zinc-900 hover:bg-zinc-800 px-2 py-0.5 text-[10px] font-mono text-zinc-300 border border-zinc-800 transition"
+          >
+            Antigravity
+          </button>
+          <button
+            type="button"
+            onClick={() => commit({ cliAgentCommand: "agy --effort low -p" })}
+            className="flex items-center gap-1 rounded bg-zinc-900 hover:bg-zinc-800 px-2 py-0.5 text-[10px] font-mono text-emerald-400 border border-emerald-950 transition"
+            title="Fast response mode with reduced reasoning latency"
+          >
+            <ZapIcon className="w-2.5 h-2.5" /> agy (Fast)
+          </button>
+        </div>
+
+        {/* Toggle Enable Chat Tab */}
+        <div className="flex items-center justify-between gap-3 pt-2 border-t border-zinc-800/80">
+          <div>
+            <div className="font-medium text-zinc-200 text-[11px] flex items-center gap-1.5">
+              <ChatIcon className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Hiển thị Tab Chat trên thanh điều hướng</span>
+            </div>
+            <div className="mt-0.5 text-[10px] leading-snug text-zinc-400">
+              Bật tab Chat để trò chuyện, hỏi đáp và ping trang trực tiếp với CLI Agent (Default: Tắt).
+            </div>
+          </div>
+          <Toggle
+            checked={settings.chatEnabled ?? false}
+            onChange={(v) => commit({ chatEnabled: v })}
+          />
+        </div>
+
+        {/* Test / Interactive Ping Section */}
+        <div className="pt-2 border-t border-zinc-800/80 space-y-2">
+          <div className="text-[10.5px] font-medium text-zinc-300">Test Execution & Ping Context</div>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="text"
+              value={testPrompt}
+              onChange={(e) => setTestPrompt(e.target.value)}
+              placeholder="Prompt for active page..."
+              disabled={isRunningTest}
+              className="flex-1 rounded bg-zinc-900 border border-zinc-800 px-2 py-1 text-[11px] text-zinc-200 outline-none focus:border-indigo-500/50"
+            />
+            {isRunningTest ? (
+              <button
+                type="button"
+                onClick={handleAbortTest}
+                className="rounded bg-rose-950/80 hover:bg-rose-900 border border-rose-800/60 px-2.5 py-1 text-[11px] font-medium text-rose-300 transition"
+              >
+                Stop
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleRunCliAgentTest}
+                disabled={!testPrompt.trim()}
+                className="flex items-center gap-1 rounded bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 px-2.5 py-1 text-[11px] font-medium text-white shadow-sm transition active:scale-95"
+              >
+                <PinIcon className="w-3 h-3" />
+                <span>Ping & Run</span>
+              </button>
+            )}
+          </div>
+
+          {/* Test Results Output Console */}
+          {isRunningTest && (
+            <div className="flex items-center gap-2 rounded bg-zinc-950 p-2 text-[10.5px] text-indigo-300 font-mono border border-indigo-900/40 animate-pulse">
+              <div className="h-3 w-3 animate-spin rounded-full border border-indigo-400 border-t-transparent flex-none" />
+              <span>Executing CLI Agent in sandbox...</span>
+            </div>
+          )}
+
+          {testResult && (
+            <div className="rounded bg-zinc-950 p-2.5 border border-zinc-800 text-[10.5px] font-mono space-y-1.5 animate-fade-in">
+              <div className="flex items-center justify-between text-zinc-500 text-[9.5px]">
+                <span className="truncate max-w-[200px]">Cmd: {testResult.commandUsed}</span>
+                <span className="text-emerald-400">{testResult.durationMs}ms</span>
+              </div>
+              <div className="text-zinc-200 whitespace-pre-wrap leading-relaxed select-text font-sans text-[11px]">
+                {testResult.content}
+              </div>
+            </div>
+          )}
+
+          {testError && (
+            <div className="rounded bg-rose-950/40 p-2 border border-rose-900/50 text-[10.5px] font-mono text-rose-300">
+              Error: {testError}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Recording Settings */}
       <div className="rounded-md border border-zinc-800 bg-[#16161a] p-3 space-y-3">
         <div className="font-medium text-zinc-200 text-[11.5px]">Recording</div>
         <label className="block">
@@ -204,7 +405,7 @@ function BehaviorSettings() {
           }}
           className="text-[10.5px] text-zinc-500 hover:text-zinc-300"
         >
-          Reset all behavior settings to defaults
+          Reset to defaults
         </button>
       </div>
     </>
@@ -212,16 +413,16 @@ function BehaviorSettings() {
 }
 
 export function SettingsTab({ daemonStatus, onRefresh }: SettingsTabProps) {
-  const [copied, setCopied] = useState(false);
-  const [pingState, setPingState] = useState<string | null>(null);
   const [pinging, setPinging] = useState(false);
+  const [pingState, setPingState] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const mcpConfig = JSON.stringify(
     {
       mcpServers: {
         browsercontrol: {
           command: "bun",
-          args: ["run", "/absolute/path/to/browsercontrol/app/server/src/daemon.ts"],
+          args: ["run", "app/server/src/daemon.ts"],
         },
       },
     },
@@ -231,18 +432,14 @@ export function SettingsTab({ daemonStatus, onRefresh }: SettingsTabProps) {
 
   async function handlePing() {
     setPinging(true);
-    setPingState(null);
-    const t0 = performance.now();
+    const start = performance.now();
     try {
       const res = await fetch("http://127.0.0.1:8765/status");
-      const dt = Math.round(performance.now() - t0);
-      if (res.ok) {
-        setPingState(`${dt}ms`);
-      } else {
-        setPingState(`HTTP ${res.status}`);
-      }
+      const ms = Math.round(performance.now() - start);
+      if (res.ok) setPingState(`${ms}ms (OK)`);
+      else setPingState(`HTTP ${res.status}`);
     } catch {
-      setPingState("ERR");
+      setPingState("Failed (Offline)");
     } finally {
       setPinging(false);
     }
@@ -254,34 +451,28 @@ export function SettingsTab({ daemonStatus, onRefresh }: SettingsTabProps) {
     setTimeout(() => setCopied(false), 2000);
   }
 
-  const isConnected = daemonStatus?.extensionConnected ?? false;
-
   return (
-    <div className="flex-1 space-y-3.5 overflow-y-auto p-3 text-[11px]">
+    <div className="flex-1 overflow-y-auto p-3 space-y-3">
       {/* Daemon Status Card */}
       <div className="rounded-md border border-zinc-800 bg-[#16161a] p-3 space-y-2.5">
         <div className="flex items-center justify-between">
           <div className="font-medium text-zinc-200 text-[11.5px]">Daemon Connection</div>
-          <span
-            className={`inline-flex items-center gap-1 font-mono text-[10px] px-1.5 py-0.2 rounded border ${
-              isConnected
-                ? "bg-emerald-950/50 text-emerald-400 border-emerald-900/60"
-                : "bg-amber-950/50 text-amber-300 border-amber-900/60"
-            }`}
-          >
+          <div className="flex items-center gap-1.5">
             <span
-              className={`h-1.5 w-1.5 rounded-full ${
-                isConnected ? "bg-emerald-400" : "bg-amber-400"
+              className={`h-2 w-2 rounded-full ${
+                daemonStatus?.extensionConnected ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" : "bg-amber-400"
               }`}
             />
-            {isConnected ? "WS PAIRED" : "DISCONNECTED"}
-          </span>
+            <span className="text-[10px] font-mono text-zinc-400">
+              {daemonStatus?.extensionConnected ? "PAIRED" : "UNPAIRED"}
+            </span>
+          </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 text-[10.5px] font-mono">
+        <div className="grid grid-cols-2 gap-2 font-mono text-[10.5px]">
           <div className="rounded bg-zinc-900 p-2 border border-zinc-800">
-            <div className="text-zinc-500 text-[10px]">HOST</div>
-            <div className="mt-0.5 text-zinc-300">127.0.0.1:8765</div>
+            <div className="text-zinc-500 text-[10px]">MCP PROTOCOL</div>
+            <div className="mt-0.5 text-zinc-300">stdio (Active)</div>
           </div>
           <div className="rounded bg-zinc-900 p-2 border border-zinc-800">
             <div className="text-zinc-500 text-[10px]">DAEMON VERSION</div>

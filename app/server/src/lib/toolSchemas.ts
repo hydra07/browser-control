@@ -337,9 +337,10 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
   },
   {
     name: "browser_inspect",
-    description: `Read/observe the current page without acting on it. Set \`action\` to one of: snapshot, find, reading_mode, inspect_element, screenshot, select_content, network_requests, network_clear.
+    description: `Read/observe the current page without acting on it. Set \`action\` to one of: snapshot, find, reading_mode, inspect_element, screenshot, select_content, network_requests, network_clear, peek_screen.
 
 - snapshot: the default way to see what's on the page before clicking/typing. Plain call: a flat list, {i,r,n,v?} per entry (i=node id for browser_act/inspect_element, r=role, n=accessible name, v=current value if any). Set \`compact:true\` to get a dense single-line format saving ~75% token whitespace. \`visual:true\` also returns a screenshot with a numbered box over every interactive element (same ids) — use before clicking anything you're not 100% sure about (custom dropdowns, icon-only buttons, ambiguous labels). \`selector:"..."\` scopes to one container (a form/panel/row) and returns a NESTED tree instead of a flat list — a field's label ends up as its sibling in the same \`children\` array; capped at 150 elements, narrow the selector if truncated. If both are set, visual wins (selector-scoped + visual together isn't supported).
+- peek_screen: safely observe and read the user's currently active screen/tab (even if outside the AI Workspace) in pure READ-ONLY mode — captures URL, title, selected text, visible page text, and optional visual screenshot for vision models. Strictly read-only: does not click, mutate, or navigate the tab. Use when the user asks you to look at their screen, summarize the page they are viewing, or gather context from open tabs.
 - find: Ctrl+F-style — jump straight to elements matching text/CSS selector/XPath (\`query\`) instead of scanning a full snapshot. Much cheaper than snapshot when you already know what you're looking for on a large/data-heavy page. Returns the same {i,r,n} shape as snapshot, usable directly with browser_act. Flashes a highlight on the first match.
 - reading_mode: clean article/main-content text (title + body, chrome like nav/ads/sidebars stripped) — like a browser's reader view. Far cheaper than snapshot when the goal is READING content, not acting on interactive elements. Says so and returns nothing useful on non-article pages (an app UI, a form, a dashboard) — fall back to snapshot there.
 - inspect_element: deep-dive on ONE element by nodeId — outerHTML, which CSS rule/selector set its computed styles, key computed layout properties, and any event listeners attached (type only, not handler source). Expensive relative to snapshot — use only for the specific element you need to explain, not in a loop.
@@ -350,18 +351,19 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
     inputSchema: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["snapshot", "find", "reading_mode", "inspect_element", "screenshot", "select_content", "network_requests", "network_clear"] },
+        action: { type: "string", enum: ["snapshot", "find", "reading_mode", "inspect_element", "screenshot", "select_content", "network_requests", "network_clear", "peek_screen"] },
         compact: { type: "boolean", description: "(action: 'snapshot') Return dense 1-line-per-node text format instead of multi-line JSON, saving ~75% tokens. Recommended for large DOMs." },
         visual: { type: "boolean", description: "(action: 'snapshot') Also return an annotated screenshot with numbered boxes over interactive elements." },
         selector: { type: "string", description: "CSS selector — scopes into a nested tree (action: 'snapshot'), or the elements to extract (action: 'select_content')." },
         query: { type: "string", description: "Text, CSS selector, or XPath to search for (action: 'find')." },
         limit: { type: "number", description: "Max matches to return, default 20 (action: 'find')." },
         nodeId: { type: "number", description: "Element id, from a prior snapshot/find (action: 'inspect_element' or 'select_content')." },
-        maxChars: { type: "number", description: "Cap on returned/extracted text length (action: 'reading_mode', default 20000; or 'select_content', default 20000 per call)." },
+        maxChars: { type: "number", description: "Cap on returned/extracted text length (action: 'reading_mode', default 20000; or 'select_content', default 20000 per call; or 'peek_screen', default 15000)." },
         maxMatches: { type: "number", description: "Max elements to extract when using selector, default 20 (action: 'select_content')." },
         fullPage: { type: "boolean", description: "Capture the full scrollable page instead of just the viewport (action: 'screenshot')." },
         format: { type: "string", enum: ["jpeg", "png"], description: "(action: 'screenshot') Leave unset (defaults to jpeg) — see the tool description for why png is almost never worth it." },
         quality: { type: "number", description: "JPEG quality 0-100, default 80 (action: 'screenshot')." },
+        screenshot: { type: "boolean", description: "(action: 'peek_screen') Also capture visual JPEG screenshot of the active screen for multimodal vision inspection." },
         resourceTypes: { type: "array", items: { type: "string" }, description: "(action: 'network_requests') CDP resource type names (XHR, Fetch, Document, Script, Stylesheet, Image, Font, Media, WebSocket, ...). Overrides the default filter." },
         filter: { type: "string", description: "(action: 'network_requests') Only include requests whose URL contains this substring." },
         requestId: { type: "string", description: "(action: 'network_requests') Get full detail for this one request instead of listing." },
@@ -375,7 +377,7 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
     description: `Manage tabs and the current daemon session — not page content. Set \`action\` to one of: navigate, list_tabs, switch_tab, close_tab, set_session_name, start_recording, stop_recording, get_metrics.
 
 - navigate: go to a URL. By default reuses whichever tab is currently active. Pass newTab:true to open this URL in a NEW tab instead, keeping the current one where it is — the response's \`tabId\` is then what you pass as \`tabId\` on later browser_act/browser_inspect calls to keep driving that specific tab. Pass an existing \`tabId\` to re-navigate that specific tab in place. If the response includes a skillHint field, a skill already exists for this domain (see browser_knowledge's list_skills/save_skill) — read it before exploratory work.
-- list_tabs: list tabs currently in the "🤖 AI Workspace" tab group — including tabs the USER dragged in themselves, not just ones you navigated to. Each entry has isNew:true if it wasn't there the last time you called this — the only notification channel for a tab the user handed you, since nothing can interrupt you mid-turn. Call at the start of a session, or whenever the user references a tab they already have open.
+- list_tabs: list open tabs in the browser. By default ('workspace') lists tabs currently in the "🤖 AI Workspace" tab group where AI has full interactive control. Set \`scope:'all'\` to list all browser tabs with their inWorkspace status and permissions ('control' vs 'read_only').
 - switch_tab: make an existing tab (from list_tabs) the active one for subsequent browser_act/browser_inspect calls that omit tabId, instead of navigating to the same URL fresh.
 - close_tab: close a tab by id (from navigate/list_tabs) — tidy up a tab opened with navigate({newTab:true}).
 - set_session_name: label this daemon session with a short human-readable name so \`mise run data:sessions\`/\`data:show\` can identify it later instead of just a timestamp. Not required — sessions auto-name from the hostnames visited; use this when that's not descriptive enough.
@@ -390,6 +392,7 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
         newTab: { type: "boolean", description: "Open in a new tab instead of reusing the current one (action: 'navigate'). Ignored if tabId is set." },
         tabId: { type: "number", description: "Target tab. For 'navigate': re-navigate this specific existing tab instead of the current/a new one. For 'switch_tab'/'close_tab': the tab to act on (required)." },
         name: { type: "string", description: "(action: 'set_session_name')" },
+        scope: { type: "string", enum: ["workspace", "all"], description: "(action: 'list_tabs') 'workspace' (default) lists only AI Workspace tabs; 'all' lists all open tabs across the browser." },
         allSessions: { type: "boolean", description: "(action: 'get_metrics') Include metrics across all sessions instead of just current session." },
       },
       required: ["action"],

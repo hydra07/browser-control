@@ -3,7 +3,7 @@
 // user drags tabs into it, the AI discovers them via list_tabs. Neither
 // needs a CDP session, and both must work before any navigate has happened.
 import { evalOnPage } from "./cdp.js";
-import { showPillCaption } from "./overlay.js";
+import { showPillCaption, SWITCH_TAB_ICON_SVG } from "./overlay.js";
 import { getSettings } from "./settings.js";
 
 // handleNavigate used to look up/create this group inline with its own
@@ -80,24 +80,52 @@ export function installTabGroupBadge(): void {
 
 export async function handleListTabsCommand(
     lastActiveTabId: number | null,
+    options: { scope?: "workspace" | "all" } = {},
 ): Promise<Record<string, unknown>> {
     const { tabGroupName } = await getSettings();
     const groups = await chrome.tabGroups.query({ title: tabGroupName });
-    if (groups.length === 0) return { tabs: [] };
-    const tabs = await chrome.tabs.query({ groupId: groups[0].id });
+    const workspaceGroupId = groups.length > 0 ? groups[0].id : null;
+
+    if (options.scope === "all") {
+        const allTabs = await chrome.tabs.query({});
+        const result = allTabs
+            .filter((t) => t.id != null)
+            .map((t) => {
+                const inWorkspace = workspaceGroupId != null && t.groupId === workspaceGroupId;
+                return {
+                    tabId: t.id!,
+                    url: t.url,
+                    title: t.title,
+                    inWorkspace,
+                    permissions: inWorkspace ? "control" : "read_only",
+                    active: t.id === lastActiveTabId,
+                    userFocused: t.active,
+                    isNew: !seenTabIds.has(t.id!),
+                };
+            });
+        seenTabIds = new Set(result.map((t) => t.tabId));
+        unseenTabCount = 0;
+        setBadge("");
+        return { tabs: result, scope: "all", workspaceGroupName: tabGroupName };
+    }
+
+    if (!workspaceGroupId) return { tabs: [] };
+    const tabs = await chrome.tabs.query({ groupId: workspaceGroupId });
     const result = tabs
         .filter((t) => t.id != null)
         .map((t) => ({
             tabId: t.id!,
             url: t.url,
             title: t.title,
+            inWorkspace: true,
+            permissions: "control",
             active: t.id === lastActiveTabId,
             isNew: !seenTabIds.has(t.id!),
         }));
     seenTabIds = new Set(result.map((t) => t.tabId));
     unseenTabCount = 0;
     setBadge("");
-    return { tabs: result };
+    return { tabs: result, scope: "workspace" };
 }
 
 export type SwitchTabResult =
@@ -137,7 +165,7 @@ export async function handleSwitchTabCommand(
     }
     void evalOnPage(
         { tabId },
-        `(${showPillCaption.toString()})(${JSON.stringify("🔀")}, ${JSON.stringify(`Switched to tab: ${tab?.title ?? tabId}`)}, ${JSON.stringify("#c4b5fd")}, ${JSON.stringify("#8b5cf6")}, false)`,
+        `(${showPillCaption.toString()})(${JSON.stringify(SWITCH_TAB_ICON_SVG)}, ${JSON.stringify(`Switched to tab: ${tab?.title ?? tabId}`)}, ${JSON.stringify("#c4b5fd")}, ${JSON.stringify("#8b5cf6")}, false)`,
     );
     return {
         success: true,

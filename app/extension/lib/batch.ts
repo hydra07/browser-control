@@ -300,7 +300,7 @@ function parseHtmlToMarkdown(htmlText: string, url: string, maxChars: number): O
             .slice(0, 25)
             .map(([linkUrl, linkText]) => `- [${linkText}](${linkUrl})`)
             .join("\n");
-        markdown += `\n\n### 📎 Tham Chiếu & Nguồn Dẫn (Cited References in this Section):\n${refList}\n`;
+        markdown += `\n\n### Tham Chiếu & Nguồn Dẫn (Cited References in this Section):\n${refList}\n`;
     }
 
     const wordCount = markdown.split(/\s+/).filter(Boolean).length;

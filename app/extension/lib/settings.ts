@@ -42,6 +42,10 @@ export interface Settings {
     recordingQuality: number;
     recordingMaxWidth: number;
     recordingMaxHeight: number;
+    // Enable Chat tab in sidepanel (Default: false)
+    chatEnabled: boolean;
+    // User-configurable CLI Agent command template (e.g. `claude --print`, `agy -p`, or custom CLI command/model)
+    cliAgentCommand: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -51,6 +55,10 @@ export const DEFAULT_SETTINGS: Settings = {
     recordingQuality: 50,
     recordingMaxWidth: 1280,
     recordingMaxHeight: 900,
+    chatEnabled: false,
+    // Base binary + user-facing flags only — cliAgent.ts appends its own
+    // streaming/mcp-config/session-resume flags on top when this is `claude`.
+    cliAgentCommand: "claude --print",
 };
 
 const STORAGE_KEY = "browsercontrol_settings";

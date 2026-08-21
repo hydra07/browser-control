@@ -70,8 +70,9 @@ export type BrowserCommand = WithTabId<
   | { cmd: 'evaluate'; expression: string }
   | { cmd: 'run_flow'; steps: FlowStep[]; domain?: string; returnSnapshot?: boolean }
   | { cmd: 'explore_flow'; steps: FlowStep[]; domain?: string; returnSnapshot?: boolean }
-  | { cmd: 'list_tabs' }
+  | { cmd: 'list_tabs'; scope?: 'workspace' | 'all' }
   | { cmd: 'switch_tab'; tabId: number }
+  | { cmd: 'peek_screen'; screenshot?: boolean; maxChars?: number; includeSelection?: boolean }
   | { cmd: 'start_capture' }
   | { cmd: 'stop_capture' }
   | { cmd: 'reading_mode'; maxChars?: number }

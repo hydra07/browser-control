@@ -150,7 +150,7 @@ function StepDetails({ step, index }: { step: FlowStep; index: number }) {
           )}
           {(step.fromX !== undefined || step.toX !== undefined) && (
             <div className="text-orange-300/90">
-              drag: ({step.fromX}, {step.fromY}) → ({step.toX}, {step.toY})
+              drag: ({step.fromX}, {step.fromY}) -&gt; ({step.toX}, {step.toY})
             </div>
           )}
           {step.timeoutMs && (
@@ -445,9 +445,9 @@ export function FlowList({
             <button
               type="button"
               onClick={() => setQuery("")}
-              className="absolute right-2 text-[10px] text-zinc-500 hover:text-zinc-300"
+              className="absolute right-2 text-zinc-500 hover:text-zinc-300"
             >
-              ✕
+              <CrossIcon className="w-2.5 h-2.5" />
             </button>
           )}
         </div>
