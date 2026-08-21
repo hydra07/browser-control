@@ -129,62 +129,14 @@ export interface ToolCallRecordInput {
   elementName?: string;
   stepCount?: number;
   createdAt?: number;
+  bunRssMb?: number;
+  bunHeapUsedMb?: number;
+  bunHeapTotalMb?: number;
+  extHeapUsedMb?: number;
+  extHeapTotalMb?: number;
+  extListeners?: number;
+  extCacheEntries?: number;
+  extDurationMs?: number;
 }
 
-export interface BenchmarkMetrics {
-  summary: {
-    sessionId: string;
-    sessionName: string;
-    startedAt: number;
-    totalCalls: number;
-    totalInTokens: number;
-    totalOutTokens: number;
-    totalTokens: number;
-    totalInChars: number;
-    totalOutChars: number;
-    avgInTokensPerCall: number;
-    avgOutTokensPerCall: number;
-    avgTokensPerCall: number;
-    avgDurationMs: number;
-    totalDurationMs: number;
-    errorCount: number;
-    errorRatePct: number;
-    flowStepTotal: number;
-  };
-  tokenSavings: {
-    estimatedSavedTokens: number;
-    savingsBreakdown: {
-      fromFlowBatching: number;
-      fromCompactSnapshots: number;
-      fromDocsBlocks: number;
-    };
-  };
-  byCommand: Array<{
-    cmd: string;
-    count: number;
-    inTokens: number;
-    outTokens: number;
-    totalTokens: number;
-    avgTokens: number;
-    totalDurationMs: number;
-    avgDurationMs: number;
-    errorCount: number;
-    pctOfTokens: number;
-  }>;
-  recentCalls: Array<{
-    id: number;
-    cmd: string;
-    durationMs: number;
-    inTokens: number;
-    outTokens: number;
-    approxTokens: number;
-    isError: boolean;
-    source: string;
-    preview: string;
-    elementRole?: string;
-    elementName?: string;
-    stepCount?: number;
-    createdAt: number;
-    argsSummary: string;
-  }>;
-}
+export type { BenchmarkMetrics } from "@browsercontrol/benchmark";

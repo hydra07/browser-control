@@ -80,6 +80,7 @@ export const DevAction = {
   DebugLayout: "debug_layout",
   Emulate: "emulate",
   Sandbox: "sandbox",
+  BenchmarkReport: "benchmark_report",
 } as const;
 export type DevAction = (typeof DevAction)[keyof typeof DevAction];
 

@@ -88,6 +88,10 @@ export class NetworkCollector {
         this.entries.clear();
     }
 
+    public size(): number {
+        return this.entries.size;
+    }
+
     public dispose(): void {
         if (this.listener) {
             chrome.debugger.onEvent.removeListener(this.listener);

@@ -90,6 +90,9 @@ function saveScreenshotToFile(dataBase64: string, format: string): string {
     source: "screenshot",
     sizeBytes: buf.length,
   });
+  if (typeof Bun !== "undefined" && typeof Bun.gc === "function") {
+    Bun.gc(true);
+  }
   return filePath;
 }
 
@@ -104,6 +107,9 @@ function saveVideoToFile(dataBase64: string, format: string): string {
     source: "recording",
     sizeBytes: buf.length,
   });
+  if (typeof Bun !== "undefined" && typeof Bun.gc === "function") {
+    Bun.gc(true);
+  }
   return filePath;
 }
 

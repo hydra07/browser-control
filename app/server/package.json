@@ -6,11 +6,13 @@
   "scripts": {
     "check": "tsc",
     "dev": "bun run src/daemon.ts",
+    "dev:benchmark": "BENCHMARK=1 bun run src/daemon.ts",
     "replay": "bun run src/replay.ts",
     "replay:list": "bun run src/replay.ts --list",
     "data": "bun run src/dataCli.ts"
   },
   "dependencies": {
+    "@browsercontrol/benchmark": "workspace:*",
     "@browsercontrol/shared": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.30.0"
   },

@@ -1,4 +1,5 @@
 import { appendFileSync } from "node:fs";
+import { BenchmarkEngine } from "@browsercontrol/benchmark";
 import type { ToolArgs, ToolCallResponse } from "../../libs/types.js";
 import { recordToolCallDetail } from "../dataStore/index.js";
 import { PREVIEW_CHARS } from "./constants.js";
@@ -21,6 +22,8 @@ function writeCallLog(logFile: string, entry: CallLogEntry): void {
   );
 
   const stepCount = Array.isArray(entry.args?.steps) ? entry.args.steps.length : 0;
+  const mem = BenchmarkEngine.isEnabled() ? BenchmarkEngine.sampleServerMemory() : undefined;
+
   recordToolCallDetail({
     sessionId: parseSessionId(logFile),
     cmd: entry.cmd,
@@ -40,6 +43,9 @@ function writeCallLog(logFile: string, entry: CallLogEntry): void {
     elementName: entry.elementName,
     stepCount,
     createdAt: Date.now(),
+    bunRssMb: mem?.rssMb,
+    bunHeapUsedMb: mem?.heapUsedMb,
+    bunHeapTotalMb: mem?.heapTotalMb,
   });
 }
 
