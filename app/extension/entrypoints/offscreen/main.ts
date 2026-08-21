@@ -66,8 +66,14 @@ function connect(): void {
         }
 
         try {
-            const result = await chrome.runtime.sendMessage({ target: "background", payload: data });
-            ws?.send(JSON.stringify({ id: data.id, type: "result", data: result }));
+            const resp = await chrome.runtime.sendMessage({ target: "background", payload: data });
+            if (resp && typeof resp === "object" && "result" in resp) {
+                ws?.send(JSON.stringify({ id: data.id, type: "result", data: resp.result, telemetry: resp.telemetry }));
+            } else if (resp?.error) {
+                ws?.send(JSON.stringify({ id: data.id, type: "error", error: resp.error }));
+            } else {
+                ws?.send(JSON.stringify({ id: data.id, type: "result", data: resp }));
+            }
         } catch (e: unknown) {
             console.error("[offscreen] Error relaying to background:", errorMessage(e));
             ws?.send(JSON.stringify({ id: data.id, type: "error", error: errorMessage(e) }));

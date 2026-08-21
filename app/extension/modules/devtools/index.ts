@@ -4,6 +4,7 @@
 import { sendCommand } from "../../libs/cdp.js";
 import { errorMessage } from "../../libs/errorMessage.js";
 import { listNetworkRequests } from "../network/index.js";
+import { telemetryCollector } from "../telemetry/index.js";
 
 export type { MemoryMetricsReport } from "./types.js";
 
@@ -28,6 +29,7 @@ export async function handleInspectMemory(
 
         const jsHeapUsed = metricsMap.get("JSHeapUsedSize") ?? 0;
         const jsHeapTotal = metricsMap.get("JSHeapTotalSize") ?? 0;
+        telemetryCollector.updateHeapMetrics(jsHeapUsed, jsHeapTotal);
         const jsHeapUsedMb = Number((jsHeapUsed / (1024 * 1024)).toFixed(2));
         const jsHeapTotalMb = Number((jsHeapTotal / (1024 * 1024)).toFixed(2));
         const jsHeapPercent = jsHeapTotalMb > 0 ? Math.round((jsHeapUsedMb / jsHeapTotalMb) * 100) : 0;

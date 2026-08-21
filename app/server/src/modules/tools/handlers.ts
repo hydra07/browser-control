@@ -7,6 +7,7 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { BenchmarkEngine } from "@browsercontrol/benchmark";
 import type { FlowStep } from "@browsercontrol/shared";
 import type { CallToolRequest } from "@modelcontextprotocol/sdk/types.js";
 import { HAR_DIR } from "../../configs/paths.js";
@@ -829,6 +830,20 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
               };
             }
             result = await executeCommand("dev_sandbox", { mode, tabId: args?.tabId });
+            break;
+          }
+          case DevAction.BenchmarkReport: {
+            const sid = typeof args?.sessionId === "string" && args.sessionId ? args.sessionId : SESSION_ID;
+            const metrics = dataStore.getBenchmarkMetrics(sid);
+            if (args?.format === "json") {
+              result = metrics;
+            } else {
+              const focus =
+                typeof args?.focus === "string"
+                  ? (args.focus as "overview" | "telemetry" | "commands" | "full")
+                  : "overview";
+              result = BenchmarkEngine.formatMarkdownReport(metrics, focus);
+            }
             break;
           }
           default:

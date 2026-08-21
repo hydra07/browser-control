@@ -136,6 +136,15 @@ export type BrowserCommand = WithTabId<
     | { cmd: "dev_sandbox"; mode: "block_mutations" | "off" }
 >;
 
+// Optional lightweight runtime telemetry piggybacked onto responses when benchmark mode is active.
+export interface ExtensionTelemetry {
+    extHeapUsedMb?: number;
+    extHeapTotalMb?: number;
+    extListenersCount?: number;
+    extCacheEntries?: number;
+    extDurationMs?: number;
+}
+
 // What background.ts sends back over the WebSocket for every request,
 // success or failure — the shape daemon.ts's /execute and executeCommand()
 // both parse.
@@ -144,4 +153,5 @@ export interface ExtensionResponse {
     type: "result" | "error";
     data?: unknown;
     error?: string;
+    telemetry?: ExtensionTelemetry;
 }

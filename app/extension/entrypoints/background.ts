@@ -13,6 +13,7 @@ import {
     stopScreencastRelay,
 } from "../modules/screencast/index.js";
 import { installTabGroupBadge } from "../modules/tabs/index.js";
+import { telemetryCollector } from "../modules/telemetry/index.js";
 
 /** Background service worker entrypoint managing CDP debugger attachments and command routing. */
 export default defineBackground(() => {
@@ -121,8 +122,13 @@ export default defineBackground(() => {
 
     chrome.runtime.onMessage.addListener((message: RelayMessage, _sender, sendResponse) => {
         if (message?.target !== "background") return;
+        const start = Date.now();
         dispatchCommand(message.payload, dispatchCtx)
-            .then(sendResponse)
+            .then((result) => {
+                const duration = Date.now() - start;
+                const telemetry = telemetryCollector.collectSnapshot(duration);
+                sendResponse({ result, telemetry });
+            })
             .catch((e: unknown) => sendResponse({ error: errorMessage(e) }));
         return true; // keep the message channel open for the async response
     });

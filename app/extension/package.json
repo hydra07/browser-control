@@ -13,6 +13,7 @@
         "version:bump": "bun run scripts/bump-version.ts"
     },
     "dependencies": {
+        "@browsercontrol/benchmark": "workspace:*",
         "@browsercontrol/shared": "workspace:*",
         "react": "^19.2.8",
         "react-dom": "^19.2.8"

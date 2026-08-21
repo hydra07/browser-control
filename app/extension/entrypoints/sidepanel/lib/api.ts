@@ -1,7 +1,7 @@
-/** HTTP client for the daemon REST endpoints (src/daemon.ts). */
+import type { BenchmarkMetrics } from "@browsercontrol/benchmark";
 import type { FlowStep } from "@browsercontrol/shared";
 
-export type { FlowStep };
+export type { BenchmarkMetrics, FlowStep };
 
 const DAEMON_PORT = 8765;
 const DAEMON_URL = `http://127.0.0.1:${DAEMON_PORT}`;
@@ -85,64 +85,6 @@ export async function runFlow(id: string): Promise<FlowRunResult> {
     throw new Error(typeof data.error === "string" ? data.error : `Run failed (HTTP ${res.status})`);
   }
   return data as unknown as FlowRunResult;
-}
-
-export interface BenchmarkMetrics {
-  summary: {
-    sessionId: string;
-    sessionName: string;
-    startedAt: number;
-    totalCalls: number;
-    totalInTokens: number;
-    totalOutTokens: number;
-    totalTokens: number;
-    totalInChars: number;
-    totalOutChars: number;
-    avgInTokensPerCall: number;
-    avgOutTokensPerCall: number;
-    avgTokensPerCall: number;
-    avgDurationMs: number;
-    totalDurationMs: number;
-    errorCount: number;
-    errorRatePct: number;
-    flowStepTotal: number;
-  };
-  tokenSavings: {
-    estimatedSavedTokens: number;
-    savingsBreakdown: {
-      fromFlowBatching: number;
-      fromCompactSnapshots: number;
-      fromDocsBlocks: number;
-    };
-  };
-  byCommand: Array<{
-    cmd: string;
-    count: number;
-    inTokens: number;
-    outTokens: number;
-    totalTokens: number;
-    avgTokens: number;
-    totalDurationMs: number;
-    avgDurationMs: number;
-    errorCount: number;
-    pctOfTokens: number;
-  }>;
-  recentCalls: Array<{
-    id: number;
-    cmd: string;
-    durationMs: number;
-    inTokens: number;
-    outTokens: number;
-    approxTokens: number;
-    isError: boolean;
-    source: string;
-    preview: string;
-    elementRole?: string;
-    elementName?: string;
-    stepCount?: number;
-    createdAt: number;
-    argsSummary: string;
-  }>;
 }
 
 export async function getMetrics(sessionId?: string): Promise<BenchmarkMetrics> {

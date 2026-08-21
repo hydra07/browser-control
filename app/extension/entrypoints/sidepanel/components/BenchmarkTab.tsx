@@ -283,6 +283,57 @@ export function BenchmarkTab({ onRefresh }: BenchmarkTabProps) {
         </div>
       )}
 
+      {metrics?.resourceTelemetry?.drift && metrics.resourceTelemetry.drift.currentBunRssMb > 0 && (
+        <div className="mb-3 rounded-lg border border-zinc-800/80 bg-zinc-900/40 p-2.5 text-[11px]">
+          <div className="flex items-center justify-between text-zinc-400 mb-1.5">
+            <span className="font-medium text-zinc-300 flex items-center gap-1.5">
+              <CpuIcon className="w-3 h-3 text-sky-400" /> Runtime Resource Stability & Health
+            </span>
+            <span
+              className={`font-mono text-[9px] px-1.5 py-0.5 rounded font-semibold border ${
+                metrics.resourceTelemetry.drift.health === "OPTIMAL"
+                  ? "bg-emerald-950/60 border-emerald-800 text-emerald-300"
+                  : metrics.resourceTelemetry.drift.health === "STABLE"
+                    ? "bg-sky-950/60 border-sky-800 text-sky-300"
+                    : "bg-amber-950/60 border-amber-800 text-amber-300"
+              }`}
+            >
+              {metrics.resourceTelemetry.drift.health}
+            </span>
+          </div>
+
+          <div className="text-[10px] text-zinc-400 mb-2 leading-relaxed">
+            {metrics.resourceTelemetry.drift.diagnosis}
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
+            <div className="rounded bg-zinc-800/60 p-2 border border-zinc-800/80">
+              <div className="text-zinc-500 mb-0.5">Bun Daemon Process</div>
+              <div className="text-zinc-200 font-bold text-xs">
+                {metrics.resourceTelemetry.drift.currentBunRssMb}{" "}
+                <span className="text-zinc-500 text-[9px] font-normal">MB (RSS)</span>
+              </div>
+              <div className="text-[9px] text-zinc-500 mt-0.5">
+                Peak: {metrics.resourceTelemetry.drift.peakBunRssMb}MB · Drift:{" "}
+                {metrics.resourceTelemetry.drift.bunDriftMbPerCall} MB/call
+              </div>
+            </div>
+
+            <div className="rounded bg-zinc-800/60 p-2 border border-zinc-800/80">
+              <div className="text-zinc-500 mb-0.5">Chrome Extension Heap</div>
+              <div className="text-zinc-200 font-bold text-xs">
+                {metrics.resourceTelemetry.drift.currentExtHeapMb}{" "}
+                <span className="text-zinc-500 text-[9px] font-normal">MB (JS)</span>
+              </div>
+              <div className="text-[9px] text-zinc-500 mt-0.5">
+                Peak: {metrics.resourceTelemetry.drift.peakExtHeapMb}MB · Drift:{" "}
+                {metrics.resourceTelemetry.drift.extDriftMbPerCall} MB/call
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="mb-3">
         <div className="mb-1.5 flex items-center justify-between">
           <span className="text-[11px] font-semibold text-zinc-300 uppercase tracking-wider">

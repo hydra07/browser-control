@@ -524,7 +524,7 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
   },
   {
     name: Gateway.Dev,
-    description: `Deep DevTools diagnostics, performance profiling, memory/RAM analytics, HAR export, UI/layout debugging, and device emulation. Follows Progressive Disclosure: returns a compact high-level summary (~20-40 tokens) by default; use \`focus\` to drill down into specific bottlenecks. Set \`action\` to one of: inspect_memory, inspect_process, analyze_har, export_har, debug_layout, emulate.
+    description: `Deep DevTools diagnostics, performance profiling, memory/RAM analytics, HAR export, UI/layout debugging, device emulation, and self-benchmarking. Follows Progressive Disclosure: returns a compact high-level summary (~20-40 tokens) by default; use \`focus\` to drill down into specific bottlenecks. Set \`action\` to one of: inspect_memory, inspect_process, analyze_har, export_har, debug_layout, emulate, sandbox, benchmark_report.
 
 - inspect_memory: measure JS Heap usage (used/total MB), active DOM nodes, documents, and event listeners. Detects GC pressure and potential memory leaks. Set \`focus:'dom'\` for top container element counts, \`focus:'listeners'\` for event listener analysis, or \`focus:'gc'\` to trigger V8 garbage collection.
 - inspect_process: analyze CPU execution time, breakdown of ScriptDuration, LayoutDuration (reflows), and RecalcStyleDuration. Identifies whether performance is CPU/Script-bound or Layout-bound. Set \`focus:'long_tasks'\` for blocking Long Tasks (>50ms).
@@ -532,15 +532,25 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
 - export_har: generate and save a standard W3C HAR 1.2 file to disk (data/har/session-*.har) containing complete network logs (requests, responses, timings) that can be directly imported into Chrome DevTools Network Tab or Wireshark.
 - debug_layout: deep inspection of Box Model (margin/border/padding quads), Computed CSS, Stacking Context creation (z-index, opacity, transform, isolation), and viewport visibility for a specific element (pass \`selector\` or \`nodeId\`). Set \`focus:'computed'\` or \`focus:'box_model'\` for deep styling details.
 - emulate: simulate device viewports (iphone14, pixel7, ipad, desktop), touch emulation, network throttling (offline, slow_3g, fast_3g, none), and CPU slowdown (2x, 4x, 6x).
-- sandbox: set \`mode:'block_mutations'\` to intercept every POST/PUT/PATCH/DELETE this tab fires — nothing reaches the real server. Answered with a real response this endpoint already produced this session if one was recorded, otherwise the submitted body echoed back. GET/HEAD still pass through untouched. Use this before exploring an unfamiliar UI so an accidental click on Save/Delete/Submit can't actually mutate real data; \`inspect.network_requests\` marks anything intercepted with \`blocked:true\`. Set \`mode:'off'\` to restore normal behavior once you're done exploring or the user asks for the real action to go through.`,
+- sandbox: set \`mode:'block_mutations'\` to intercept every POST/PUT/PATCH/DELETE this tab fires — nothing reaches the real server. Answered with a real response this endpoint already produced this session if one was recorded, otherwise the submitted body echoed back. GET/HEAD still pass through untouched. Use this before exploring an unfamiliar UI so an accidental click on Save/Delete/Submit can't actually mutate real data; \`inspect.network_requests\` marks anything intercepted with \`blocked:true\`. Set \`mode:'off'\` to restore normal behavior once you're done exploring or the user asks for the real action to go through.
+- benchmark_report: generate a comprehensive self-benchmark report for the current session (or specified \`sessionId\`), analyzing token economics, savings breakdown, and runtime memory stability / leak detection.`,
     inputSchema: {
       type: "object",
       properties: {
         action: { type: "string", enum: Object.values(DevAction) },
+        sessionId: {
+          type: "string",
+          description: "Optional session id for action: 'benchmark_report' (defaults to active session).",
+        },
+        format: {
+          type: "string",
+          enum: ["markdown", "json"],
+          description: "Output format for action: 'benchmark_report' (default 'markdown').",
+        },
         focus: {
           type: "string",
           description:
-            "Drill down target for progressive disclosure: 'overview' (default), 'dom', 'listeners', 'gc' (for inspect_memory); 'long_tasks', 'rendering' (for inspect_process); 'box_model', 'computed', 'stacking' (for debug_layout).",
+            "Drill down target for progressive disclosure: 'overview' (default), 'dom', 'listeners', 'gc' (for inspect_memory); 'long_tasks', 'rendering' (for inspect_process); 'box_model', 'computed', 'stacking' (for debug_layout); 'telemetry', 'commands', 'full' (for benchmark_report).",
         },
         selector: { type: "string", description: "CSS selector of element to inspect (action: 'debug_layout')." },
         nodeId: { type: "number", description: "Node id from snapshot to inspect (action: 'debug_layout')." },
