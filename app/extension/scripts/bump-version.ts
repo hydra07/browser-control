@@ -16,9 +16,7 @@ const PACKAGE_PATH = join(import.meta.dir, "..", "package.json");
 
 const arg = process.argv[2];
 if (!arg) {
-    console.error(
-        "Usage: bun run version:bump <newVersion|patch|minor|major>",
-    );
+    console.error("Usage: bun run version:bump <newVersion|patch|minor|major>");
     process.exit(1);
 }
 
@@ -26,18 +24,14 @@ const pkg = JSON.parse(readFileSync(PACKAGE_PATH, "utf8"));
 const current = String(pkg.version);
 
 function bump(version: string, kind: string): string {
-    const [major, minor, patch] = version
-        .split(".")
-        .map((n) => parseInt(n, 10) || 0);
+    const [major, minor, patch] = version.split(".").map((n) => parseInt(n, 10) || 0);
     if (kind === "major") return `${major + 1}.0.0`;
     if (kind === "minor") return `${major}.${minor + 1}.0`;
     if (kind === "patch") return `${major}.${minor}.${patch + 1}`;
     return kind; // an explicit version string was passed instead of a bump kind
 }
 
-const next = ["major", "minor", "patch"].includes(arg)
-    ? bump(current, arg)
-    : arg;
+const next = ["major", "minor", "patch"].includes(arg) ? bump(current, arg) : arg;
 if (!/^\d+\.\d+\.\d+$/.test(next)) {
     console.error(
         `"${next}" isn't a valid X.Y.Z version — Chrome's manifest version field requires dot-separated integers.`,

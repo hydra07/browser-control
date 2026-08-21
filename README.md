@@ -113,7 +113,7 @@ never by importing each other's code:
 
 Instead of one MCP tool per action (~30 of them at last count — a flat list
 that size measurably hurts a model's tool-selection accuracy), this server
-exposes **5 gateway tools**. Each takes an `action` enum plus that action's
+exposes **6 gateway tools**. Each takes an `action` enum plus that action's
 own params, e.g. `browser_act({action:"click", nodeId})`. Below,
 `gateway.action` is shorthand for that call shape — `session.navigate`
 means `browser_session({action:"navigate", ...})`. Every action defaults to
@@ -174,6 +174,17 @@ between every step.
 | `query_docs` | List/search/read content saved by `browser_inspect`'s `select_content`/`browser_bulk`'s crawl+job actions — see [Data management](#data-management). Its own list/search/read sub-action goes in `docsAction`, a separate field from this gateway's `action` |
 | `list_skills` / `save_skill` | List/persist durable per-site notes (selectors, flows) so a future session skips rediscovery |
 | `list_flows` / `save_flow` / `delete_flow` | List/persist a validated `run_flow` step sequence as a named, reusable flow, or remove one — see [Side panel](#side-panel--saved-flows) |
+
+**`browser_dev`** — DevTools diagnostics & device/network emulation
+
+| Action | Does |
+|---|---|
+| `inspect_memory` | JS heap usage, DOM node/listener counts, GC pressure |
+| `inspect_process` | CPU time breakdown (script/layout/style) and long tasks |
+| `analyze_har` / `export_har` | Network traffic summary, or a full HAR 1.2 file saved to disk |
+| `debug_layout` | Box model, computed CSS, and stacking-context info for one element |
+| `emulate` | Device viewport, network throttling, and CPU slowdown |
+| `sandbox` | `mode:"block_mutations"` intercepts every POST/PUT/PATCH/DELETE on a tab — nothing reaches the real server. Answered with a real response the same endpoint already produced this session if one was recorded, otherwise the submitted body echoed back. GET/HEAD pass through unaffected, and `browser_inspect`'s `network_requests` marks intercepted calls with `blocked:true`. Use it to click through an unfamiliar UI (or test a Save/Delete button) without risking real data. `mode:"off"` restores normal behavior |
 
 ## Behavior worth knowing about
 

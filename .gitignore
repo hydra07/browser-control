@@ -1,7 +1,11 @@
 node_modules/
 dist/
 data/
-.claude/
+.claude/*
+# Shared project skill/template, not a local setting — keep it tracked.
+# (.claude/* not .claude/ — a directory-level ignore can't be un-ignored by
+# a later "!" for anything inside it; globbing the children can.)
+!.claude/skills/
 
 test/
 skills/*

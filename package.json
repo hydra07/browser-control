@@ -1,21 +1,35 @@
 {
-  "name": "browsercontrol",
-  "version": "0.0.0",
-  "private": true,
-  "description": "Chrome extension + local MCP server for driving your everyday Chrome browser via CDP — monorepo root, holds no runtime deps of its own.",
-  "workspaces": ["app/extension", "app/server", "packages/*"],
-  "packageManager": "bun@1.3.14",
-  "scripts": {
-    "build": "turbo run build",
-    "check": "turbo run check"
-  },
-  "bin": {
-    "browsercontrol": "app/server/src/daemon.ts"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0"
-  },
-  "devDependencies": {
-    "turbo": "^2.10.11"
-  }
+    "name": "browsercontrol",
+    "version": "0.0.0",
+    "private": true,
+    "description": "Chrome extension + local MCP server for driving your everyday Chrome browser via CDP — monorepo root, holds no runtime deps of its own.",
+    "workspaces": [
+        "app/extension",
+        "app/server",
+        "packages/*"
+    ],
+    "packageManager": "bun@1.3.14",
+    "scripts": {
+        "build": "turbo run build",
+        "build:affected": "turbo run build --affected",
+        "check": "turbo run check",
+        "check:affected": "turbo run check --affected",
+        "check:changed": "biome check --changed",
+        "check:staged": "biome check --staged",
+        "lint": "biome lint .",
+        "lint:fix": "biome lint --write .",
+        "format": "biome format --write .",
+        "format:check": "biome format .",
+        "check:all": "turbo run check && biome check ."
+    },
+    "bin": {
+        "browsercontrol": "app/server/src/daemon.ts"
+    },
+    "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.30.0"
+    },
+    "devDependencies": {
+        "@biomejs/biome": "^2.5.9",
+        "turbo": "^2.10.11"
+    }
 }

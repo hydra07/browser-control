@@ -1,16 +1,16 @@
-import React, { useState, useEffect, useRef } from "react";
-import { streamCliAgent, queryCliAgent, abortCliAgent } from "../lib/api";
-import { getSettings, type Settings } from "../../../lib/settings.js";
+import { useEffect, useRef, useState } from "react";
+import { getSettings, type Settings } from "../../../configs/settings.js";
+import { abortCliAgent, queryCliAgent, streamCliAgent } from "../lib/api";
 import {
   ChatIcon,
-  SendIcon,
+  CrossIcon,
   PinIcon,
-  SparklesIcon,
   SearchIcon,
-  WrenchIcon,
+  SendIcon,
+  SparklesIcon,
   StopIcon,
   TrashIcon,
-  CrossIcon,
+  WrenchIcon,
 } from "./Icons";
 
 interface AttachedContext {
@@ -40,9 +40,70 @@ interface LocalChatMessage {
 }
 
 const STORAGE_CHAT_KEY = "browsercontrol_local_chat";
-// claude --resume target — multi-turn continuity + prompt caching across
-// the visible conversation. Reset whenever the user clears history.
 const STORAGE_SESSION_KEY = "browsercontrol_local_chat_session";
+
+function formatTime(ts: number): string {
+  return new Date(ts).toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit" });
+}
+
+async function captureActiveTabContext(): Promise<AttachedContext | null> {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id || !tab.url) return null;
+
+    const url = tab.url;
+    const title = tab.title || "Active Page";
+
+    let selectionText = "";
+    let compactSummary = "";
+
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => {
+          const sel = window.getSelection()?.toString()?.trim() || "";
+          const h1 = document.querySelector("h1")?.textContent?.trim() || "";
+          const metaDesc = document.querySelector('meta[name="description"]')?.getAttribute("content") || "";
+
+          let bodySnippet = "";
+          if (document.body) {
+            const clone = document.body.cloneNode(true) as HTMLElement;
+            const noise = clone.querySelectorAll("script, style, noscript, svg, iframe, nav, footer");
+            noise.forEach((n) => n.remove());
+            bodySnippet = (clone.innerText || clone.textContent || "").replace(/\s+/g, " ").trim().slice(0, 3000);
+          }
+
+          return {
+            selection: sel,
+            h1,
+            metaDesc,
+            bodySnippet,
+          };
+        },
+      });
+
+      const res = results?.[0]?.result;
+      if (res) {
+        selectionText = res.selection;
+        const parts: string[] = [];
+        if (res.h1) parts.push(`Heading: ${res.h1}`);
+        if (res.metaDesc) parts.push(`Description: ${res.metaDesc}`);
+        if (res.bodySnippet) parts.push(`Page Content:\n${res.bodySnippet}`);
+        compactSummary = parts.join("\n\n");
+      }
+    } catch {}
+
+    return {
+      url,
+      title,
+      selectionText: selectionText || undefined,
+      compactSummary: compactSummary || undefined,
+    };
+  } catch (e) {
+    console.error("[ChatTab] Failed to capture active tab context:", e);
+    return null;
+  }
+}
 
 export function ChatTab() {
   const [messages, setMessages] = useState<LocalChatMessage[]>(() => {
@@ -83,70 +144,6 @@ export function ChatTab() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isProcessing]);
 
-  /**
-   * Captures active tab context (URL, Title, Selection, and compact text summary).
-   */
-  async function captureActiveTabContext(): Promise<AttachedContext | null> {
-    try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab?.id || !tab.url) return null;
-
-      const url = tab.url;
-      const title = tab.title || "Active Page";
-
-      let selectionText = "";
-      let compactSummary = "";
-
-      try {
-        const results = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: () => {
-            const sel = window.getSelection()?.toString()?.trim() || "";
-            const h1 = document.querySelector("h1")?.textContent?.trim() || "";
-            const metaDesc = document.querySelector('meta[name="description"]')?.getAttribute("content") || "";
-
-            // Fast compact text extraction
-            let bodySnippet = "";
-            if (document.body) {
-              const clone = document.body.cloneNode(true) as HTMLElement;
-              const noise = clone.querySelectorAll("script, style, noscript, svg, iframe, nav, footer");
-              noise.forEach((n) => n.remove());
-              bodySnippet = (clone.innerText || clone.textContent || "").replace(/\s+/g, " ").trim().slice(0, 3000);
-            }
-
-            return {
-              selection: sel,
-              h1,
-              metaDesc,
-              bodySnippet,
-            };
-          },
-        });
-
-        const res = results?.[0]?.result;
-        if (res) {
-          selectionText = res.selection;
-          const parts: string[] = [];
-          if (res.h1) parts.push(`Heading: ${res.h1}`);
-          if (res.metaDesc) parts.push(`Description: ${res.metaDesc}`);
-          if (res.bodySnippet) parts.push(`Page Content:\n${res.bodySnippet}`);
-          compactSummary = parts.join("\n\n");
-        }
-      } catch {}
-
-      return {
-        url,
-        title,
-        selectionText: selectionText || undefined,
-        compactSummary: compactSummary || undefined,
-      };
-    } catch (e) {
-      console.error("[ChatTab] Failed to capture active tab context:", e);
-      return null;
-    }
-  }
-
-  // Explicit Pin Button click handler
   async function handleManualPing() {
     setPinging(true);
     const ctx = await captureActiveTabContext();
@@ -210,23 +207,17 @@ export function ChatTab() {
         },
         {
           onStart: (commandUsed) => {
-            setMessages((prev) =>
-              prev.map((m) => (m.id === assistantMsgId ? { ...m, commandUsed } : m)),
-            );
+            setMessages((prev) => prev.map((m) => (m.id === assistantMsgId ? { ...m, commandUsed } : m)));
           },
           onChunk: (chunk) => {
             setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantMsgId ? { ...m, content: m.content + chunk } : m,
-              ),
+              prev.map((m) => (m.id === assistantMsgId ? { ...m, content: m.content + chunk } : m)),
             );
           },
           onToolUse: (name) => {
             setMessages((prev) =>
               prev.map((m) =>
-                m.id === assistantMsgId
-                  ? { ...m, toolCalls: [...(m.toolCalls ?? []), { name, done: false }] }
-                  : m,
+                m.id === assistantMsgId ? { ...m, toolCalls: [...(m.toolCalls ?? []), { name, done: false }] } : m,
               ),
             );
           },
@@ -243,19 +234,11 @@ export function ChatTab() {
           },
           onSession: rememberSession,
           onDone: (durationMs) => {
-            setMessages((prev) =>
-              prev.map((m) => (m.id === assistantMsgId ? { ...m, durationMs } : m)),
-            );
+            setMessages((prev) => prev.map((m) => (m.id === assistantMsgId ? { ...m, durationMs } : m)));
             setIsProcessing(false);
           },
           onError: (err) => {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantMsgId
-                  ? { ...m, content: `Error: ${err}` }
-                  : m,
-              ),
-            );
+            setMessages((prev) => prev.map((m) => (m.id === assistantMsgId ? { ...m, content: `Error: ${err}` } : m)));
             setIsProcessing(false);
           },
         },
@@ -317,19 +300,16 @@ export function ChatTab() {
     }
   }
 
-  const formatTime = (ts: number): string => {
-    const d = new Date(ts);
-    return d.toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit" });
-  };
-
   return (
     <div className="flex flex-1 flex-col h-full overflow-hidden bg-[#0c0d11] text-zinc-200 font-sans">
-      {/* Chat Header Bar */}
       <div className="flex items-center justify-between border-b border-zinc-800/80 px-3 py-2 bg-[#121318]/90 z-10">
         <div className="flex items-center gap-2">
           <ChatIcon className="w-4 h-4 text-indigo-400" />
           <span className="font-semibold text-xs text-zinc-100">CLI Agent Chat</span>
-          <span className="rounded bg-zinc-900 border border-zinc-800 px-1.5 py-0.2 text-[9.5px] font-mono text-zinc-400 truncate max-w-[140px]" title={settings?.cliAgentCommand}>
+          <span
+            className="rounded bg-zinc-900 border border-zinc-800 px-1.5 py-0.2 text-[9.5px] font-mono text-zinc-400 truncate max-w-[140px]"
+            title={settings?.cliAgentCommand}
+          >
             {settings?.cliAgentCommand?.split(" ")[0] || "claude"}
           </span>
         </div>
@@ -344,7 +324,6 @@ export function ChatTab() {
         </button>
       </div>
 
-      {/* Messages Scroll Area */}
       <div className="flex-1 overflow-y-auto p-3 space-y-3">
         {messages.length === 0 && !isProcessing ? (
           <div className="flex h-full flex-col items-center justify-center text-center p-4">
@@ -360,7 +339,9 @@ export function ChatTab() {
             <div className="mt-4 flex flex-col gap-1.5 w-full max-w-[260px]">
               <button
                 type="button"
-                onClick={() => void handleSendMessage("Tóm tắt các ý chính và nội dung quan trọng của trang này giúp tôi.")}
+                onClick={() =>
+                  void handleSendMessage("Tóm tắt các ý chính và nội dung quan trọng của trang này giúp tôi.")
+                }
                 className="rounded-lg border border-zinc-800/80 bg-zinc-900/60 px-2.5 py-1.5 text-[11px] text-left text-zinc-300 hover:border-indigo-500/50 hover:bg-zinc-800/80 transition flex items-center gap-1.5"
               >
                 <SparklesIcon className="w-3.5 h-3.5 text-indigo-400 flex-none" />
@@ -368,7 +349,9 @@ export function ChatTab() {
               </button>
               <button
                 type="button"
-                onClick={() => void handleSendMessage("Trang này là trang gì? Có những tính năng hoặc thông tin chính nào?")}
+                onClick={() =>
+                  void handleSendMessage("Trang này là trang gì? Có những tính năng hoặc thông tin chính nào?")
+                }
                 className="rounded-lg border border-zinc-800/80 bg-zinc-900/60 px-2.5 py-1.5 text-[11px] text-left text-zinc-300 hover:border-indigo-500/50 hover:bg-zinc-800/80 transition flex items-center gap-1.5"
               >
                 <SearchIcon className="w-3.5 h-3.5 text-sky-400 flex-none" />
@@ -382,17 +365,12 @@ export function ChatTab() {
               const isUser = msg.role === "user";
               const hasContent = Boolean(msg.content);
               return (
-                <div
-                  key={msg.id}
-                  className={`flex flex-col ${isUser ? "items-end" : "items-start"} animate-fade-in`}
-                >
+                <div key={msg.id} className={`flex flex-col ${isUser ? "items-end" : "items-start"} animate-fade-in`}>
                   <div className="flex items-center gap-1.5 mb-1 px-1 text-[9px] font-mono text-zinc-500">
                     <span>{isUser ? "You" : "CLI Agent"}</span>
                     <span>·</span>
                     <span>{formatTime(msg.createdAt)}</span>
-                    {!isUser && msg.durationMs && (
-                      <span className="text-emerald-400">({msg.durationMs}ms)</span>
-                    )}
+                    {!isUser && msg.durationMs && <span className="text-emerald-400">({msg.durationMs}ms)</span>}
                   </div>
 
                   <div
@@ -402,7 +380,6 @@ export function ChatTab() {
                         : "bg-[#181920] border border-zinc-800/90 text-zinc-200 rounded-tl-xs"
                     }`}
                   >
-                    {/* Attached Page Context Badge */}
                     {msg.url && (
                       <div
                         className={`mb-1.5 rounded-lg p-1.5 text-[10px] font-mono border ${
@@ -423,7 +400,6 @@ export function ChatTab() {
                       </div>
                     )}
 
-                    {/* Tool Call Chips — browser_inspect actions the agent ran (peek_screen/snapshot/screenshot/...) */}
                     {!isUser && msg.toolCalls && msg.toolCalls.length > 0 && (
                       <div className="mb-1.5 flex flex-wrap gap-1">
                         {msg.toolCalls.map((tc, i) => (
@@ -445,7 +421,6 @@ export function ChatTab() {
                       </div>
                     )}
 
-                    {/* Message Content or Streaming Placeholder */}
                     {!isUser && !hasContent ? (
                       <div className="flex items-center gap-2 py-0.5 text-zinc-400">
                         <div className="h-2.5 w-2.5 animate-spin rounded-full border-2 border-indigo-400 border-t-transparent flex-none" />
@@ -459,7 +434,6 @@ export function ChatTab() {
               );
             })}
 
-            {/* Active Running Controller */}
             {isProcessing && (
               <div className="flex items-center justify-end px-1">
                 <button
@@ -476,9 +450,7 @@ export function ChatTab() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Message Composer Footer */}
       <div className="border-t border-zinc-800/80 bg-[#101116] p-2.5 space-y-2">
-        {/* Active Attached Context Pill */}
         {attachedContext && (
           <div className="flex items-center justify-between rounded-lg bg-zinc-900 border border-indigo-500/40 px-2 py-1 text-[10px] font-mono text-indigo-300 animate-fade-in">
             <div className="flex items-center gap-1.5 min-w-0">
@@ -487,9 +459,7 @@ export function ChatTab() {
                 {attachedContext.title || attachedContext.url}
               </span>
               {attachedContext.selectionText && (
-                <span className="text-[9px] text-zinc-500 truncate max-w-[80px]">
-                  (Selected)
-                </span>
+                <span className="text-[9px] text-zinc-500 truncate max-w-[80px]">(Selected)</span>
               )}
             </div>
             <button
@@ -502,7 +472,6 @@ export function ChatTab() {
           </div>
         )}
 
-        {/* Input Bar */}
         <div className="flex items-end gap-1.5">
           <button
             type="button"

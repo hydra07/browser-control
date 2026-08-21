@@ -1,19 +1,19 @@
-import React, { useCallback, useEffect, useState } from "react";
-import { getStatus, listFlows, type DaemonStatus, type FlowMeta } from "./lib/api";
-import { getSettings, type Settings } from "../../lib/settings.js";
-import { FlowList } from "./components/FlowList";
-import { SettingsTab } from "./components/SettingsTab";
+import { useCallback, useEffect, useState } from "react";
+import { getSettings, type Settings } from "../../configs/settings.js";
 import { BenchmarkTab } from "./components/BenchmarkTab";
 import { ChatTab } from "./components/ChatTab";
+import { FlowList } from "./components/FlowList";
 import {
-  WorkflowIcon,
-  SettingsIcon,
-  RefreshIcon,
+  AppLogo,
   ChartBarIcon,
   ChatIcon,
-  AppLogo,
   CrossIcon,
+  RefreshIcon,
+  SettingsIcon,
+  WorkflowIcon,
 } from "./components/Icons";
+import { SettingsTab } from "./components/SettingsTab";
+import { type DaemonStatus, type FlowMeta, getStatus, listFlows } from "./lib/api";
 
 type TabKey = "flows" | "benchmark" | "chat" | "settings";
 
@@ -33,11 +33,7 @@ export default function App() {
 
   const load = useCallback(async () => {
     try {
-      const [flows, status, currentSettings] = await Promise.all([
-        listFlows(),
-        getStatus(),
-        getSettings(),
-      ]);
+      const [flows, status, currentSettings] = await Promise.all([listFlows(), getStatus(), getSettings()]);
       setState({ status: "loaded", flows });
       setDaemonStatus(status);
       setSettings(currentSettings);
@@ -58,14 +54,12 @@ export default function App() {
 
   const isChatEnabled = settings?.chatEnabled ?? false;
 
-  // If chat is turned off while on chat tab, fall back to flows
   useEffect(() => {
     if (!isChatEnabled && activeTab === "chat") {
       setActiveTab("flows");
     }
   }, [isChatEnabled, activeTab]);
 
-  // Global Keyboard Navigation Shortcuts inside Sidepanel
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       const target = e.target as HTMLElement | null;
@@ -97,18 +91,12 @@ export default function App() {
     setTimeout(() => setIsRefreshing(false), 300);
   }
 
-  function handleClosePanel() {
-    window.close();
-  }
-
   const isConnected = daemonStatus?.extensionConnected ?? false;
   const flowCount = state.status === "loaded" ? state.flows.length : 0;
 
   return (
     <div className="flex h-screen w-full bg-[#0c0d11] text-zinc-100 overflow-hidden font-sans select-none antialiased animate-fade-in">
-      {/* Activity Bar Rail */}
       <aside className="flex w-11 flex-none flex-col items-center justify-between border-r border-zinc-800/80 bg-[#08090c] py-3 z-10">
-        {/* Top Section: App Logo & Navigation Tabs */}
         <div className="flex flex-col items-center gap-3 w-full">
           <div
             className="flex h-7 w-7 items-center justify-center rounded-lg bg-zinc-900 border border-zinc-800/90 text-indigo-400 shadow-sm transition hover:border-indigo-500/50 hover:scale-105"
@@ -119,9 +107,7 @@ export default function App() {
 
           <div className="h-px w-5 bg-zinc-800/70" />
 
-          {/* Navigation Icons */}
           <nav className="flex flex-col items-center gap-1.5 w-full px-1">
-            {/* Flows Tab Button */}
             <button
               type="button"
               onClick={() => setActiveTab("flows")}
@@ -138,7 +124,6 @@ export default function App() {
               <WorkflowIcon className="w-4 h-4 transition-transform group-hover:scale-110" />
             </button>
 
-            {/* Benchmark Tab Button */}
             <button
               type="button"
               onClick={() => setActiveTab("benchmark")}
@@ -155,7 +140,6 @@ export default function App() {
               <ChartBarIcon className="w-4 h-4 transition-transform group-hover:scale-110" />
             </button>
 
-            {/* Chat Tab Button (Controlled by Settings Toggle) */}
             {isChatEnabled && (
               <button
                 type="button"
@@ -174,7 +158,6 @@ export default function App() {
               </button>
             )}
 
-            {/* Settings Tab Button */}
             <button
               type="button"
               onClick={() => setActiveTab("settings")}
@@ -193,7 +176,6 @@ export default function App() {
           </nav>
         </div>
 
-        {/* Bottom Section: Sync & Live Connection Status Dot */}
         <div className="flex flex-col items-center gap-2.5">
           <button
             type="button"
@@ -220,9 +202,7 @@ export default function App() {
         </div>
       </aside>
 
-      {/* Main Panel Content Container */}
       <main className="flex flex-1 flex-col min-w-0 bg-[#0c0d11] overflow-hidden">
-        {/* Top Header */}
         <header className="flex flex-none items-center justify-between border-b border-zinc-800/80 px-3.5 py-2.5 glass-header z-10">
           <div className="flex items-center gap-2">
             <h2 className="text-[12px] font-semibold tracking-tight text-zinc-100 flex items-center gap-1.5">
@@ -252,10 +232,9 @@ export default function App() {
               {isConnected ? "READY" : "OFFLINE"}
             </span>
 
-            {/* Native Close Button */}
             <button
               type="button"
-              onClick={handleClosePanel}
+              onClick={() => window.close()}
               title="Close Side Panel (Esc)"
               className="flex h-5 w-5 items-center justify-center rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/80 transition active:scale-95"
             >
@@ -264,7 +243,6 @@ export default function App() {
           </div>
         </header>
 
-        {/* Tab View Transition Container */}
         <div key={activeTab} className="flex-1 flex flex-col min-h-0 overflow-hidden animate-fade-in">
           {activeTab === "flows" ? (
             <>
@@ -280,9 +258,7 @@ export default function App() {
               {state.status === "unreachable" && (
                 <div className="flex flex-1 flex-col items-center justify-center p-6 text-center animate-fade-in">
                   <div className="font-semibold text-zinc-200 text-xs">Daemon Unreachable</div>
-                  <p className="mt-1 text-[11px] text-zinc-500 max-w-[220px] leading-relaxed">
-                    {state.message}
-                  </p>
+                  <p className="mt-1 text-[11px] text-zinc-500 max-w-[220px] leading-relaxed">{state.message}</p>
                   <button
                     type="button"
                     onClick={() => void handleRefresh()}
@@ -297,11 +273,7 @@ export default function App() {
                 <FlowList
                   flows={state.flows}
                   onFlowDeleted={(id) =>
-                    setState((s) =>
-                      s.status === "loaded"
-                        ? { ...s, flows: s.flows.filter((f) => f.id !== id) }
-                        : s,
-                    )
+                    setState((s) => (s.status === "loaded" ? { ...s, flows: s.flows.filter((f) => f.id !== id) } : s))
                   }
                 />
               )}

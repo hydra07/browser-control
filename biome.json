@@ -1,0 +1,79 @@
+{
+    "$schema": "https://biomejs.dev/schemas/2.5.9/schema.json",
+    "vcs": {
+        "enabled": true,
+        "clientKind": "git",
+        "useIgnoreFile": true,
+        "defaultBranch": "main"
+    },
+    "files": {
+        "ignoreUnknown": true,
+        "includes": ["app/**/*", "packages/**/*", "scripts/**/*", "package.json", "turbo.json"]
+    },
+    "formatter": {
+        "enabled": true,
+        "formatWithErrors": false,
+        "indentStyle": "space",
+        "indentWidth": 4,
+        "lineEnding": "lf",
+        "lineWidth": 120,
+        "attributePosition": "auto"
+    },
+    "assist": { "actions": { "source": { "organizeImports": "on" } } },
+    "linter": {
+        "enabled": true,
+        "rules": {
+            "preset": "recommended",
+            "a11y": {
+                "noSvgWithoutTitle": "off",
+                "useKeyWithClickEvents": "off",
+                "useButtonType": "off",
+                "useHtmlLang": "off",
+                "noStaticElementInteractions": "off"
+            },
+            "suspicious": {
+                "noArrayIndexKey": "off",
+                "noExplicitAny": "warn",
+                "noEmptyBlockStatements": "off",
+                "noControlCharactersInRegex": "off",
+                "useIterableCallbackReturn": "off"
+            },
+            "complexity": {
+                "noBannedTypes": "off",
+                "noExtraBooleanCast": "warn"
+            },
+            "style": {
+                "noNonNullAssertion": "off",
+                "useImportType": "warn"
+            },
+            "correctness": {
+                "noUnusedVariables": "warn",
+                "noUnusedImports": "warn",
+                "noConstantCondition": "off",
+                "useExhaustiveDependencies": "warn"
+            }
+        }
+    },
+    "javascript": {
+        "formatter": {
+            "quoteStyle": "double",
+            "semicolons": "always",
+            "trailingCommas": "all",
+            "arrowParentheses": "always"
+        }
+    },
+    "overrides": [
+        {
+            "includes": ["app/server/**/*"],
+            "formatter": {
+                "indentWidth": 2
+            }
+        },
+        {
+            "includes": ["app/extension/entrypoints/sidepanel/**/*"],
+            "formatter": {
+                "indentWidth": 2
+            }
+        }
+    ]
+}

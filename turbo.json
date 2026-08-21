@@ -1,11 +1,11 @@
 {
-  "$schema": "https://turbo.build/schema.json",
-  "tasks": {
-    "build": {
-      "outputs": ["dist/**", ".output/**"]
-    },
-    "check": {
-      "outputs": []
+    "$schema": "https://turbo.build/schema.json",
+    "tasks": {
+        "build": {
+            "outputs": ["dist/**", ".output/**"]
+        },
+        "check": {
+            "outputs": []
+        }
     }
-  }
 }

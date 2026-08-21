@@ -1,24 +1,26 @@
-// Human-facing housekeeping over data/index.sqlite — status/sessions/show/
-// read/search are pure reads; rename is a one-row update; gc is the ONLY
-// thing here that deletes anything, and only when the caller passes an
-// explicit filter (--session/--older-than/--keep-last) AND --yes. Nothing
-// in the daemon itself ever calls dataStore.deleteSessions — this script is
-// the sole entry point for that, by design (see dataStore.ts's header).
-//
-// Usage:
-//   bun run src/server/dataCli.ts status
-//   bun run src/server/dataCli.ts sessions [--limit N]
-//   bun run src/server/dataCli.ts show <sessionId>
-//   bun run src/server/dataCli.ts read <blockId>
-//   bun run src/server/dataCli.ts search <query> [--session <id>] [--limit N]
-//   bun run src/server/dataCli.ts rename <sessionId> <name...>
-//   bun run src/server/dataCli.ts gc (--session <id> | --older-than <Nd> | --keep-last <N>) [--yes]
+/**
+ * Human-facing housekeeping over data/index.sqlite — status/sessions/show/
+ * read/search are pure reads; rename is a one-row update; gc is the ONLY
+ * thing here that deletes anything, and only when the caller passes an
+ * explicit filter (--session/--older-than/--keep-last) AND --yes. Nothing
+ * in the daemon itself ever calls dataStore.deleteSessions — this script is
+ * the sole entry point for that, by design (see dataStore.ts's header).
+ *
+ * Usage:
+ *   bun run src/server/dataCli.ts status
+ *   bun run src/server/dataCli.ts sessions [--limit N]
+ *   bun run src/server/dataCli.ts show <sessionId>
+ *   bun run src/server/dataCli.ts read <blockId>
+ *   bun run src/server/dataCli.ts search <query> [--session <id>] [--limit N]
+ *   bun run src/server/dataCli.ts rename <sessionId> <name...>
+ *   bun run src/server/dataCli.ts gc (--session <id> | --older-than <Nd> | --keep-last <N>) [--yes]
+ */
 
-import { statSync, readdirSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import * as dataStore from "./lib/dataStore.js";
-
-const DATA_DIR = join(import.meta.dir, "..", "..", "..", "data");
+import { DATA_DIR } from "./configs/paths.js";
+import { DataCliCommand } from "./libs/dataCliCommand.js";
+import * as dataStore from "./modules/dataStore/index.js";
 
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -33,7 +35,10 @@ function fmtBytes(n: number): string {
 }
 
 function fmtDate(ms: number): string {
-  return new Date(ms).toISOString().replace("T", " ").replace(/\.\d+Z$/, "Z");
+  return new Date(ms)
+    .toISOString()
+    .replace("T", " ")
+    .replace(/\.\d+Z$/, "Z");
 }
 
 function fmtDuration(startMs: number, endMs: number | null): string {
@@ -58,22 +63,32 @@ function liveArtifactSize(a: { path: string; sizeBytes: number | null }): number
 
 function cmdStatus(): void {
   const sessions = dataStore.listSessions({ limit: 100000 });
-  let images = 0, videos = 0, logBytes = 0, imageBytes = 0, videoBytes = 0;
-  let docsBlocks = 0, docsChars = 0;
+  let images = 0,
+    videos = 0,
+    logBytes = 0,
+    imageBytes = 0,
+    videoBytes = 0;
+  let docsBlocks = 0,
+    docsChars = 0;
   for (const s of sessions) {
     docsBlocks += s.docsBlocks;
     docsChars += s.docsChars;
   }
-  // Per-session detail is needed for real byte totals (listSessions only
-  // aggregates counts) — fine at CLI scale, this isn't a hot path.
+  // Per-session detail is needed for real byte totals (listSessions only aggregates counts) — fine at CLI scale.
   for (const s of sessions) {
     const detail = dataStore.getSessionDetail(s.id);
     if (!detail) continue;
     for (const a of detail.artifacts) {
       const size = liveArtifactSize(a);
-      if (a.kind === "image") { images++; imageBytes += size; }
-      else if (a.kind === "video") { videos++; videoBytes += size; }
-      else if (a.kind === "log") { logBytes += size; }
+      if (a.kind === "image") {
+        images++;
+        imageBytes += size;
+      } else if (a.kind === "video") {
+        videos++;
+        videoBytes += size;
+      } else if (a.kind === "log") {
+        logBytes += size;
+      }
     }
   }
   console.log(`Sessions: ${sessions.length}`);
@@ -113,7 +128,9 @@ function cmdShow(sessionId: string): void {
     return;
   }
   console.log(`Session ${d.id}${d.name ? ` — ${d.name}` : ""}`);
-  console.log(`  Started: ${fmtDate(d.startedAt)}  Duration: ${fmtDuration(d.startedAt, d.endedAt)}  Tool calls: ${d.toolCalls}`);
+  console.log(
+    `  Started: ${fmtDate(d.startedAt)}  Duration: ${fmtDuration(d.startedAt, d.endedAt)}  Tool calls: ${d.toolCalls}`,
+  );
   if (d.hosts.length > 0) console.log(`  Hosts: ${d.hosts.join(", ")}`);
   console.log(`\n  Artifacts (${d.artifacts.length}):`);
   for (const a of d.artifacts) {
@@ -169,10 +186,10 @@ function cmdGc(argv: string[]): void {
   if (filtersGiven === 0) {
     console.log(
       "gc requires an explicit filter — nothing is deleted implicitly. Pass one of:\n" +
-      "  --session <id>        delete one specific session\n" +
-      "  --older-than <Nd>      delete sessions started more than N days ago\n" +
-      "  --keep-last <N>        delete every session except the N most recent\n" +
-      "Add --yes to actually delete (omit it to preview first).",
+        "  --session <id>        delete one specific session\n" +
+        "  --older-than <Nd>      delete sessions started more than N days ago\n" +
+        "  --keep-last <N>        delete every session except the N most recent\n" +
+        "Add --yes to actually delete (omit it to preview first).",
     );
     process.exitCode = 1;
     return;
@@ -249,38 +266,40 @@ const cmd = argv[0];
 const rest = argv.slice(1);
 
 switch (cmd) {
-  case "status":
+  case DataCliCommand.Status:
     cmdStatus();
     break;
-  case "sessions":
+  case DataCliCommand.Sessions:
     cmdSessions(Number(flagValue(rest, "--limit")) || 50);
     break;
-  case "show":
+  case DataCliCommand.Show:
     if (!rest[0]) console.log("Usage: dataCli.ts show <sessionId>");
     else cmdShow(rest[0]);
     break;
-  case "read":
+  case DataCliCommand.Read:
     if (!rest[0] || !Number.isFinite(Number(rest[0]))) console.log("Usage: dataCli.ts read <blockId>");
     else cmdRead(Number(rest[0]));
     break;
-  case "search": {
-    const nonFlagArgs = rest.filter((a, i) => a !== "--session" && a !== "--limit" && rest[i - 1] !== "--session" && rest[i - 1] !== "--limit");
+  case DataCliCommand.Search: {
+    const nonFlagArgs = rest.filter(
+      (a, i) => a !== "--session" && a !== "--limit" && rest[i - 1] !== "--session" && rest[i - 1] !== "--limit",
+    );
     const query = nonFlagArgs.join(" ");
     if (!query) console.log("Usage: dataCli.ts search <query> [--session <id>] [--limit N]");
     else cmdSearch(query, flagValue(rest, "--session"), Number(flagValue(rest, "--limit")) || 20);
     break;
   }
-  case "rename":
+  case DataCliCommand.Rename:
     if (!rest[0] || rest.length < 2) console.log("Usage: dataCli.ts rename <sessionId> <name...>");
     else cmdRename(rest[0], rest.slice(1).join(" "));
     break;
-  case "gc":
+  case DataCliCommand.Gc:
     cmdGc(rest);
     break;
   default:
     console.log(
-      "Usage: bun run src/server/dataCli.ts <status|sessions|show|read|search|rename|gc> [...args]\n" +
-      "See the header comment in src/server/dataCli.ts for full usage per command.",
+      `Usage: bun run src/server/dataCli.ts <${Object.values(DataCliCommand).join("|")}> [...args]\n` +
+        "See the header comment in src/server/dataCli.ts for full usage per command.",
     );
     process.exitCode = cmd ? 1 : 0;
 }

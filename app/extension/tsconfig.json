@@ -1,19 +1,18 @@
 {
-  "extends": "./.wxt/tsconfig.json",
-  "compilerOptions": {
-    "allowImportingTsExtensions": true,
-    "jsx": "react-jsx",
-    // WXT's own generated base turns this on; the existing code (moved
-    // here, not rewritten) predates it and isn't null-safe against it —
-    // reverting to match what it was actually written/typechecked against,
-    // rather than a drive-by strictness bump as a side effect of the move.
-    "noUncheckedIndexedAccess": false
-  },
-  // scripts/bump-version.ts is a Bun/Node-side utility (uses
-  // import.meta.dir), not browser runtime code — out of place under a
-  // config built for DOM/extension globals; it runs fine via Bun without
-  // being part of this typecheck. "exclude" isn't merged with the base
-  // config's own (node_modules/.output) when overridden here, so those are
-  // repeated alongside it.
-  "exclude": ["scripts/**", "node_modules", ".output"]
+    "extends": "./.wxt/tsconfig.json",
+    "compilerOptions": {
+        "allowImportingTsExtensions": true,
+        "jsx": "react-jsx",
+        "erasableSyntaxOnly": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "noUncheckedIndexedAccess": false
+    },
+    // scripts/bump-version.ts is a Bun/Node-side utility (uses
+    // import.meta.dir), not browser runtime code — out of place under a
+    // config built for DOM/extension globals; it runs fine via Bun without
+    // being part of this typecheck. "exclude" isn't merged with the base
+    // config's own (node_modules/.output) when overridden here, so those are
+    // repeated alongside it.
+    "exclude": ["scripts/**", "node_modules", ".output"]
 }

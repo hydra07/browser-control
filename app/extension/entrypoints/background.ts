@@ -1,716 +1,170 @@
 import type { BrowserCommand } from "@browsercontrol/shared";
-import { installDialogAutoHandler } from "../lib/dialog.js";
-import {
-    installNetworkCollector,
-    listNetworkRequests,
-    getNetworkRequestDetail,
-    clearNetworkRequests,
-} from "../lib/network.js";
-import { sendCommand, errorMessage, evalOnPage } from "../lib/cdp.js";
-import { captureScreenshot } from "../lib/screenshot.js";
+import { sendCommand } from "../libs/cdp.js";
+import { errorMessage } from "../libs/errorMessage.js";
+import { installDialogAutoHandler } from "../modules/dialog/index.js";
+import type { DispatchCtx } from "../modules/dispatch/index.js";
+import { dispatchCommand } from "../modules/dispatch/index.js";
+import { forgetTab, installInterceptor, isSandboxed } from "../modules/interceptor/index.js";
+import { installNetworkCollector } from "../modules/network/index.js";
 import {
     installScreencastFrameRelay,
+    isRecording,
     startScreencastRelay,
     stopScreencastRelay,
-    isRecording,
-} from "../lib/screencast.js";
-import { showPillCaption, NAVIGATE_ICON_SVG } from "../lib/overlay.js";
-import {
-    performClick,
-    performType,
-    performPressKey,
-    performScroll,
-    performDrag,
-} from "../lib/actions.js";
-import {
-    handleInspectMemory,
-    handleInspectProcess,
-    handleAnalyzeHar,
-    handleDebugLayout,
-    handleEmulate,
-} from "../lib/devtools.js";
-import { runFlowSteps } from "../lib/flow.js";
-import {
-    handleSnapshotCommand,
-    handleQueryRegionCommand,
-    handleVisualSnapshotCommand,
-} from "../lib/snapshot.js";
-import { inspectElement } from "../lib/inspect.js";
-import {
-    handleReadingModeCommand,
-    handleFindCommand,
-    handleSelectContentCommand,
-} from "../lib/read.js";
-import {
-    installTabGroupBadge,
-    handleListTabsCommand,
-    handleSwitchTabCommand,
-    addTabToWorkspaceGroup,
-} from "../lib/tabs.js";
-import { handlePeekScreenCommand } from "../lib/peek.js";
-import { waitForStableDom } from "../lib/wait.js";
-import { getSettings, getSettingsSync } from "../lib/settings.js";
+} from "../modules/screencast/index.js";
+import { installTabGroupBadge } from "../modules/tabs/index.js";
 
-// WXT requires a `defineBackground` default export to recognize this file as
-// the background entrypoint — everything below (previously plain top-level
-// code) now runs inside its callback. Purely a wrapper: nothing here is
-// re-timed or re-ordered, module evaluation still happens once, immediately,
-// same as before.
+/** Background service worker entrypoint managing CDP debugger attachments and command routing. */
 export default defineBackground(() => {
+    const EXTENSION_VERSION = chrome.runtime.getManifest().version;
 
-// Single source of truth is manifest.json — bump its "version" whenever the
-// extension changes, so a stale loaded build is easy to spot instead of
-// failing mysteriously with "Unknown command".
-const EXTENSION_VERSION = chrome.runtime.getManifest().version;
+    let lastActiveTabId: number | null = null;
+    const attachedTabIds = new Set<number>();
+    const lastActivityAt = new Map<number, number>();
 
-// lastActiveTabId is the default target for any command that omits tabId.
-// attachedTabIds tracks CDP-attach state per tab (a Set, not one global
-// flag) — what makes multi-tab work: two tabs can stay attached at once,
-// so switch_tab doesn't have to detach one to attach the other.
-// lastActivityAt backs the idle-detach alarm below.
-let lastActiveTabId: number | null = null;
-const attachedTabIds = new Set<number>();
-const lastActivityAt = new Map<number, number>();
-
-// Chrome can detach a debugger session out from under us (DevTools infobar
-// closed, OS debugger limit hit, ...) — clear the flag so the next command
-// re-attaches instead of failing confusingly against a dead session.
-chrome.debugger.onDetach.addListener((source) => {
-    if (source.tabId != null) {
-        attachedTabIds.delete(source.tabId);
-        lastActivityAt.delete(source.tabId);
-    }
-});
-
-// Chrome shows a "BrowserControl Agent is controlling this browser" infobar
-// on every tab with an attached debugger, for as long as it stays attached
-// — which used to be the tab's whole lifetime, since nothing ever detached
-// proactively. Detach after a few idle minutes instead; attachDebuggerIfNeeded
-// already re-attaches (and re-enables every CDP domain) transparently on the
-// next command against that tab, so this only costs one extra round trip
-// the next time it's actually used.
-const IDLE_DETACH_MINUTES = 3;
-
-chrome.alarms.create("idle-debugger-detach", { periodInMinutes: 1 });
-chrome.alarms.onAlarm.addListener((alarm) => {
-    if (alarm.name !== "idle-debugger-detach") return;
-    const cutoff = Date.now() - IDLE_DETACH_MINUTES * 60_000;
-    for (const tabId of attachedTabIds) {
-        // Recording rides the same CDP session but doesn't call any command
-        // (frames stream via a CDP event, not dispatchCommand) — never
-        // detach the tab it's riding on mid-recording.
-        if (isRecording() && tabId === lastActiveTabId) continue;
-        if ((lastActivityAt.get(tabId) ?? 0) > cutoff) continue;
-        chrome.debugger.detach({ tabId }, () => void chrome.runtime.lastError);
-    }
-});
-
-// A closed tab can't be re-attached to, or stay the default target.
-chrome.tabs.onRemoved.addListener((tabId) => {
-    attachedTabIds.delete(tabId);
-    lastActivityAt.delete(tabId);
-    if (lastActiveTabId === tabId) lastActiveTabId = null;
-});
-
-installTabGroupBadge();
-
-// Without this, side_panel.default_path in manifest.json only makes the
-// panel reachable via Chrome's own side-panel picker — the extension's own
-// toolbar icon does nothing on click, since there's no action.default_popup
-// either. This makes clicking the icon open the panel directly, the
-// behavior most people expect from a toolbar icon.
-chrome.sidePanel
-    .setPanelBehavior({ openPanelOnActionClick: true })
-    .catch((e) => console.error("[browsercontrol] setPanelBehavior failed:", e));
-
-// chrome.debugger is unavailable in offscreen documents, so offscreen holds
-// the daemon WebSocket + recording canvas/MediaRecorder (lib/capture.ts)
-// while this service worker does all CDP work, connected via
-// chrome.runtime.sendMessage/Port.
-const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
-
-async function ensureOffscreenDocument(): Promise<void> {
-    if (await chrome.offscreen.hasDocument()) return;
-    await chrome.offscreen.createDocument({
-        url: OFFSCREEN_DOCUMENT_PATH,
-        // WORKERS is the closest fit for "hold a WebSocket" — unlike
-        // AUDIO_PLAYBACK it has no auto-close timer.
-        reasons: ["WORKERS" as chrome.offscreen.Reason],
-        justification:
-            "Holds a persistent WebSocket connection to the local BrowserControl daemon, and hosts the canvas/MediaRecorder pipeline for browser_session's start_recording/stop_recording actions.",
+    /** Clear attachment state if Chrome or DevTools detaches the session. */
+    chrome.debugger.onDetach.addListener((source) => {
+        if (source.tabId != null) {
+            attachedTabIds.delete(source.tabId);
+            lastActivityAt.delete(source.tabId);
+        }
     });
-}
 
-interface RelayMessage {
-    target: "background";
-    payload: BrowserCommand & { id: string };
-}
+    /** Proactively detach debugger from idle tabs to dismiss the infobar banner. */
+    const IDLE_DETACH_MINUTES = 3;
 
-chrome.runtime.onMessage.addListener(
-    (message: RelayMessage, _sender, sendResponse) => {
+    chrome.alarms.create("idle-debugger-detach", { periodInMinutes: 1 });
+    chrome.alarms.onAlarm.addListener((alarm) => {
+        if (alarm.name !== "idle-debugger-detach") return;
+        const cutoff = Date.now() - IDLE_DETACH_MINUTES * 60_000;
+        for (const tabId of attachedTabIds) {
+            // Avoid detaching during an active screen recording session
+            if (isRecording() && tabId === lastActiveTabId) continue;
+            if ((lastActivityAt.get(tabId) ?? 0) > cutoff) continue;
+            chrome.debugger.detach({ tabId }, () => void chrome.runtime.lastError);
+        }
+    });
+
+    chrome.tabs.onRemoved.addListener((tabId) => {
+        attachedTabIds.delete(tabId);
+        lastActivityAt.delete(tabId);
+        forgetTab(tabId);
+        if (lastActiveTabId === tabId) lastActiveTabId = null;
+    });
+
+    installTabGroupBadge();
+
+    // Open side panel directly on clicking extension icon in toolbar
+    chrome.sidePanel
+        .setPanelBehavior({ openPanelOnActionClick: true })
+        .catch((e) => console.error("[browsercontrol] setPanelBehavior failed:", e));
+
+    const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
+
+    async function ensureOffscreenDocument(): Promise<void> {
+        if (await chrome.offscreen.hasDocument()) return;
+        await chrome.offscreen.createDocument({
+            url: OFFSCREEN_DOCUMENT_PATH,
+            reasons: ["WORKERS" as chrome.offscreen.Reason],
+            justification: "Holds persistent WebSocket bridge and offscreen canvas/MediaRecorder pipeline.",
+        });
+    }
+
+    interface RelayMessage {
+        target: "background";
+        payload: BrowserCommand & { id: string };
+    }
+
+    async function attachDebuggerIfNeeded(tabId: number) {
+        lastActivityAt.set(tabId, Date.now());
+        if (attachedTabIds.has(tabId)) return;
+
+        await new Promise<void>((resolve, reject) => {
+            chrome.debugger.attach({ tabId }, "1.3", () => {
+                const err = chrome.runtime.lastError;
+                if (err) {
+                    reject(
+                        new Error(
+                            `Failed to attach debugger to tab ${tabId}: ${err.message}. If another debugger is attached, close DevTools and retry.`,
+                        ),
+                    );
+                } else resolve();
+            });
+        });
+        attachedTabIds.add(tabId);
+
+        // Enable required CDP domains concurrently
+        const target = { tabId };
+        await Promise.all([
+            sendCommand(target, "Page.enable"),
+            sendCommand(target, "DOM.enable"),
+            sendCommand(target, "Network.enable"),
+            sendCommand(target, "CSS.enable"),
+            sendCommand(target, "Overlay.enable"),
+            sendCommand(target, "Accessibility.enable"),
+        ]);
+
+        // Restore Fetch interception if tab was previously sandboxed
+        if (isSandboxed(tabId)) {
+            await sendCommand(target, "Fetch.enable", { patterns: [{ requestStage: "Request" }] }).catch(() => {});
+        }
+    }
+
+    const dispatchCtx: DispatchCtx = {
+        getLastActiveTabId: () => lastActiveTabId,
+        setLastActiveTabId: (id) => {
+            lastActiveTabId = id;
+        },
+        attachDebuggerIfNeeded,
+        extensionVersion: EXTENSION_VERSION,
+    };
+
+    chrome.runtime.onMessage.addListener((message: RelayMessage, _sender, sendResponse) => {
         if (message?.target !== "background") return;
-        dispatchCommand(message.payload)
+        dispatchCommand(message.payload, dispatchCtx)
             .then(sendResponse)
             .catch((e: unknown) => sendResponse({ error: errorMessage(e) }));
         return true; // keep the message channel open for the async response
-    },
-);
-
-// The offscreen document opens a long-lived Port (not one-off sendMessage)
-// to stream screencast frames for browser_session's start_recording — see
-// lib/screencast.ts for why this rides CDP's Page.startScreencast instead
-// of chrome.tabCapture.
-chrome.runtime.onConnect.addListener((port) => {
-    if (port.name !== "capture-frames") return;
-    void handleCaptureConnection(port);
-});
-
-// Recording stays scoped to lastActiveTabId, not a specific tabId param —
-// capture.ts/screencast.ts hold single-recording-at-a-time state (one
-// canvas, one MediaRecorder), so multi-tab concurrent recording isn't a
-// thing yet even though click/type/snapshot/etc. can now target any tab.
-async function handleCaptureConnection(
-    port: chrome.runtime.Port,
-): Promise<void> {
-    if (!lastActiveTabId) {
-        port.postMessage({
-            error: "No active tab",
-            hint: "Call browser_session({action:\"navigate\"}) or browser_session({action:\"switch_tab\"}) first to establish which tab to record.",
-        });
-        port.disconnect();
-        return;
-    }
-    try {
-        await attachDebuggerIfNeeded(lastActiveTabId);
-    } catch (e) {
-        port.postMessage({ error: errorMessage(e) });
-        port.disconnect();
-        return;
-    }
-    const target = { tabId: lastActiveTabId };
-    const result = await startScreencastRelay(target, port);
-    port.postMessage(result);
-    if ("error" in result) {
-        port.disconnect();
-        return;
-    }
-    port.onDisconnect.addListener(() => {
-        void stopScreencastRelay(target);
     });
-}
 
-installDialogAutoHandler();
-installNetworkCollector(() => lastActiveTabId);
-installScreencastFrameRelay(() => lastActiveTabId);
-ensureOffscreenDocument();
-chrome.runtime.onStartup.addListener(ensureOffscreenDocument);
-
-// chrome.debugger can't attach to its own extension pages, chrome://
-// internals, the Web Store, etc. — matches attach's own restriction
-// (undocumented exact list, but these prefixes cover what actually shows
-// up as "the active tab" in practice: chrome://newtab as a fresh window's
-// default tab, chrome://extensions where a human just reloaded us, this
-// extension's own side panel/offscreen document).
-function isAttachableUrl(url: string | undefined): boolean {
-    if (!url) return false;
-    return !/^(chrome|chrome-extension|edge|devtools|chrome-untrusted|chrome-search|about):/i.test(
-        url,
-    );
-}
-
-// Best-effort "which tab does a human mean" for a caller with no MCP
-// session (no prior navigate/switch_tab) and no explicit tabId — the side
-// panel's Run button being the motivating case. Prefers the active tab of
-// the most recently focused normal window; if that happens to be a
-// chrome://-style page (e.g. the tab the human used to reload the
-// extension), falls back to the most recently accessed attachable tab
-// anywhere, rather than giving up immediately.
-async function findAttachableFallbackTab(): Promise<number | null> {
-    const [activeTab] = await chrome.tabs.query({
-        active: true,
-        lastFocusedWindow: true,
+    // Offscreen document streams screencast frames for recording over a Port
+    chrome.runtime.onConnect.addListener((port) => {
+        if (port.name !== "capture-frames") return;
+        void handleCaptureConnection(port);
     });
-    if (activeTab?.id != null && isAttachableUrl(activeTab.url)) {
-        return activeTab.id;
-    }
-    const allTabs = await chrome.tabs.query({});
-    const candidates = allTabs.filter(
-        (t) => t.id != null && isAttachableUrl(t.url),
-    );
-    if (candidates.length === 0) return null;
-    candidates.sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0));
-    return candidates[0].id ?? null;
-}
 
-async function attachDebuggerIfNeeded(tabId: number) {
-    lastActivityAt.set(tabId, Date.now());
-    if (attachedTabIds.has(tabId)) return;
-    // attach's callback fires on failure too (e.g. DevTools already
-    // debugging this tab) — must check lastError, or the failure is
-    // swallowed and the tab gets marked "attached" anyway.
-    await new Promise<void>((resolve, reject) => {
-        chrome.debugger.attach({ tabId }, "1.3", () => {
-            const err = chrome.runtime.lastError;
-            if (err) {
-                reject(
-                    new Error(
-                        `Failed to attach debugger to tab ${tabId}: ${err.message}. If this says another debugger is already attached, close DevTools on that tab (or whatever else is debugging it) and retry.`,
-                    ),
-                );
-            } else resolve();
-        });
-    });
-    attachedTabIds.add(tabId);
-    // Independent domains, enabled concurrently (~1 round-trip instead of
-    // 6): Page (dialogs), DOM (getBoxModel), Network, CSS, Overlay,
-    // Accessibility (queryAXTree). Accessibility.getFullAXTree/
-    // getPartialAXTree (lib/snapshot.ts) tolerate the domain being
-    // disabled and answer anyway, but Accessibility.queryAXTree (used by
-    // lib/actions.ts's getAxInfoForNode, i.e. every click/type/press_key
-    // that resolves a role+name) does not — without an explicit enable
-    // first, chrome.debugger.sendCommand's callback for queryAXTree just
-    // never fires (same silent-hang symptom as cdp.ts's header comment,
-    // easy to misdiagnose as that same generic flakiness). Playwright/
-    // Puppeteer both enable Accessibility before querying for the same
-    // reason.
-    const target = { tabId };
-    await Promise.all([
-        sendCommand(target, "Page.enable"),
-        sendCommand(target, "DOM.enable"),
-        sendCommand(target, "Network.enable"),
-        sendCommand(target, "CSS.enable"),
-        sendCommand(target, "Overlay.enable"),
-        sendCommand(target, "Accessibility.enable"),
-    ]);
-}
-
-async function dispatchCommand(
-    data: BrowserCommand & { id?: string },
-): Promise<Record<string, unknown>> {
-    const cmd = data.cmd;
-
-    if (cmd === "navigate") {
-        return await handleNavigate(data.url, {
-            tabId: data.tabId,
-            newTab: data.newTab,
-            background: data.background,
-        });
-    }
-
-    // Safe read-only screen peeker — works on any active or external tab without attaching CDP
-    if (cmd === "peek_screen") {
-        return await handlePeekScreenCommand({
-            tabId: data.tabId,
-            screenshot: data.screenshot,
-            maxChars: data.maxChars,
-            includeSelection: data.includeSelection,
-        });
-    }
-
-    // Neither needs a CDP session, and both must work before any navigate
-    // has happened — a user might create the tab group and drop tabs in
-    // first, then ask the AI to look.
-    if (cmd === "list_tabs") {
-        return await handleListTabsCommand(lastActiveTabId, { scope: data.scope });
-    }
-    if (cmd === "switch_tab") {
-        // Just repoints the DEFAULT target — does NOT detach whichever tab
-        // was active before, so that tab stays usable via an explicit
-        // tabId on later commands. This (not detach-then-reattach) is what
-        // actually makes multi-tab work.
-        const result = await handleSwitchTabCommand(data.tabId);
-        if ("success" in result) lastActiveTabId = result.newActiveTabId;
-        return result;
-    }
-
-    // batch_crawl needs DOMParser, which offscreen.ts's ws.onmessage handles
-    // directly (same as start_capture/stop_capture) before it would ever
-    // reach here — no branch for it in this function on purpose.
-
-    // No CDP session needed — chrome.tabs.onRemoved (see above) cleans up
-    // attachedTabIds/lastActiveTabId on its own once the tab is actually
-    // gone, so there's nothing else to reconcile here.
-    if (cmd === "close_tab") {
+    async function handleCaptureConnection(port: chrome.runtime.Port): Promise<void> {
+        if (!lastActiveTabId) {
+            port.postMessage({
+                error: "No active tab",
+                hint: 'Call browser_session({action:"navigate"}) or browser_session({action:"switch_tab"}) first to establish which tab to record.',
+            });
+            port.disconnect();
+            return;
+        }
         try {
-            await chrome.tabs.remove(data.tabId);
-            return { success: true, message: `Closed tab ${data.tabId}` };
+            await attachDebuggerIfNeeded(lastActiveTabId);
         } catch (e) {
-            return {
-                error: `Failed to close tab ${data.tabId}`,
-                hint: errorMessage(e),
-            };
+            port.postMessage({ error: errorMessage(e) });
+            port.disconnect();
+            return;
         }
-    }
-
-    // Explicit tabId targets that tab regardless of what's "current";
-    // omitted, it falls back to lastActiveTabId — today's single-tab
-    // behavior, unchanged for any caller that never passes tabId.
-    let targetTabId = data.tabId ?? lastActiveTabId;
-    if (!targetTabId) {
-        const fallbackTab = await findAttachableFallbackTab();
-        if (fallbackTab != null) {
-            targetTabId = fallbackTab;
-            lastActiveTabId = targetTabId;
+        const target = { tabId: lastActiveTabId };
+        const result = await startScreencastRelay(target, port);
+        port.postMessage(result);
+        if ("error" in result) {
+            port.disconnect();
+            return;
         }
-    }
-    if (!targetTabId) {
-        return {
-            error: "No active session. Call navigate first.",
-            hint: "No tabId was given and no attachable browser tab could be found to fall back to (chrome://, the extension's own pages, and similar internal URLs can't be debugged). Open a normal web page tab, or call browser_navigate first.",
-        };
-    }
-
-    // Safety Guard: Restrict mutating/interactive actions to Workspace tabs only
-    if (["click", "type", "press_key", "drag", "run_flow", "explore_flow"].includes(cmd)) {
-        try {
-            const tab = await chrome.tabs.get(targetTabId);
-            const { tabGroupName } = await getSettings();
-            let inWorkspace = false;
-            if (tab.groupId != null && tab.groupId > 0) {
-                const group = await chrome.tabGroups.get(tab.groupId).catch(() => null);
-                if (group && group.title === tabGroupName) inWorkspace = true;
-            }
-            if (!inWorkspace) {
-                return {
-                    error: `Safety check: Tab ${targetTabId} ("${tab.title || tab.url}") is outside the '${tabGroupName}'.`,
-                    hint: `AI interactive control (click, type, drag, run_flow) is restricted to Workspace tabs to protect personal browsing. On non-workspace tabs, use read-only observation via browser_inspect (peek_screen, reading_mode, find, screenshot). To grant control, drag this tab into '${tabGroupName}'.`,
-                };
-            }
-        } catch {}
-    }
-    await attachDebuggerIfNeeded(targetTabId);
-    const target = { tabId: targetTabId };
-    // User-configurable (lib/settings.ts) — off routes standalone
-    // click/type/press_key/scroll/drag through the same fast path
-    // browser_act's run_flow steps already always use.
-    const animated = getSettingsSync().animationsEnabled;
-
-    if (cmd === "snapshot")
-        return await handleSnapshotCommand(target, {
-            compact: data.compact,
-            format: data.format,
-        });
-
-    if (cmd === "query_region")
-        return await handleQueryRegionCommand(target, data.selector);
-
-    if (cmd === "visual_snapshot")
-        return await handleVisualSnapshotCommand(target);
-
-    if (cmd === "reading_mode")
-        return await handleReadingModeCommand(target, data.maxChars);
-
-    if (cmd === "find")
-        return await handleFindCommand(target, data.query, data.limit);
-
-    if (cmd === "select_content")
-        return await handleSelectContentCommand(target, {
-            selector: data.selector,
-            nodeId: data.nodeId,
-            maxChars: data.maxChars,
-            maxMatches: data.maxMatches,
-        });
-
-    if (cmd === "click") {
-        if (!data.nodeId)
-            return {
-                error: "Missing nodeId",
-                hint: "Call snapshot first and pass one of the returned node ids.",
-            };
-        return await performClick(target, data.nodeId, { fast: !animated });
-    }
-
-    if (cmd === "type") {
-        if (!data.text) return { error: "Missing text" };
-        return await performType(target, data.nodeId, data.text, {
-            fast: !animated,
+        port.onDisconnect.addListener(() => {
+            void stopScreencastRelay(target);
         });
     }
 
-    if (cmd === "press_key") {
-        return await performPressKey(target, data.key, data.nodeId, {
-            fast: !animated,
-        });
-    }
-
-    if (cmd === "run_flow" || cmd === "explore_flow") {
-        if (!Array.isArray(data.steps) || data.steps.length === 0) {
-            return {
-                error: "Missing steps",
-                hint: "Pass a non-empty array of flow steps, e.g. [{action:'click', role:'button', name:'Login'}].",
-            };
-        }
-        // FlowStep has no "navigate" action — a flow only ever interacts
-        // with whatever page is already loaded. That's fine for an
-        // MCP-driven browser_run_flow (the agent just navigated seconds
-        // ago), but a SAVED flow run from the panel's Run button (see
-        // daemon.ts's POST /flows/:id/run, which passes the flow's own
-        // `domain` through as data.domain) has no such guarantee — the
-        // active/last-used tab could be on whatever page a previous flow
-        // or manual browsing left it on. Every step then resolves against
-        // the wrong page and fails at step 0 with a confusing "found no
-        // element matching X", which reads like a broken selector when the
-        // real problem is "wrong page entirely". Auto-navigate first
-        // whenever the current tab's host doesn't already match.
-        if (data.domain) {
-            let currentHost: string | undefined;
-            try {
-                currentHost = new URL((await chrome.tabs.get(targetTabId)).url ?? "")
-                    .hostname;
-            } catch {
-                // Tab has no readable URL yet (e.g. still on about:blank) —
-                // treat as a mismatch, same as any other domain.
-            }
-            if (currentHost !== data.domain) {
-                const navResult = await handleNavigate(`https://${data.domain}`, {
-                    tabId: targetTabId,
-                });
-                if ("error" in navResult) return navResult;
-            }
-        }
-        return await runFlowSteps(target, data.steps, {
-            captureEachStep: cmd === "explore_flow",
-            returnSnapshot: data.returnSnapshot,
-        });
-    }
-
-    if (cmd === "scroll") {
-        return await performScroll(target, data.deltaX || 0, data.deltaY || 0, {
-            fast: !animated,
-        });
-    }
-
-    if (cmd === "drag") {
-        return await performDrag(
-            target,
-            data.fromX,
-            data.fromY,
-            data.toX,
-            data.toY,
-            {
-                fast: !animated,
-                shape: data.shape,
-                shapeParams: data.shapeParams,
-                path: data.path,
-                stepsCount: data.stepsCount,
-                easing: data.easing,
-                button: data.button,
-            },
-        );
-    }
-
-    if (cmd === "screenshot") {
-        return await captureScreenshot(target, {
-            format: data.format === "png" ? "png" : "jpeg",
-            quality: data.quality,
-            fullPage: data.fullPage,
-        });
-    }
-
-    if (cmd === "inspect_element") {
-        if (!data.nodeId)
-            return {
-                error: "Missing nodeId",
-                hint: "Call snapshot or visual_snapshot first and pass one of the returned node ids.",
-            };
-        return await inspectElement(target, data.nodeId);
-    }
-
-    if (cmd === "network_requests") {
-        return {
-            requests: listNetworkRequests({
-                resourceTypes: data.resourceTypes,
-                filter: data.filter,
-                limit: data.limit,
-            }),
-        };
-    }
-
-    if (cmd === "network_request_detail") {
-        if (!data.requestId)
-            return {
-                error: "Missing requestId",
-                hint: "Call network_requests first and pass one of the returned request ids.",
-            };
-        return await getNetworkRequestDetail(target, data.requestId);
-    }
-
-    if (cmd === "network_clear") {
-        clearNetworkRequests();
-        return { success: true, message: "Network log cleared." };
-    }
-
-    if (cmd === "dev_memory") {
-        return await handleInspectMemory(target, { focus: data.focus });
-    }
-
-    if (cmd === "dev_process") {
-        return await handleInspectProcess(target, { focus: data.focus });
-    }
-
-    if (cmd === "dev_har") {
-        return await handleAnalyzeHar(target, { filter: data.filter, includeBodies: data.includeBodies });
-    }
-
-    if (cmd === "dev_layout") {
-        return await handleDebugLayout(target, { selector: data.selector, nodeId: data.nodeId, focus: data.focus });
-    }
-
-    if (cmd === "dev_emulate") {
-        return await handleEmulate(target, {
-            device: data.device,
-            network: data.network,
-            cpuSlowdown: data.cpuSlowdown,
-            touch: data.touch,
-        });
-    }
-
-    if (cmd === "evaluate") {
-        const res = await sendCommand(target, "Runtime.evaluate", {
-            expression: data.expression,
-            returnByValue: true,
-        });
-        if (res?.exceptionDetails) {
-            return {
-                error: res.exceptionDetails.text,
-                hint: "The expression threw. Check for syntax errors or references to elements that don't exist yet.",
-            };
-        }
-        return { success: true, result: res?.result?.value };
-    }
-
-    return {
-        error: `Unknown command: ${cmd}`,
-        hint: `This loaded extension is v${EXTENSION_VERSION}. If "${cmd}" is a real browsercontrol command, the extension in chrome://extensions is running an older build than the daemon — reload it there (MV3 extensions never pick up source changes automatically). Do not work around this by installing other automation libraries; it's a stale-extension issue, not a missing capability.`,
-    };
-}
-
-// Bounds the "wait for the tab to finish loading" step below — a page that
-// never fires "complete" (a stuck download, an SSE stream) would otherwise
-// leave the chrome.tabs.onUpdated listener registered forever.
-const NAVIGATE_LOAD_TIMEOUT_MS = 20000;
-
-async function handleNavigate(
-    url: string,
-    opts: { tabId?: number; newTab?: boolean; background?: boolean } = {},
-): Promise<Record<string, unknown>> {
-    clearNetworkRequests();
-
-    let windowId: number | undefined;
-    let tabId: number;
-    let reuseExistingTab: boolean;
-    // background:true (browser_bulk's start_job worker tabs, see jobs.ts) must
-    // not touch lastActiveTabId or steal window focus — a job runs
-    // alongside the caller's own foreground session, not instead of it.
-    const active = !opts.background;
-
-    // Three ways in: explicit tabId re-navigates that specific tab; newTab
-    // always opens a fresh one; otherwise reuse lastActiveTabId if still
-    // alive, else create one (the original single-tab default).
-    if (opts.tabId != null) {
-        try {
-            await chrome.tabs.get(opts.tabId);
-        } catch {
-            return {
-                error: `No tab with id ${opts.tabId}`,
-                hint: "Call browser_session({action:\"list_tabs\"}) to see currently open tabs, or omit tabId to open a new one.",
-            };
-        }
-        tabId = opts.tabId;
-        reuseExistingTab = true;
-    } else if (opts.newTab) {
-        const newTab = await chrome.tabs.create({ url, active });
-        tabId = newTab.id!;
-        windowId = newTab.windowId;
-        reuseExistingTab = false;
-    } else {
-        // lastActiveTabId goes stale the moment its tab is closed, and the
-        // service worker has no way to notice on its own until it tries to
-        // use it — fall back to a fresh tab instead of hard-failing.
-        let existingTabIsValid = false;
-        if (lastActiveTabId) {
-            try {
-                await chrome.tabs.get(lastActiveTabId);
-                existingTabIsValid = true;
-            } catch {
-                console.log(
-                    `Stale lastActiveTabId ${lastActiveTabId} (tab no longer exists) — creating a new tab.`,
-                );
-            }
-        }
-        if (existingTabIsValid) {
-            tabId = lastActiveTabId!;
-            reuseExistingTab = true;
-        } else {
-            const newTab = await chrome.tabs.create({ url, active });
-            tabId = newTab.id!;
-            windowId = newTab.windowId;
-            reuseExistingTab = false;
-        }
-    }
-
-    if (reuseExistingTab) {
-        const updatedTab = await chrome.tabs.update(tabId, { url, active });
-        windowId = updatedTab?.windowId;
-    }
-    if (!opts.background) lastActiveTabId = tabId;
-
-    // Chrome-active isn't OS-active — bring the window forward so the
-    // animations are actually visible. Skipped for background tabs.
-    if (windowId !== undefined && !opts.background) {
-        chrome.windows.update(windowId, { focused: true }, () => {
-            if (chrome.runtime.lastError)
-                console.log(
-                    "Could not focus window:",
-                    chrome.runtime.lastError.message,
-                );
-        });
-    }
-
-    await addTabToWorkspaceGroup(tabId);
-
-    // Wait for the browser-level load event, then let the page's own JS
-    // settle (SPA hydration, redirects) instead of guessing with a sleep.
-    // Bounded and always cleaned up — see NAVIGATE_LOAD_TIMEOUT_MS above.
-    await new Promise<void>((resolve) => {
-        const timer = setTimeout(() => {
-            chrome.tabs.onUpdated.removeListener(listener);
-            resolve();
-        }, NAVIGATE_LOAD_TIMEOUT_MS);
-        function listener(
-            updatedTabId: number,
-            info: chrome.tabs.TabChangeInfo,
-        ) {
-            if (updatedTabId === tabId && info.status === "complete") {
-                clearTimeout(timer);
-                chrome.tabs.onUpdated.removeListener(listener);
-                resolve();
-            }
-        }
-        chrome.tabs.onUpdated.addListener(listener);
-    });
-
-    await attachDebuggerIfNeeded(tabId);
-    await waitForStableDom({ tabId }, { timeoutMs: 3000 });
-
-    // Skipped for background tabs — nobody's watching one.
-    if (!opts.background) {
-        let hostname = url;
-        try {
-            hostname = new URL(url).hostname || url;
-        } catch {
-            // Not a parseable absolute URL — show it verbatim.
-        }
-        void evalOnPage(
-            { tabId },
-            `(${showPillCaption.toString()})(${JSON.stringify(NAVIGATE_ICON_SVG)}, ${JSON.stringify(`Navigated to ${hostname}`)}, ${JSON.stringify("#6ee7b7")}, ${JSON.stringify("#34d399")}, false)`,
-        );
-    }
-
-    // tabId in the response is what a caller doing multi-tab work captures
-    // and passes as `tabId` on later commands to keep targeting this exact
-    // tab, instead of whichever one is lastActiveTabId by then.
-    return { success: true, message: `Navigated to ${url}`, tabId };
-}
-
+    installDialogAutoHandler();
+    installNetworkCollector(() => lastActiveTabId);
+    installInterceptor();
+    installScreencastFrameRelay(() => lastActiveTabId);
+    ensureOffscreenDocument();
+    chrome.runtime.onStartup.addListener(ensureOffscreenDocument);
 });
