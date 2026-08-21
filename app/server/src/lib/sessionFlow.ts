@@ -69,13 +69,22 @@ export function recordAndCheckFlow(cmd: string, args: Record<string, unknown>): 
     warnings.push(`flow: acting on a node id with no snapshot/visual_snapshot/query_region call since the last navigate. If this id came from an old snapshot it may be stale — expect "Failed to resolve node bounds" if so.`);
   }
 
-  if (cmd === 'click') {
-    // Not scoped to "in a row" — the same nodeId as the last two clicks,
-    // even with a snapshot between them, is the "clicked, saw no change,
-    // clicked again" pattern this is meant to catch.
-    const lastTwoClicks = lastOfType('click', 2);
-    if (lastTwoClicks.length === 2 && lastTwoClicks[0].args?.nodeId === lastTwoClicks[1].args?.nodeId) {
-      warnings.push(`flow: your last two browser_act({action:"click"}) calls both targeted node ${args?.nodeId}. If the first click's snapshot showed no change, don't assume it silently failed and retry blind — the effect may just be slow to render; consider a brief pause or checking browser_inspect({action:"network_requests"}) before clicking again, since retrying a click that actually worked can double-submit.`);
+  if (cmd === 'explore_flow') {
+    const count = lastOfType('explore_flow', HISTORY_LIMIT).length;
+    if (count >= 2) {
+      warnings.push(`flow: you have run explore:true ${count} times recently. explore:true dumps full deltas per step and consumes large amounts of tokens. If the UI structure is already understood, switch to plain browser_act({action:"run_flow"}) to save ~80% tokens.`);
+    }
+  }
+
+  if (cmd === 'network_requests' && (!args?.resourceTypes || (Array.isArray(args.resourceTypes) && args.resourceTypes.length === 0))) {
+    warnings.push(`flow: network_requests called without resourceTypes filter. Pass resourceTypes: ["XHR", "Fetch"] and limit: 10 to avoid dumping hundreds of static asset requests and burning context.`);
+  }
+
+  const INTERACTIVE_CMDS = new Set(['click', 'type', 'press_key', 'scroll', 'drag']);
+  if (INTERACTIVE_CMDS.has(cmd)) {
+    const recentInteractives = history.filter((h) => INTERACTIVE_CMDS.has(h.cmd)).slice(-5);
+    if (recentInteractives.length >= 3) {
+      warnings.push(`flow: you are running multiple standalone interactions in a row (${recentInteractives.map((h) => h.cmd).join(' -> ')}). Combine multi-step actions into a single browser_act({action:"run_flow", steps:[...]}) call to eliminate round-trip latency and save tokens.`);
     }
   }
 

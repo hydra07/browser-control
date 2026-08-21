@@ -290,7 +290,7 @@ export async function handleFindCommand(
             hint: "Pass the text (or a CSS selector/XPath) to search for — same query syntax as DevTools' Elements panel search.",
         };
 
-    await sendCommand(target, "DOM.getDocument", { depth: -1 }).catch(() => {});
+    await sendCommand(target, "DOM.getDocument", { depth: 0 }).catch(() => {});
     const search = await sendCommand(target, "DOM.performSearch", { query });
     if (!search?.searchId || search.resultCount === 0) {
         if (search?.searchId)

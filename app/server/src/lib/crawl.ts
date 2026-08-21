@@ -287,8 +287,8 @@ export function getDeepCrawlStatusText(crawlId: string): string {
         for (const p of newlyDone) {
             lines.push(
                 p.status === "success"
-                    ? `✅ [d${p.depth}] ${p.title || p.url}`
-                    : `❌ [d${p.depth}] ${p.url} — ${p.error}`,
+                    ? `[OK] [d${p.depth}] ${p.title || p.url}`
+                    : `[FAIL] [d${p.depth}] ${p.url} — ${p.error}`,
             );
         }
         lines.push("", `Each page saved as its own docs block — query via browser_knowledge({action:"query_docs"}).`);

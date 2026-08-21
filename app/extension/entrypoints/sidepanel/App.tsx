@@ -1,15 +1,21 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { getStatus, listFlows, type DaemonStatus, type FlowMeta } from "./lib/api";
+import { getSettings, type Settings } from "../../lib/settings.js";
 import { FlowList } from "./components/FlowList";
 import { SettingsTab } from "./components/SettingsTab";
+import { BenchmarkTab } from "./components/BenchmarkTab";
+import { ChatTab } from "./components/ChatTab";
 import {
   WorkflowIcon,
   SettingsIcon,
   RefreshIcon,
+  ChartBarIcon,
+  ChatIcon,
   AppLogo,
+  CrossIcon,
 } from "./components/Icons";
 
-type TabKey = "flows" | "settings";
+type TabKey = "flows" | "benchmark" | "chat" | "settings";
 
 type LoadState =
   | { status: "loading" }
@@ -22,13 +28,19 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabKey>("flows");
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus | null>(null);
+  const [settings, setSettings] = useState<Settings | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [flows, status] = await Promise.all([listFlows(), getStatus()]);
+      const [flows, status, currentSettings] = await Promise.all([
+        listFlows(),
+        getStatus(),
+        getSettings(),
+      ]);
       setState({ status: "loaded", flows });
       setDaemonStatus(status);
+      setSettings(currentSettings);
     } catch (e) {
       setState({
         status: "unreachable",
@@ -44,26 +56,68 @@ export default function App() {
     return () => clearInterval(timer);
   }, [load]);
 
+  const isChatEnabled = settings?.chatEnabled ?? false;
+
+  // If chat is turned off while on chat tab, fall back to flows
+  useEffect(() => {
+    if (!isChatEnabled && activeTab === "chat") {
+      setActiveTab("flows");
+    }
+  }, [isChatEnabled, activeTab]);
+
+  // Global Keyboard Navigation Shortcuts inside Sidepanel
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      const isInput = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable;
+      if (isInput) return;
+
+      if (e.key === "1") {
+        setActiveTab("flows");
+      } else if (e.key === "2") {
+        setActiveTab("benchmark");
+      } else if (e.key === "3" && isChatEnabled) {
+        setActiveTab("chat");
+      } else if (e.key === "4" || (e.key === "3" && !isChatEnabled)) {
+        setActiveTab("settings");
+      } else if (e.key === "r" || e.key === "R") {
+        void handleRefresh();
+      } else if (e.key === "Escape") {
+        window.close();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isChatEnabled]);
+
   async function handleRefresh() {
     setIsRefreshing(true);
     await load();
     setTimeout(() => setIsRefreshing(false), 300);
   }
 
+  function handleClosePanel() {
+    window.close();
+  }
+
   const isConnected = daemonStatus?.extensionConnected ?? false;
   const flowCount = state.status === "loaded" ? state.flows.length : 0;
 
   return (
-    <div className="flex h-screen w-full bg-[#0d0e12] text-zinc-100 overflow-hidden font-sans select-none antialiased">
+    <div className="flex h-screen w-full bg-[#0c0d11] text-zinc-100 overflow-hidden font-sans select-none antialiased animate-fade-in">
       {/* Activity Bar Rail */}
-      <aside className="flex w-11 flex-none flex-col items-center justify-between border-r border-zinc-800/80 bg-[#090a0d] py-3 z-10">
-        {/* Top Section: App Logo & Tabs */}
+      <aside className="flex w-11 flex-none flex-col items-center justify-between border-r border-zinc-800/80 bg-[#08090c] py-3 z-10">
+        {/* Top Section: App Logo & Navigation Tabs */}
         <div className="flex flex-col items-center gap-3 w-full">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-200 shadow-sm" title="BrowserControl DevTools">
+          <div
+            className="flex h-7 w-7 items-center justify-center rounded-lg bg-zinc-900 border border-zinc-800/90 text-indigo-400 shadow-sm transition hover:border-indigo-500/50 hover:scale-105"
+            title="BrowserControl Agent"
+          >
             <AppLogo className="w-4 h-4" />
           </div>
 
-          <div className="h-px w-5 bg-zinc-800/80" />
+          <div className="h-px w-5 bg-zinc-800/70" />
 
           {/* Navigation Icons */}
           <nav className="flex flex-col items-center gap-1.5 w-full px-1">
@@ -71,72 +125,114 @@ export default function App() {
             <button
               type="button"
               onClick={() => setActiveTab("flows")}
-              title={`Automated Flows (${flowCount})`}
-              className={`group relative flex h-8 w-8 items-center justify-center rounded-lg transition active:scale-95 ${
+              title={`Automated Flows (${flowCount}) [1]`}
+              className={`group relative flex h-8 w-8 items-center justify-center rounded-lg transition-all duration-200 active:scale-95 ${
                 activeTab === "flows"
-                  ? "bg-zinc-800 text-white shadow-sm"
+                  ? "bg-zinc-800 text-white shadow-sm ring-1 ring-zinc-700/60"
                   : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
               }`}
             >
               {activeTab === "flows" && (
-                <span className="absolute -left-1 top-2 bottom-2 w-[2.5px] bg-indigo-400 rounded-r shadow-[0_0_6px_rgba(129,140,248,0.6)]" />
+                <span className="absolute -left-1 top-2 bottom-2 w-[2.5px] bg-indigo-400 rounded-r shadow-[0_0_6px_rgba(129,140,248,0.7)]" />
               )}
-              <WorkflowIcon className="w-4 h-4" />
+              <WorkflowIcon className="w-4 h-4 transition-transform group-hover:scale-110" />
             </button>
+
+            {/* Benchmark Tab Button */}
+            <button
+              type="button"
+              onClick={() => setActiveTab("benchmark")}
+              title="Token Telemetry & Metrics [2]"
+              className={`group relative flex h-8 w-8 items-center justify-center rounded-lg transition-all duration-200 active:scale-95 ${
+                activeTab === "benchmark"
+                  ? "bg-zinc-800 text-white shadow-sm ring-1 ring-zinc-700/60"
+                  : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
+              }`}
+            >
+              {activeTab === "benchmark" && (
+                <span className="absolute -left-1 top-2 bottom-2 w-[2.5px] bg-indigo-400 rounded-r shadow-[0_0_6px_rgba(129,140,248,0.7)]" />
+              )}
+              <ChartBarIcon className="w-4 h-4 transition-transform group-hover:scale-110" />
+            </button>
+
+            {/* Chat Tab Button (Controlled by Settings Toggle) */}
+            {isChatEnabled && (
+              <button
+                type="button"
+                onClick={() => setActiveTab("chat")}
+                title="CLI Agent Chat [3]"
+                className={`group relative flex h-8 w-8 items-center justify-center rounded-lg transition-all duration-200 active:scale-95 ${
+                  activeTab === "chat"
+                    ? "bg-zinc-800 text-white shadow-sm ring-1 ring-zinc-700/60"
+                    : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
+                }`}
+              >
+                {activeTab === "chat" && (
+                  <span className="absolute -left-1 top-2 bottom-2 w-[2.5px] bg-indigo-400 rounded-r shadow-[0_0_6px_rgba(129,140,248,0.7)]" />
+                )}
+                <ChatIcon className="w-4 h-4 transition-transform group-hover:scale-110" />
+              </button>
+            )}
 
             {/* Settings Tab Button */}
             <button
               type="button"
               onClick={() => setActiveTab("settings")}
               title="Settings & Diagnostics"
-              className={`group relative flex h-8 w-8 items-center justify-center rounded-lg transition active:scale-95 ${
+              className={`group relative flex h-8 w-8 items-center justify-center rounded-lg transition-all duration-200 active:scale-95 ${
                 activeTab === "settings"
-                  ? "bg-zinc-800 text-white shadow-sm"
+                  ? "bg-zinc-800 text-white shadow-sm ring-1 ring-zinc-700/60"
                   : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
               }`}
             >
               {activeTab === "settings" && (
-                <span className="absolute -left-1 top-2 bottom-2 w-[2.5px] bg-indigo-400 rounded-r shadow-[0_0_6px_rgba(129,140,248,0.6)]" />
+                <span className="absolute -left-1 top-2 bottom-2 w-[2.5px] bg-indigo-400 rounded-r shadow-[0_0_6px_rgba(129,140,248,0.7)]" />
               )}
-              <SettingsIcon className="w-4 h-4" />
+              <SettingsIcon className="w-4 h-4 transition-transform group-hover:scale-110" />
             </button>
           </nav>
         </div>
 
-        {/* Bottom Section: Sync & Live Connection Dot */}
+        {/* Bottom Section: Sync & Live Connection Status Dot */}
         <div className="flex flex-col items-center gap-2.5">
           <button
             type="button"
             onClick={() => void handleRefresh()}
-            title="Sync State"
+            title="Sync State [R]"
             className="flex h-7 w-7 items-center justify-center rounded-lg text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/80 transition active:scale-90"
           >
-            <RefreshIcon className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin text-zinc-200" : ""}`} />
+            <RefreshIcon className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin text-indigo-400" : ""}`} />
           </button>
 
           <div
-            title={isConnected ? "Daemon Paired (WebSocket Connected)" : "Daemon Offline / Unpaired"}
+            title={isConnected ? "Daemon Paired (Live CDP Bridge Active)" : "Daemon Offline / Unpaired"}
             className="flex h-5 w-5 items-center justify-center cursor-pointer group"
             onClick={() => setActiveTab("settings")}
           >
             <span
-              className={`h-2 w-2 rounded-full ring-2 transition ${
+              className={`h-2 w-2 rounded-full transition-all duration-300 ${
                 isConnected
-                  ? "bg-emerald-400 ring-emerald-500/20 shadow-[0_0_8px_rgba(52,211,153,0.5)]"
-                  : "bg-amber-400 ring-amber-500/20"
+                  ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)] animate-pulse-glow"
+                  : "bg-amber-400/80 shadow-[0_0_4px_rgba(251,191,36,0.5)]"
               }`}
             />
           </div>
         </div>
       </aside>
 
-      {/* Main Panel Content */}
-      <main className="flex flex-1 flex-col min-w-0 bg-[#0d0e12] overflow-hidden">
+      {/* Main Panel Content Container */}
+      <main className="flex flex-1 flex-col min-w-0 bg-[#0c0d11] overflow-hidden">
         {/* Top Header */}
-        <header className="flex flex-none items-center justify-between border-b border-zinc-800/80 px-3.5 py-2.5 bg-[#101116]/80 backdrop-blur-md">
+        <header className="flex flex-none items-center justify-between border-b border-zinc-800/80 px-3.5 py-2.5 glass-header z-10">
           <div className="flex items-center gap-2">
-            <h2 className="text-[12px] font-semibold tracking-tight text-zinc-100">
-              {activeTab === "flows" ? "Automated Flows" : "Settings & Setup"}
+            <h2 className="text-[12px] font-semibold tracking-tight text-zinc-100 flex items-center gap-1.5">
+              {activeTab === "flows"
+                ? "Automated Flows"
+                : activeTab === "benchmark"
+                  ? "Token Telemetry & Metrics"
+                  : activeTab === "chat"
+                    ? "CLI Agent Chat"
+                    : "Settings & Setup"}
             </h2>
             {activeTab === "flows" && flowCount > 0 && (
               <span className="rounded-full bg-zinc-800/80 px-2 py-0.2 font-mono text-[10px] text-zinc-400 border border-zinc-700/40">
@@ -145,63 +241,79 @@ export default function App() {
             )}
           </div>
 
-          <div className="flex items-center gap-1.5 font-mono text-[10px]">
+          <div className="flex items-center gap-2 font-mono text-[10px]">
             <span
-              className={`px-1.5 py-0.5 rounded border ${
+              className={`px-1.5 py-0.5 rounded border transition-colors ${
                 isConnected
-                  ? "bg-emerald-950/40 text-emerald-400 border-emerald-900/50"
+                  ? "bg-emerald-950/40 text-emerald-400 border-emerald-900/50 shadow-[0_0_6px_rgba(52,211,153,0.15)]"
                   : "bg-amber-950/40 text-amber-400 border-amber-900/50"
               }`}
             >
               {isConnected ? "READY" : "OFFLINE"}
             </span>
+
+            {/* Native Close Button */}
+            <button
+              type="button"
+              onClick={handleClosePanel}
+              title="Close Side Panel (Esc)"
+              className="flex h-5 w-5 items-center justify-center rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/80 transition active:scale-95"
+            >
+              <CrossIcon className="w-3 h-3" />
+            </button>
           </div>
         </header>
 
-        {/* Tab View */}
-        {activeTab === "flows" ? (
-          <>
-            {state.status === "loading" && (
-              <div className="flex flex-1 items-center justify-center p-6 text-zinc-500 font-mono text-[11px]">
-                <div className="flex items-center gap-2">
-                  <div className="h-3 w-3 animate-spin rounded-full border border-zinc-400 border-t-transparent" />
-                  <span>Connecting to daemon...</span>
+        {/* Tab View Transition Container */}
+        <div key={activeTab} className="flex-1 flex flex-col min-h-0 overflow-hidden animate-fade-in">
+          {activeTab === "flows" ? (
+            <>
+              {state.status === "loading" && (
+                <div className="flex flex-1 items-center justify-center p-6 text-zinc-500 font-mono text-[11px]">
+                  <div className="flex items-center gap-2">
+                    <div className="h-3 w-3 animate-spin rounded-full border border-indigo-400 border-t-transparent" />
+                    <span>Connecting to daemon...</span>
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {state.status === "unreachable" && (
-              <div className="flex flex-1 flex-col items-center justify-center p-6 text-center">
-                <div className="font-semibold text-zinc-200 text-xs">Daemon Unreachable</div>
-                <p className="mt-1 text-[11px] text-zinc-500 max-w-[220px] leading-relaxed">
-                  {state.message}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => void handleRefresh()}
-                  className="mt-3.5 rounded-lg bg-zinc-800 px-3 py-1 text-[11px] font-medium text-zinc-200 hover:bg-zinc-700 transition"
-                >
-                  Retry Connection
-                </button>
-              </div>
-            )}
+              {state.status === "unreachable" && (
+                <div className="flex flex-1 flex-col items-center justify-center p-6 text-center animate-fade-in">
+                  <div className="font-semibold text-zinc-200 text-xs">Daemon Unreachable</div>
+                  <p className="mt-1 text-[11px] text-zinc-500 max-w-[220px] leading-relaxed">
+                    {state.message}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void handleRefresh()}
+                    className="mt-3.5 rounded-lg bg-zinc-800 px-3 py-1 text-[11px] font-medium text-zinc-200 hover:bg-zinc-700 transition"
+                  >
+                    Retry Connection
+                  </button>
+                </div>
+              )}
 
-            {state.status === "loaded" && (
-              <FlowList
-                flows={state.flows}
-                onFlowDeleted={(id) =>
-                  setState((s) =>
-                    s.status === "loaded"
-                      ? { ...s, flows: s.flows.filter((f) => f.id !== id) }
-                      : s,
-                  )
-                }
-              />
-            )}
-          </>
-        ) : (
-          <SettingsTab daemonStatus={daemonStatus} onRefresh={() => void handleRefresh()} />
-        )}
+              {state.status === "loaded" && (
+                <FlowList
+                  flows={state.flows}
+                  onFlowDeleted={(id) =>
+                    setState((s) =>
+                      s.status === "loaded"
+                        ? { ...s, flows: s.flows.filter((f) => f.id !== id) }
+                        : s,
+                    )
+                  }
+                />
+              )}
+            </>
+          ) : activeTab === "benchmark" ? (
+            <BenchmarkTab onRefresh={() => void handleRefresh()} />
+          ) : activeTab === "chat" && isChatEnabled ? (
+            <ChatTab />
+          ) : (
+            <SettingsTab daemonStatus={daemonStatus} onRefresh={() => void handleRefresh()} />
+          )}
+        </div>
       </main>
     </div>
   );

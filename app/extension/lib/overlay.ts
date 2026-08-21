@@ -241,7 +241,15 @@ export function showKeyBadge(key: string, fast?: boolean) {
     setTimeout(() => badge.remove(), durationS * 1000 + 50);
 }
 
-/** Self-contained. Wider text pill for actions needing more than a glyph (navigate, switch_tab) — same bottom-dock anchor as showKeyBadge/showScrollIndicator. `color`/`glow` are a hex pair, per caller. */
+// Inline SVG markup for showPillCaption's `icon` param — built here, not
+// injected, so ordinary shared consts are fine (unlike the self-contained
+// functions above).
+export const NAVIGATE_ICON_SVG =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10Z"/></svg>';
+export const SWITCH_TAB_ICON_SVG =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>';
+
+/** Self-contained. Wider text pill for actions needing more than a glyph (navigate, switch_tab) — same bottom-dock anchor as showKeyBadge/showScrollIndicator. `icon` is inline SVG markup, `color`/`glow` a hex pair, per caller. */
 export function showPillCaption(
     icon: string,
     text: string,
@@ -260,8 +268,8 @@ export function showPillCaption(
     const badge = document.createElement("div");
     badge.style.cssText = `all:initial;position:fixed;left:50%;bottom:8%;z-index:2147483647;pointer-events:none;display:flex;align-items:center;gap:8px;max-width:min(480px,84vw);padding:10px 18px 10px 14px;border-radius:999px;background:rgba(17,24,39,0.85);backdrop-filter:blur(12px);box-shadow:0 8px 32px rgba(0,0,0,0.3),inset 0 1px 1px rgba(255,255,255,0.15);animation:__bc_pill_badge_pop__ ${durationS}s cubic-bezier(0.16, 1, 0.3, 1) both;`;
     const iconEl = document.createElement("span");
-    iconEl.style.cssText = `flex:none;font-size:16px;line-height:1;filter:drop-shadow(0 0 6px ${glow}b3);`;
-    iconEl.textContent = icon;
+    iconEl.style.cssText = `flex:none;display:flex;width:16px;height:16px;color:${color};filter:drop-shadow(0 0 6px ${glow}b3);`;
+    iconEl.innerHTML = icon; // inline SVG markup, not an emoji glyph — see call sites
     const textEl = document.createElement("span");
     textEl.style.cssText = `color:${color};font:600 13.5px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-shadow:0 0 10px ${glow}80;`;
     textEl.textContent = text;

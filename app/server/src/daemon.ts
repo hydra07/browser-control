@@ -11,6 +11,7 @@ import { serve } from "bun";
 import type { ServerWebSocket } from "bun";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { mkdirSync, writeFileSync, readdirSync, renameSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -19,6 +20,7 @@ import * as dataStore from "./lib/dataStore.js";
 import { logToolCall, logDirectCall } from "./lib/callLog.js";
 import { TOOLS, INSTRUCTIONS } from "./lib/toolSchemas.js";
 import { handleToolCall } from "./lib/toolHandlers.js";
+import { executeCliAgentQuery, streamCliAgentQuery, abortActiveAgentQuery, detectAvailableAgents, isAgentBusy } from "./lib/cliAgent.js";
 import type { CommandResult } from "./lib/types.js";
 import type { ExtensionResponse } from "@browsercontrol/shared";
 import pkg from "../package.json" with { type: "json" };
@@ -67,12 +69,16 @@ const LOG_FILE = join(LOGS_DIR, `session-${SESSION_ID}.jsonl`);
 dataStore.initSession(SESSION_ID, { pid: process.pid });
 dataStore.recordArtifact({ sessionId: SESSION_ID, kind: "log", path: LOG_FILE });
 
+// Otherwise a killed/restarted daemon orphans any in-flight `claude`
+// subprocess (cliAgent.ts) until its own 90s timeout.
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, () => {
+    abortActiveAgentQuery();
     dataStore.endSession(SESSION_ID);
     process.exit(0);
   });
 }
+process.on("exit", () => abortActiveAgentQuery());
 
 function saveScreenshotToFile(dataBase64: string, format: string): string {
   const ext = format === "png" ? "png" : "jpg";
@@ -134,7 +140,26 @@ const httpServer = serve({
 
     // Talked to directly by the side panel (a browser page, not an MCP
     // client) — same pattern as /execute, for browsing/running saved flows.
-    const JSON_CORS_HEADERS = { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" };
+    const CORS_HEADERS = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    };
+    const JSON_CORS_HEADERS = {
+      "Content-Type": "application/json",
+      ...CORS_HEADERS,
+    };
+
+    if (req.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+
+    // Read-only MCP endpoint for the chat's own CLI agent — see
+    // chatMcpServer/chatMcpTransport below, wired via cliAgent.ts's
+    // --mcp-config so it can call browser_inspect on the real page.
+    if (url.pathname === "/mcp") {
+      return handleChatMcpRequest(req);
+    }
 
     if (req.method === "GET" && url.pathname === "/flows") {
       // A thrown exception here (e.g. a transient SQLITE_BUSY under
@@ -181,6 +206,81 @@ const httpServer = serve({
       );
     }
 
+    if (req.method === "GET" && url.pathname === "/metrics") {
+      try {
+        const querySessionId = url.searchParams.get("sessionId") || SESSION_ID;
+        const metrics = dataStore.getBenchmarkMetrics(querySessionId);
+        return new Response(JSON.stringify(metrics), { headers: JSON_CORS_HEADERS });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }), { status: 500, headers: JSON_CORS_HEADERS });
+      }
+    }
+
+    // Sandboxed CLI Agent Query Endpoint (user-configured custom CLI command or agy/claude)
+    if (req.method === "POST" && url.pathname === "/cli-agent/query") {
+      return req.json().then(async (body: {
+        prompt: string;
+        url?: string;
+        title?: string;
+        selectionText?: string;
+        compactContext?: string;
+        customCommand?: string;
+        sessionId?: string;
+      }) => {
+        const res = await executeCliAgentQuery({
+          prompt: body.prompt,
+          url: body.url,
+          title: body.title,
+          selectionText: body.selectionText,
+          compactContext: body.compactContext,
+          customCommand: body.customCommand,
+          sessionId: body.sessionId,
+        });
+        return new Response(JSON.stringify(res), { headers: JSON_CORS_HEADERS });
+      }).catch((e) => new Response(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }), { status: 400, headers: JSON_CORS_HEADERS }));
+    }
+
+    if (req.method === "POST" && url.pathname === "/cli-agent/stream") {
+      return req.json().then((body: {
+        prompt: string;
+        url?: string;
+        title?: string;
+        selectionText?: string;
+        compactContext?: string;
+        customCommand?: string;
+        sessionId?: string;
+      }) => {
+        const stream = streamCliAgentQuery({
+          prompt: body.prompt,
+          url: body.url,
+          title: body.title,
+          selectionText: body.selectionText,
+          compactContext: body.compactContext,
+          customCommand: body.customCommand,
+          sessionId: body.sessionId,
+        });
+        return new Response(stream, {
+          headers: {
+            ...JSON_CORS_HEADERS,
+            "Content-Type": "text/event-stream; charset=utf-8",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+          },
+        });
+      }).catch((e) => new Response(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }), { status: 400, headers: JSON_CORS_HEADERS }));
+    }
+
+    if (req.method === "POST" && url.pathname === "/cli-agent/abort") {
+      const aborted = abortActiveAgentQuery();
+      return new Response(JSON.stringify({ success: aborted }), { headers: JSON_CORS_HEADERS });
+    }
+
+    if (req.method === "GET" && url.pathname === "/cli-agent/status") {
+      const agents = detectAvailableAgents();
+      const busy = isAgentBusy();
+      return new Response(JSON.stringify({ ...agents, isBusy: busy }), { headers: JSON_CORS_HEADERS });
+    }
+
     const deleteMatch = req.method === "DELETE" ? url.pathname.match(/^\/flows\/([^/]+)$/) : null;
     if (deleteMatch) {
       const flowId = decodeURIComponent(deleteMatch[1]);
@@ -224,7 +324,7 @@ const httpServer = serve({
   },
   websocket: {
     open(ws) {
-      console.error("🟢 Chrome Extension connected!");
+      console.error("[daemon] Chrome extension connected");
       extensionSocket = ws;
     },
     message(ws, message) {
@@ -240,13 +340,13 @@ const httpServer = serve({
       }
     },
     close(ws) {
-      console.error("🔴 Chrome Extension disconnected!");
+      console.error("[daemon] Chrome extension disconnected");
       if (extensionSocket === ws) extensionSocket = null;
     },
   },
 });
 
-console.error(`🚀 BrowserControl HTTP/WS Daemon running at http://localhost:${httpServer.port}`);
+console.error(`[daemon] HTTP/WS daemon running at http://localhost:${httpServer.port}`);
 
 /**
  * Relays one command to the extension over the WS bridge and waits for its
@@ -297,6 +397,7 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
     saveScreenshotToFile,
     saveVideoToFile,
   });
+
   // Logged by the internal action (click, navigate, ...) that ran, not the
   // gateway tool name that carried it — falls back to the tool name only
   // if `action` is missing (a malformed call).
@@ -309,7 +410,41 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function runMcp() {
   const transport = new StdioServerTransport();
   await mcpServer.connect(transport);
-  console.error("🚀 MCP Server is connected to stdio");
+  console.error("[daemon] MCP server connected to stdio");
 }
 
 runMcp().catch((e) => console.error("MCP Server failed", e));
+
+// --- Read-only MCP server over HTTP, for the sidepanel chat's own CLI
+// agent (cliAgent.ts) to attach to via --mcp-config. Only browser_inspect
+// is exposed — the chat agent should never click/type/navigate on its own.
+const CHAT_TOOLS = TOOLS.filter((t) => t.name === "browser_inspect");
+
+/**
+ * A stateless WebStandardStreamableHTTPServerTransport can only ever
+ * `handleRequest` once (the SDK throws on reuse), and a Server can only
+ * ever `connect()` to one transport — so both are built fresh per request
+ * rather than module-level singletons.
+ */
+function handleChatMcpRequest(req: Request): Promise<Response> {
+  const server = new Server(
+    { name: "browsercontrol-chat", version: PACKAGE_VERSION },
+    { capabilities: { tools: {} } },
+  );
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: CHAT_TOOLS }));
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const response = await handleToolCall(request, {
+      executeCommand,
+      sessionId: SESSION_ID,
+      inlineImages: INLINE_IMAGES,
+      saveScreenshotToFile,
+      saveVideoToFile,
+    });
+    const { action: loggedAction, ...restArgs } = (request.params.arguments ?? {}) as Record<string, unknown>;
+    const logCmd = typeof loggedAction === "string" && loggedAction ? loggedAction : request.params.name;
+    logToolCall(LOG_FILE, `chat:${logCmd}`, restArgs, response, 0);
+    return response;
+  });
+  const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  return server.connect(transport).then(() => transport.handleRequest(req));
+}

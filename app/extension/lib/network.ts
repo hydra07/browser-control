@@ -95,7 +95,7 @@ export function clearNetworkRequests(): void {
 export function listNetworkRequests(
   opts: { resourceTypes?: string[]; filter?: string; limit?: number } = {},
 ): Array<Partial<NetworkEntry>> {
-  const limit = opts.limit ?? 50;
+  const limit = opts.limit ?? 15;
   const allowed =
     opts.resourceTypes && opts.resourceTypes.length > 0
       ? new Set(opts.resourceTypes)

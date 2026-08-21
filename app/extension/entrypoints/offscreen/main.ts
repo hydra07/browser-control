@@ -34,7 +34,7 @@ function connect(): void {
   ws = new WebSocket(WS_URL);
 
   ws.onopen = () => {
-    console.log('🟢 [offscreen] Connected to BrowserControl Daemon');
+    console.log('[offscreen] Connected to daemon');
     reconnectDelayMs = 1000;
   };
 
@@ -87,7 +87,7 @@ function connect(): void {
   };
 
   ws.onclose = () => {
-    console.log(`🔴 [offscreen] Disconnected from Daemon. Retrying in ${reconnectDelayMs}ms.`);
+    console.log(`[offscreen] Disconnected from daemon, retrying in ${reconnectDelayMs}ms`);
     setTimeout(ensureConnected, reconnectDelayMs);
     reconnectDelayMs = Math.min(reconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);
   };

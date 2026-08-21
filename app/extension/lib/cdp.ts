@@ -103,9 +103,18 @@ export async function evalOnPage(
             );
         }
     } catch (e) {
+        const msg = errorMessage(e);
+        if (
+            msg.includes("Debugger is not attached") ||
+            msg.includes("No tab with id") ||
+            msg.includes("Target closed") ||
+            msg.includes("Session with given id not found")
+        ) {
+            return;
+        }
         console.error(
             "[browsercontrol] visual feedback command failed:",
-            errorMessage(e),
+            msg,
         );
     }
 }

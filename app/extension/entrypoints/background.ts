@@ -14,7 +14,7 @@ import {
     stopScreencastRelay,
     isRecording,
 } from "../lib/screencast.js";
-import { showPillCaption } from "../lib/overlay.js";
+import { showPillCaption, NAVIGATE_ICON_SVG } from "../lib/overlay.js";
 import {
     performClick,
     performType,
@@ -22,6 +22,13 @@ import {
     performScroll,
     performDrag,
 } from "../lib/actions.js";
+import {
+    handleInspectMemory,
+    handleInspectProcess,
+    handleAnalyzeHar,
+    handleDebugLayout,
+    handleEmulate,
+} from "../lib/devtools.js";
 import { runFlowSteps } from "../lib/flow.js";
 import {
     handleSnapshotCommand,
@@ -40,8 +47,9 @@ import {
     handleSwitchTabCommand,
     addTabToWorkspaceGroup,
 } from "../lib/tabs.js";
+import { handlePeekScreenCommand } from "../lib/peek.js";
 import { waitForStableDom } from "../lib/wait.js";
-import { getSettingsSync } from "../lib/settings.js";
+import { getSettings, getSettingsSync } from "../lib/settings.js";
 
 // WXT requires a `defineBackground` default export to recognize this file as
 // the background entrypoint — everything below (previously plain top-level
@@ -289,11 +297,21 @@ async function dispatchCommand(
         });
     }
 
+    // Safe read-only screen peeker — works on any active or external tab without attaching CDP
+    if (cmd === "peek_screen") {
+        return await handlePeekScreenCommand({
+            tabId: data.tabId,
+            screenshot: data.screenshot,
+            maxChars: data.maxChars,
+            includeSelection: data.includeSelection,
+        });
+    }
+
     // Neither needs a CDP session, and both must work before any navigate
     // has happened — a user might create the tab group and drop tabs in
     // first, then ask the AI to look.
     if (cmd === "list_tabs") {
-        return await handleListTabsCommand(lastActiveTabId);
+        return await handleListTabsCommand(lastActiveTabId, { scope: data.scope });
     }
     if (cmd === "switch_tab") {
         // Just repoints the DEFAULT target — does NOT detach whichever tab
@@ -329,13 +347,6 @@ async function dispatchCommand(
     // behavior, unchanged for any caller that never passes tabId.
     let targetTabId = data.tabId ?? lastActiveTabId;
     if (!targetTabId) {
-        // lastActiveTabId is in-memory and only ever gets set by
-        // browser_navigate/browser_switch_tab — an MCP session that hasn't
-        // called either yet. But the side panel's Run button (see
-        // daemon.ts's POST /flows/:id/run) has no MCP session at all, just
-        // a human clicking a button — for that caller "no active session"
-        // is a dead end, not a real error: fall back to whatever real page
-        // tab looks like the one a human clicking Run obviously means.
         const fallbackTab = await findAttachableFallbackTab();
         if (fallbackTab != null) {
             targetTabId = fallbackTab;
@@ -348,6 +359,25 @@ async function dispatchCommand(
             hint: "No tabId was given and no attachable browser tab could be found to fall back to (chrome://, the extension's own pages, and similar internal URLs can't be debugged). Open a normal web page tab, or call browser_navigate first.",
         };
     }
+
+    // Safety Guard: Restrict mutating/interactive actions to Workspace tabs only
+    if (["click", "type", "press_key", "drag", "run_flow", "explore_flow"].includes(cmd)) {
+        try {
+            const tab = await chrome.tabs.get(targetTabId);
+            const { tabGroupName } = await getSettings();
+            let inWorkspace = false;
+            if (tab.groupId != null && tab.groupId > 0) {
+                const group = await chrome.tabGroups.get(tab.groupId).catch(() => null);
+                if (group && group.title === tabGroupName) inWorkspace = true;
+            }
+            if (!inWorkspace) {
+                return {
+                    error: `Safety check: Tab ${targetTabId} ("${tab.title || tab.url}") is outside the '${tabGroupName}'.`,
+                    hint: `AI interactive control (click, type, drag, run_flow) is restricted to Workspace tabs to protect personal browsing. On non-workspace tabs, use read-only observation via browser_inspect (peek_screen, reading_mode, find, screenshot). To grant control, drag this tab into '${tabGroupName}'.`,
+                };
+            }
+        } catch {}
+    }
     await attachDebuggerIfNeeded(targetTabId);
     const target = { tabId: targetTabId };
     // User-configurable (lib/settings.ts) — off routes standalone
@@ -355,7 +385,11 @@ async function dispatchCommand(
     // browser_act's run_flow steps already always use.
     const animated = getSettingsSync().animationsEnabled;
 
-    if (cmd === "snapshot") return await handleSnapshotCommand(target);
+    if (cmd === "snapshot")
+        return await handleSnapshotCommand(target, {
+            compact: data.compact,
+            format: data.format,
+        });
 
     if (cmd === "query_region")
         return await handleQueryRegionCommand(target, data.selector);
@@ -436,6 +470,7 @@ async function dispatchCommand(
         }
         return await runFlowSteps(target, data.steps, {
             captureEachStep: cmd === "explore_flow",
+            returnSnapshot: data.returnSnapshot,
         });
     }
 
@@ -452,7 +487,15 @@ async function dispatchCommand(
             data.fromY,
             data.toX,
             data.toY,
-            { fast: !animated },
+            {
+                fast: !animated,
+                shape: data.shape,
+                shapeParams: data.shapeParams,
+                path: data.path,
+                stepsCount: data.stepsCount,
+                easing: data.easing,
+                button: data.button,
+            },
         );
     }
 
@@ -495,6 +538,31 @@ async function dispatchCommand(
     if (cmd === "network_clear") {
         clearNetworkRequests();
         return { success: true, message: "Network log cleared." };
+    }
+
+    if (cmd === "dev_memory") {
+        return await handleInspectMemory(target, { focus: data.focus });
+    }
+
+    if (cmd === "dev_process") {
+        return await handleInspectProcess(target, { focus: data.focus });
+    }
+
+    if (cmd === "dev_har") {
+        return await handleAnalyzeHar(target, { filter: data.filter, includeBodies: data.includeBodies });
+    }
+
+    if (cmd === "dev_layout") {
+        return await handleDebugLayout(target, { selector: data.selector, nodeId: data.nodeId, focus: data.focus });
+    }
+
+    if (cmd === "dev_emulate") {
+        return await handleEmulate(target, {
+            device: data.device,
+            network: data.network,
+            cpuSlowdown: data.cpuSlowdown,
+            touch: data.touch,
+        });
     }
 
     if (cmd === "evaluate") {
@@ -635,7 +703,7 @@ async function handleNavigate(
         }
         void evalOnPage(
             { tabId },
-            `(${showPillCaption.toString()})(${JSON.stringify("🌐")}, ${JSON.stringify(`Navigated to ${hostname}`)}, ${JSON.stringify("#6ee7b7")}, ${JSON.stringify("#34d399")}, false)`,
+            `(${showPillCaption.toString()})(${JSON.stringify(NAVIGATE_ICON_SVG)}, ${JSON.stringify(`Navigated to ${hostname}`)}, ${JSON.stringify("#6ee7b7")}, ${JSON.stringify("#34d399")}, false)`,
         );
     }
 

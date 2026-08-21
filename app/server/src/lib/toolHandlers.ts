@@ -4,6 +4,8 @@
 // does and what params it takes.
 
 import type { CallToolRequest } from "@modelcontextprotocol/sdk/types.js";
+import { writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import * as dataStore from "./dataStore.js";
 import { listSkills, saveSkill, findSkillForHostname } from "./skills.js";
 import { startJob, getJobStatusText, jobExists } from "./jobs.js";
@@ -12,6 +14,15 @@ import { startDeepCrawl, getDeepCrawlStatusText, crawlExists } from "./crawl.js"
 import { PREVIEW_CHARS } from "./callLog.js";
 import type { CommandResult, ToolCallResponse } from "./types.js";
 import type { FlowStep } from "@browsercontrol/shared";
+
+function saveHarToFile(harData: unknown, sessionId: string): string {
+  const dir = join(process.cwd(), "data", "har");
+  mkdirSync(dir, { recursive: true });
+  const filename = `session-${sessionId}-${Date.now()}.har`;
+  const fullPath = join(dir, filename);
+  writeFileSync(fullPath, JSON.stringify(harData, null, 2), "utf-8");
+  return fullPath;
+}
 
 /** What handleToolCall needs from daemon.ts, passed in rather than imported — same reasoning as jobs.ts/crawl.ts's Executor param: this module shouldn't have to import daemon.ts (which imports this one). */
 export interface ToolHandlerCtx {
@@ -65,7 +76,7 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
   const { name, arguments: args } = request.params;
   const action = typeof args?.action === "string" ? args.action : "";
   try {
-    let result: CommandResult | string;
+    let result: unknown;
     switch (name) {
       // click/type/press_key/scroll/drag each chain several sequential CDP
       // calls (scrollIntoView, getBoxModel, queryAXTree, the actual input
@@ -91,13 +102,29 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
           result = await executeCommand("scroll", { deltaX: args?.deltaX, deltaY: args?.deltaY, tabId: args?.tabId }, 20000);
           break;
         case "drag":
-          result = await executeCommand("drag", { fromX: args?.fromX, fromY: args?.fromY, toX: args?.toX, toY: args?.toY, tabId: args?.tabId }, 25000);
+          result = await executeCommand("drag", {
+            fromX: args?.fromX,
+            fromY: args?.fromY,
+            toX: args?.toX,
+            toY: args?.toY,
+            shape: args?.shape,
+            shapeParams: args?.shapeParams,
+            path: args?.path,
+            stepsCount: args?.stepsCount,
+            easing: args?.easing,
+            button: args?.button,
+            tabId: args?.tabId,
+          }, 30000);
           break;
         case "evaluate":
           result = await executeCommand("evaluate", { expression: args?.expression, tabId: args?.tabId });
           break;
         case "run_flow":
-          result = await executeCommand(args?.explore ? "explore_flow" : "run_flow", { steps: args?.steps, tabId: args?.tabId });
+          result = await executeCommand(args?.explore ? "explore_flow" : "run_flow", {
+            steps: args?.steps,
+            tabId: args?.tabId,
+            returnSnapshot: args?.returnSnapshot,
+          });
           break;
         default:
           return unknownAction(name, action, ["click", "type", "press_key", "scroll", "drag", "evaluate", "run_flow"]);
@@ -124,8 +151,8 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
             };
           }
           result = args?.selector
-            ? await executeCommand("query_region", { selector: args.selector, tabId: args?.tabId })
-            : await executeCommand("snapshot", { tabId: args?.tabId });
+            ? await executeCommand("query_region", { selector: args.selector, tabId: args?.tabId, compact: args?.compact })
+            : await executeCommand("snapshot", { tabId: args?.tabId, compact: args?.compact, format: args?.compact ? "compact" : undefined });
           break;
         }
         case "find":
@@ -205,8 +232,40 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
         case "network_clear":
           result = await executeCommand("network_clear", { tabId: args?.tabId });
           break;
+        case "peek_screen": {
+          const peek = await executeCommand("peek_screen", {
+            screenshot: args?.screenshot,
+            maxChars: args?.maxChars,
+            tabId: args?.tabId,
+          });
+          if (peek?.error) {
+            return {
+              content: [{ type: "text", text: `Error: ${peek.error}${peek.hint ? ` (${peek.hint})` : ""}` }],
+              isError: true,
+            };
+          }
+          let shotFilePath: string | undefined;
+          if (peek?.screenshotBase64) {
+            try {
+              shotFilePath = saveScreenshotToFile(peek.screenshotBase64 as string, "jpeg");
+            } catch {}
+          }
+          const isWorkspace = peek?.isWorkspaceTab ? "🤖 AI Workspace" : "Personal / Non-Workspace Tab (Read-Only)";
+          let details = `[PEEK ACTIVE SCREEN]\nURL: ${peek?.url}\nTitle: ${peek?.title}\nTab ID: ${peek?.tabId}\nScope: ${isWorkspace}\nPermissions: ${peek?.permissions}`;
+          if (peek?.selectedText) details += `\n\n[SELECTION]\n"${peek.selectedText}"`;
+          if (peek?.h1) details += `\n\nHeading: ${peek.h1}`;
+          if (peek?.text) details += `\n\nPage Text Content (${peek?.textLength} chars):\n${peek.text}`;
+          if (shotFilePath) details += `\n\n[SCREENSHOT] saved to: ${shotFilePath}`;
+
+          return {
+            content: [
+              ...(INLINE_IMAGES && peek?.screenshotBase64 ? [{ type: "image" as const, data: peek.screenshotBase64 as string, mimeType: "image/jpeg" as const }] : []),
+              { type: "text", text: details },
+            ],
+          };
+        }
         default:
-          return unknownAction(name, action, ["snapshot", "find", "reading_mode", "inspect_element", "screenshot", "select_content", "network_requests", "network_clear"]);
+          return unknownAction(name, action, ["snapshot", "find", "reading_mode", "inspect_element", "screenshot", "select_content", "network_requests", "network_clear", "peek_screen"]);
       } break;
 
       case "browser_session": switch (action) {
@@ -218,13 +277,13 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
               const hostname = new URL(url).hostname;
               dataStore.recordHostVisit(SESSION_ID, hostname);
               const skill = findSkillForHostname(hostname);
-              if (skill) result = { ...result, skillHint: `Skill available for this domain: ${skill.path} — read it before exploring.` };
+              if (skill) result = { ...(result as Record<string, unknown>), skillHint: `Skill available for this domain: ${skill.path} — read it before exploring.` };
             } catch {}
           }
           break;
         }
         case "list_tabs":
-          result = await executeCommand("list_tabs");
+          result = await executeCommand("list_tabs", { scope: args?.scope });
           break;
         case "switch_tab":
           result = await executeCommand("switch_tab", { tabId: args?.tabId });
@@ -264,8 +323,27 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
             content: [{ type: "text", text: `Saved ${seconds}s ${rec.format} recording to ${recFilePath}${frameNote}. To see what actions were taken during the recording, check data/logs/session-*.jsonl for entries in that time window.${rec._flowWarning ? `\n\n[${rec._flowWarning}]` : ''}` }],
           };
         }
+        case "get_metrics": {
+          const targetSessionId = args?.allSessions ? undefined : SESSION_ID;
+          const raw = dataStore.getBenchmarkMetrics(targetSessionId);
+          // For MCP tool response to Agent, return lean summary without 100 raw JSON logs
+          result = {
+            summary: raw.summary,
+            tokenSavings: raw.tokenSavings,
+            byCommand: raw.byCommand,
+            recentCallsCount: raw.recentCalls.length,
+            recentCalls: raw.recentCalls.slice(0, 5).map((c) => ({
+              cmd: c.cmd,
+              durationMs: c.durationMs,
+              approxTokens: c.approxTokens,
+              isError: c.isError,
+              argsSummary: c.argsSummary,
+            })),
+          };
+          break;
+        }
         default:
-          return unknownAction(name, action, ["navigate", "list_tabs", "switch_tab", "close_tab", "set_session_name", "start_recording", "stop_recording"]);
+          return unknownAction(name, action, ["navigate", "list_tabs", "switch_tab", "close_tab", "set_session_name", "start_recording", "stop_recording", "get_metrics"]);
       } break;
 
       case "browser_bulk": switch (action) {
@@ -299,11 +377,11 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
           const formattedBlocks = successfulItems.map((item) => {
             const metaLines = [
               `# [${item.title || item.url}](${item.url})`,
-              `> 🌐 **Source URL**: \`${item.url}\``,
-              `> ⏱️ **Crawled At**: \`${new Date().toISOString()}\` | **Latency**: \`${item.fetchDurationMs ?? 0}ms\` | **Reading Time**: \`${item.readingTime || 'N/A'}\``,
-              ...(item.byline ? [`> 👤 **Author**: ${item.byline}`] : []),
-              ...(item.publishedTime ? [`> 📅 **Published**: ${item.publishedTime}`] : []),
-              ...(item.description ? [`> 💬 **Summary**: ${item.description}`] : []),
+              `> **Source URL**: \`${item.url}\``,
+              `> **Crawled At**: \`${new Date().toISOString()}\` | **Latency**: \`${item.fetchDurationMs ?? 0}ms\` | **Reading Time**: \`${item.readingTime || 'N/A'}\``,
+              ...(item.byline ? [`> **Author**: ${item.byline}`] : []),
+              ...(item.publishedTime ? [`> **Published**: ${item.publishedTime}`] : []),
+              ...(item.description ? [`> **Summary**: ${item.description}`] : []),
               "",
               item.markdown,
             ];
@@ -326,17 +404,17 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
           }
 
           const summaryLines = [
-            `⚡ Batch crawled ${crawl?.totalProcessed ?? items.length} URL(s) in ${crawl?.durationMs}ms: ${crawl?.successful} succeeded, ${crawl?.failed} failed${crawl?.duplicatesSkipped ? ` (${crawl.duplicatesSkipped} duplicates skipped)` : ''}.${fileReport}`,
-            `📊 Throughput: ${crawl?.throughputPagesPerSec ?? 0} pages/s | Avg Latency: ${crawl?.avgFetchLatencyMs ?? 0}ms/page | Discovered Outlinks: ${(crawl?.discoveredOutlinks as string[])?.length ?? 0}`,
+            `[BATCH] Crawled ${crawl?.totalProcessed ?? items.length} URL(s) in ${crawl?.durationMs}ms: ${crawl?.successful} succeeded, ${crawl?.failed} failed${crawl?.duplicatesSkipped ? ` (${crawl.duplicatesSkipped} duplicates skipped)` : ''}.${fileReport}`,
+            `[STATS] Throughput: ${crawl?.throughputPagesPerSec ?? 0} pages/s | Avg Latency: ${crawl?.avgFetchLatencyMs ?? 0}ms/page | Discovered Outlinks: ${(crawl?.discoveredOutlinks as string[])?.length ?? 0}`,
             "",
             "### Crawl Results Summary:",
             ...items.map((item, idx) => {
               if (item.status === "success") {
-                return `${idx + 1}. ✅ [${item.title || item.url}](${item.url}) — ${item.fetchDurationMs ? `${item.fetchDurationMs}ms | ` : ''}${item.readingTime || `${item.length} chars`}`;
+                return `${idx + 1}. [OK] [${item.title || item.url}](${item.url}) — ${item.fetchDurationMs ? `${item.fetchDurationMs}ms | ` : ''}${item.readingTime || `${item.length} chars`}`;
               } else if (item.status === "skipped_duplicate") {
-                return `${idx + 1}. ⏭️ ${item.url} (skipped duplicate)`;
+                return `${idx + 1}. [SKIP] ${item.url} (skipped duplicate)`;
               } else {
-                return `${idx + 1}. ❌ ${item.url} — ${item.error || "Failed"}`;
+                return `${idx + 1}. [FAIL] ${item.url} — ${item.error || "Failed"}`;
               }
             }),
           ];
@@ -481,6 +559,49 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
         }
         default:
           return unknownAction(name, action, ["list_skills", "save_skill", "list_flows", "save_flow", "delete_flow", "query_docs"]);
+      } break;
+
+      case "browser_dev": switch (action) {
+        case "inspect_memory":
+          result = await executeCommand("dev_memory", { focus: args?.focus, tabId: args?.tabId });
+          break;
+        case "inspect_process":
+          result = await executeCommand("dev_process", { focus: args?.focus, tabId: args?.tabId });
+          break;
+        case "analyze_har":
+          result = await executeCommand("dev_har", { filter: args?.filter, includeBodies: args?.includeBodies, tabId: args?.tabId });
+          if (result && typeof result === "object" && "overview" in result) {
+            result = (result as Record<string, unknown>).overview;
+          }
+          break;
+        case "export_har": {
+          const raw = await executeCommand("dev_har", { filter: args?.filter, includeBodies: args?.includeBodies, tabId: args?.tabId });
+          if (raw?.harLog) {
+            const filePath = saveHarToFile(raw.harLog, SESSION_ID);
+            result = {
+              message: `Exported HAR 1.2 archive with ${(raw.harLog as { entries: unknown[] }).entries.length} requests.`,
+              filePath,
+              overview: raw.overview,
+            };
+          } else {
+            result = raw;
+          }
+          break;
+        }
+        case "debug_layout":
+          result = await executeCommand("dev_layout", { selector: args?.selector, nodeId: args?.nodeId, focus: args?.focus, tabId: args?.tabId });
+          break;
+        case "emulate":
+          result = await executeCommand("dev_emulate", {
+            device: args?.device,
+            network: args?.network,
+            cpuSlowdown: args?.cpuSlowdown,
+            touch: args?.touch,
+            tabId: args?.tabId,
+          });
+          break;
+        default:
+          return unknownAction(name, action, ["inspect_memory", "inspect_process", "analyze_har", "export_har", "debug_layout", "emulate"]);
       } break;
 
       default:
