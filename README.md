@@ -1,183 +1,192 @@
-<img src="app/extension/public/icon/128.png" width="72" align="left" alt="BrowserControl icon">
+<p align="center">
+  <img src="assets/browsercontrol-logo.png" width="112" alt="BrowserControl logo">
+</p>
 
-# BrowserControl
+<h1 align="center">BrowserControl</h1>
 
-**Give your AI agent a real Chrome tab — not a headless clone.**
+<p align="center">
+  <strong>Give an AI agent the Chrome session you already use.</strong>
+</p>
 
-A Chrome extension + local MCP server that lets Claude Code, Antigravity CLI, or any MCP client drive *your own* browser via the Chrome DevTools Protocol: your cookies, your logged-in sessions, your extensions — the page exactly as you'd see it, with real trusted clicks and keystrokes instead of `el.click()` calls that skip actual event handlers.
+<p align="center">
+  Real tabs · existing logins · trusted input · visible automation · local-first MCP
+</p>
 
-<br clear="left">
+BrowserControl connects MCP agents to your everyday Chrome browser through the Chrome DevTools Protocol. The agent works inside your real profile—with your cookies, extensions, and authenticated sessions—while you can watch every cursor movement, click, keystroke, scroll, and drag.
 
-## Why this instead of Playwright/Puppeteer?
+It is a Chrome extension plus a local Bun daemon. No Playwright browser, disposable profile, or cloud relay is involved.
 
-- 🍪 **Your session, not a fresh profile.** No re-logging into every site before the agent can get to work.
-- 👀 **Watchable & Human-Auditable.** Every action glides a visible cursor, ripples, and highlights its target. Built-in high-definition video recording captures runs for human review and debugging without bloating agent token budgets.
-- 🔴 **Auto-Flow Recording.** Click "Record Flow" in the side panel, browse naturally in Chrome, and have your interactions automatically transcribed into optimized, reusable automation sequences.
-- 🧠 **Built for token budgets, not just capability.** Accessibility-based element diffs instead of full DOM re-dumps, metadata-only listings before full-content fetches, and compact progressive-disclosure reporting.
-- 🛑 **Guardrails & Sandboxing.** Actions that look destructive (delete, pay, sign out) require explicit confirmation. DevTools mutation sandboxing intercepts all mutating requests so you can explore unfamiliar UIs risk-free.
-- 📊 **Zero-Overhead Self-Benchmarking.** Dedicated `@browsercontrol/benchmark` engine with opt-in runtime telemetry tracking Bun RAM drift and Extension JS Heap stability.
-- ⚡ **Scales past one tab when needed.** Concurrent fetch crawling, multi-tab background jobs, and link-following frontier crawlers with async polling.
+## Why BrowserControl?
 
----
+| | BrowserControl | Headless automation |
+|---|---|---|
+| Browser state | Your active Chrome profile | Fresh or separately managed profile |
+| Authentication | Existing signed-in sessions | Usually requires login setup |
+| Input | CDP mouse and keyboard events | Often mixes protocol input with DOM shortcuts |
+| Visibility | Live cursor, effects, highlights, panel, and recordings | Commonly hidden or detached from daily browsing |
+| Agent context | Compact accessibility snapshots and diffs | Large DOM or screenshot-heavy loops |
+| Runtime | Local extension + loopback daemon | Separate browser process and driver |
+
+### Built for agent workflows
+
+- **See before acting.** Accessibility snapshots, targeted search, reading mode, screenshots, layout inspection, and network logs expose only the context the agent needs.
+- **Act like a user.** Click, type, press keys, scroll, and drag through CDP while an on-page overlay makes control visible and auditable.
+- **Turn work into reusable flows.** Record natural browsing from the side panel, save optimized flows, then replay them in one MCP call.
+- **Scale beyond one tab.** Run concurrent crawls, recursive discovery, and asynchronous multi-tab jobs without flooding the active conversation.
+- **Keep risky exploration contained.** Confirmation warnings cover destructive targets, while DevTools sandbox mode can block mutating network requests.
+- **Audit long runs.** Record WebM sessions and inspect opt-in memory, process, command, and token telemetry.
 
 ## Quick start
 
+### 1. Build the extension
+
+BrowserControl uses [Bun](https://bun.sh) workspaces and Turborepo.
+
 ```bash
-bun install        # 1. Install workspace dependencies
-bun run build       # 2. Build the extension (Turborepo → WXT) into app/extension/.output/chrome-mv3/
+git clone https://github.com/hydra07/browser-control.git
+cd browser-control
+bun install
+bun run build
 ```
 
-3. Open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, and select `app/extension/.output/chrome-mv3/`.
-4. Point your MCP client at the daemon:
+### 2. Load it in Chrome
+
+1. Open `chrome://extensions`.
+2. Enable **Developer mode**.
+3. Choose **Load unpacked**.
+4. Select `app/extension/.output/chrome-mv3`.
+
+Click the toolbar icon—or press `Ctrl+Shift+B` / `Command+Shift+B`—to open the side panel.
+
+### 3. Connect an MCP client
+
+Point your MCP client at the daemon entry file:
 
 ```json
 {
   "mcpServers": {
     "browsercontrol": {
       "command": "bun",
-      "args": ["run", "/absolute/path/to/browsercontrol/app/server/src/daemon.ts"]
+      "args": [
+        "run",
+        "/absolute/path/to/browser-control/app/server/src/daemon.ts"
+      ]
     }
   }
 }
 ```
 
-> **Optional Benchmark Mode:** To enable real-time memory drift analysis and telemetry collection, add `"env": { "BENCHMARK": "1" }` to your MCP configuration or run with `bun run dev:benchmark`.
+The daemon binds only to `127.0.0.1:8765`. Keep Chrome open with the extension loaded, then restart or reload your MCP client.
 
----
+To collect runtime benchmark telemetry, add:
+
+```json
+{
+  "env": {
+    "BENCHMARK": "1"
+  }
+}
+```
+
+## The tool surface
+
+BrowserControl exposes six gateway tools instead of dozens of flat tools. Each gateway accepts an `action` enum plus the parameters for that action, which keeps tool selection compact and predictable.
+
+| Gateway | What it owns | Actions |
+|---|---|---|
+| `browser_session` | Tabs, navigation, recording, metrics | `navigate`, `list_tabs`, `switch_tab`, `close_tab`, `set_session_name`, `start_recording`, `stop_recording`, `get_metrics` |
+| `browser_inspect` | Page, visual, DOM, and network state | `snapshot`, `find`, `reading_mode`, `select_content`, `inspect_element`, `screenshot`, `peek_screen`, `network_requests`, `network_clear` |
+| `browser_act` | Trusted interaction and composed flows | `click`, `type`, `press_key`, `scroll`, `drag`, `run_flow`, `evaluate` |
+| `browser_bulk` | Work that should run asynchronously | `batch_crawl`, `deep_crawl`, `start_job`, `search`, `task_status` |
+| `browser_knowledge` | Durable browser knowledge | `list_skills`, `save_skill`, `list_flows`, `save_flow`, `delete_flow`, `record_flow`, `query_docs` |
+| `browser_dev` | Diagnostics, emulation, and containment | `debug_layout`, `emulate`, `sandbox`, `inspect_memory`, `inspect_process`, `analyze_har`, `export_har`, `benchmark_report` |
+
+A typical agent loop is deliberately small:
+
+```text
+browser_session  navigate
+        ↓
+browser_inspect  snapshot
+        ↓
+browser_act      click / type / run_flow
+        ↓
+browser_inspect  snapshot diff or peek_screen
+```
+
+## Side panel
+
+The extension side panel keeps the human in the loop:
+
+- **Flows** records, saves, and replays browser procedures.
+- **Chat** connects installed local CLI agents when enabled.
+- **Benchmark** shows Bun memory, extension heap, and drift health.
+- **Settings** manages connection state, MCP configuration, tab grouping, animation, and recording quality.
+
+The on-page feedback layer is pointer-transparent, so visual feedback never intercepts the interaction it is describing.
 
 ## Architecture
 
+```text
+MCP client
+    │ stdio
+    ▼
+Bun daemon ─────────────── 127.0.0.1:8765
+    │ WebSocket
+    ▼
+Extension offscreen document
+    │ chrome.runtime messages
+    ▼
+MV3 service worker ─────── Chrome DevTools Protocol
+    │
+    ▼
+Your real Chrome tabs
 ```
-MCP client (Claude Code / Antigravity / ...)
-        │ stdio (MCP protocol)
-        ▼
-   app/server/src/daemon.ts          Bun HTTP/WS server (127.0.0.1:8765)
-        │ WebSocket
-        ▼
-   app/extension entrypoints/offscreen  Holds WS, manages screen recording & background tasks
-        │ chrome.runtime.sendMessage
-        ▼
-   app/extension entrypoints/background  chrome.debugger (CDP) & event relays
-        ▼
-   Your actual Chrome tab, grouped as "🤖 AI Workspace"
+
+```text
+app/extension/       WXT extension, service worker, offscreen bridge, side panel
+app/server/          MCP daemon, SQLite data store, crawlers, jobs, CLI tools
+packages/benchmark/  Opt-in runtime and token-economics telemetry
+packages/shared/     Extension/server wire-protocol types
 ```
 
-The monorepo consists of 4 cleanly decoupled workspace packages:
-- **`app/extension/`** — The Chrome extension built with [WXT](https://wxt.dev) (Vite + React + Tailwind v4).
-- **`app/server/`** — The MCP daemon, WebSocket bridge, SQLite store, and CLI tools run directly via Bun.
-- **`packages/benchmark/`** — Dedicated token economics calculator and memory drift telemetry engine (`@browsercontrol/benchmark`).
-- **`packages/shared/`** — Wire-protocol TypeScript types (`@browsercontrol/shared`) shared across packages.
+## Local data and recordings
 
----
+Session logs, extracted documents, screenshots, recordings, and saved flows stay local:
 
-## The 6 Gateway Tools
+```text
+data/index.sqlite
+data/images/
+data/videos/
+data/logs/
+skills/
+```
 
-Instead of ~30 individual tools that degrade LLM tool-selection accuracy, BrowserControl exposes **6 high-performance gateway tools**. Each tool takes an `action` enum plus action-specific parameters.
+These paths are gitignored because they may contain private browsing artifacts.
 
-### 1. `browser_session` — Tabs & Lifecycle Management
-
-| Action | Description |
-|---|---|
-| `navigate` | Go to URL. `newTab: true` opens a fresh tab in the AI Workspace without disturbing the active tab |
-| `list_tabs` | List tabs in the "🤖 AI Workspace" group (including user-dragged tabs flagged `isNew: true`) |
-| `switch_tab` | Switch active target to a specific tab |
-| `close_tab` | Close a tab opened during the session |
-| `set_session_name` | Assign a human-readable name to the session |
-| `start_recording` / `stop_recording` | Capture high-definition WebM video of tab interactions for human auditing (saved directly to disk at `data/videos/`) |
-| `get_metrics` | Retrieve token and call summary statistics for the session |
-
-### 2. `browser_inspect` — Visual & DOM Inspection
-
-| Action | Description |
-|---|---|
-| `snapshot` | Flat, deduplicated list of interactive elements (id, role, name, value). Supports `visual: true` for numbered box overlays |
-| `find` | Jump directly to elements matching text, CSS, or XPath |
-| `reading_mode` | Extract clean article text (cheaper than DOM snapshot for reading content) |
-| `select_content` | Extract clean Markdown from element(s) into queryable SQLite docs blocks |
-| `inspect_element` | Inspect outerHTML, matched CSS rules, computed styles, and attached event listeners |
-| `screenshot` | Viewport or full-page screenshot saved to disk (`data/images/`) |
-| `network_requests` | Filtered log of XHR/Fetch/Document/WebSocket requests since last navigation |
-| `network_clear` | Reset the recorded network log |
-
-### 3. `browser_act` — Trusted User Interactions
-
-| Action | Description |
-|---|---|
-| `click` / `type` / `press_key` | Trusted mouse/keyboard events with visual cursor gliding and ripples |
-| `scroll` | Scroll by pixel delta |
-| `drag` | Trusted mousedown→move→mouseup sequence (canvas, whiteboard, sliders) |
-| `run_flow` | Execute multi-step sequences (`click`, `type`, `press_key`, `wait_for`, `assert_text`, `scroll`, `drag`) in ONE call. `explore: true` reports step-by-step diffs |
-| `evaluate` | Execute arbitrary JavaScript for reading state or test setup |
-
-### 4. `browser_bulk` — Asynchronous Bulk Operations
-
-| Action | Description |
-|---|---|
-| `batch_crawl` | Concurrent `fetch()`-based crawler for public/static pages without opening tabs |
-| `deep_crawl` | Recursive link-following crawler up to a specified depth |
-| `start_job` | Multi-tab background worker runner for pages requiring login or heavy client-side rendering |
-| `search` | Web search returning clean `{title, url, snippet}` results |
-| `task_status` | Poll status of an async bulk job or crawl |
-
-### 5. `browser_knowledge` — Reusable Skills, Saved Flows & Auto-Flow
-
-| Action | Description |
-|---|---|
-| `list_skills` / `save_skill` | Durable per-domain notes (working selectors, site gotchas) that persist across sessions |
-| `list_flows` / `save_flow` / `delete_flow` | Persist validated `FlowStep[]` sequences as named, reusable flows |
-| `record_flow` | `mode: 'start'` begins recording user interactions in Chrome; `mode: 'stop'` synthesizes optimized `FlowStep[]` and saves automatically |
-| `query_docs` | Query extracted docs blocks with `docsAction: 'list' | 'search' | 'read'` |
-
-### 6. `browser_dev` — DevTools Diagnostics & Emulation
-
-| Action | Description |
-|---|---|
-| `sandbox` | `mode: "block_mutations"` intercepts all POST/PUT/PATCH/DELETE requests on a tab. GET/HEAD pass through normally. Enables risk-free exploration of unfamiliar UIs |
-| `emulate` | Device viewport emulation, network throttling (`slow_3g`, `fast_3g`), and CPU slowdown |
-| `debug_layout` | Box model metrics, computed CSS, and stacking context analysis for an element |
-| `inspect_memory` | JS heap usage, DOM node count, event listener count, and GC pressure |
-| `inspect_process` | CPU breakdown (scripting/layout/rendering) and long tasks |
-| `analyze_har` / `export_har` | Network traffic summary or export of full HAR 1.2 files |
-| `benchmark_report` | Self-benchmark report with progressive disclosure (`focus: 'overview' | 'telemetry' | 'commands' | 'full'`) |
-
----
-
-## Side Panel & Auto-Flow Recorder
-
-Click the BrowserControl toolbar icon to open the Side Panel featuring 4 specialized tabs:
-
-1. **⚡ Flows**:
-   - **🔴 Record Flow**: Start recording your natural browsing interactions (clicks, typing, keyboard shortcuts).
-   - **⏹ Stop & Save**: Automatically aggregates and optimizes your actions into a clean `FlowStep[]` sequence saved to SQLite.
-   - **▶ Run**: Execute saved flows instantly against the active tab with step-by-step progress tracking.
-2. **💬 Chat**: Local agent chat interface connected directly to your installed CLI agents (`agy`, `claude`).
-3. **📊 Benchmark**: Live runtime resource stability monitoring displaying Bun RSS RAM, Chrome Extension JS Heap, and memory drift health status (`OPTIMAL`, `STABLE`, `WARNING`, `CRITICAL`).
-4. **⚙️ Settings**: Live connection status, MCP snippet copy, tab group customization, and recording quality controls.
-
----
-
-## Data Management & CLI Tools
-
-All session artifacts (logs, images, videos, docs blocks) are indexed in `data/index.sqlite`. Manage and inspect data using built-in scripts:
+Useful data commands:
 
 ```bash
-bun run --cwd app/server data:status      # Total sessions, video sizes, docs blocks
-bun run --cwd app/server data:sessions    # List recorded sessions and token footprints
-bun run --cwd app/server data:show <id>   # Inspect artifacts from a session
-bun run --cwd app/server data:gc          # Prune old session data with dry-run protection
-bun run --cwd app/server replay -- <file> # Replay a recorded session's tool calls
+bun run --cwd app/server data:status
+bun run --cwd app/server data:sessions
+bun run --cwd app/server data:show <session-id>
+bun run --cwd app/server data:gc
+bun run --cwd app/server replay -- <session-log>
 ```
 
----
-
-## Releasing & Versioning
-
-Extension versioning follows Semantic Versioning in `app/extension/package.json`:
+## Development
 
 ```bash
-bun run --cwd app/extension version:bump patch   # or minor / major
-git add .
-git commit -m "chore: release v0.2.0"
-git tag v0.2.0
-git push && git push --tags
+bun run build          # production extension build
+bun run check          # TypeScript checks across workspaces
+bun run lint           # Biome lint
+bun run format         # Biome format
+bun run check:all      # complete type + lint verification
 ```
+
+While iterating on the extension:
+
+```bash
+bun run --cwd app/extension dev
+```
+
+MV3 does not automatically pick up a production rebuild. After `bun run build`, reload BrowserControl from `chrome://extensions`.
