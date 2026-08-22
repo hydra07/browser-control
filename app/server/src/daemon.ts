@@ -560,6 +560,17 @@ function handleChatMcpRequest(req: Request): Promise<Response> {
   const server = new Server({ name: "browsercontrol-chat", version: PACKAGE_VERSION }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: CHAT_TOOLS }));
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    if (request.params.name !== Gateway.Inspect) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Error: ${request.params.name} is unavailable through the read-only chat MCP endpoint.`,
+          },
+        ],
+        isError: true,
+      };
+    }
     const response = await handleToolCall(request, {
       executeCommand,
       sessionId: SESSION_ID,

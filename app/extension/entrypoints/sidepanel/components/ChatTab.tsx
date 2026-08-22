@@ -301,10 +301,10 @@ export function ChatTab() {
   }
 
   return (
-    <div className="flex flex-1 flex-col h-full overflow-hidden bg-[#0c0d11] text-zinc-200 font-sans">
-      <div className="flex items-center justify-between border-b border-zinc-800/80 px-3 py-2 bg-[#121318]/90 z-10">
+    <div className="flex flex-1 flex-col h-full overflow-hidden bg-transparent text-zinc-200 font-sans">
+      <div className="flex items-center justify-between border-b border-slate-700/40 px-3 py-2 bg-slate-950/25 z-10">
         <div className="flex items-center gap-2">
-          <ChatIcon className="w-4 h-4 text-indigo-400" />
+          <ChatIcon className="w-4 h-4 text-sky-300" />
           <span className="font-semibold text-xs text-zinc-100">CLI Agent Chat</span>
           <span
             className="rounded bg-zinc-900 border border-zinc-800 px-1.5 py-0.2 text-[9.5px] font-mono text-zinc-400 truncate max-w-[140px]"
@@ -327,7 +327,7 @@ export function ChatTab() {
       <div className="flex-1 overflow-y-auto p-3 space-y-3">
         {messages.length === 0 && !isProcessing ? (
           <div className="flex h-full flex-col items-center justify-center text-center p-4">
-            <div className="h-10 w-10 rounded-2xl bg-indigo-950/40 border border-indigo-900/40 flex items-center justify-center text-indigo-400 mb-2.5 shadow-sm">
+            <div className="bc-surface h-10 w-10 flex items-center justify-center text-sky-300 mb-2.5">
               <SparklesIcon className="w-5 h-5" />
             </div>
             <div className="font-semibold text-zinc-200 text-xs">Chat Trực Tiếp Với CLI Agent</div>
@@ -342,9 +342,9 @@ export function ChatTab() {
                 onClick={() =>
                   void handleSendMessage("Tóm tắt các ý chính và nội dung quan trọng của trang này giúp tôi.")
                 }
-                className="rounded-lg border border-zinc-800/80 bg-zinc-900/60 px-2.5 py-1.5 text-[11px] text-left text-zinc-300 hover:border-indigo-500/50 hover:bg-zinc-800/80 transition flex items-center gap-1.5"
+                className="bc-surface rounded-lg px-2.5 py-1.5 text-[11px] text-left text-zinc-300 hover:border-sky-500/35 transition flex items-center gap-1.5"
               >
-                <SparklesIcon className="w-3.5 h-3.5 text-indigo-400 flex-none" />
+                <SparklesIcon className="w-3.5 h-3.5 text-sky-300 flex-none" />
                 <span className="truncate">Tóm tắt trang đang mở</span>
               </button>
               <button
@@ -352,7 +352,7 @@ export function ChatTab() {
                 onClick={() =>
                   void handleSendMessage("Trang này là trang gì? Có những tính năng hoặc thông tin chính nào?")
                 }
-                className="rounded-lg border border-zinc-800/80 bg-zinc-900/60 px-2.5 py-1.5 text-[11px] text-left text-zinc-300 hover:border-indigo-500/50 hover:bg-zinc-800/80 transition flex items-center gap-1.5"
+                className="bc-surface rounded-lg px-2.5 py-1.5 text-[11px] text-left text-zinc-300 hover:border-sky-500/35 transition flex items-center gap-1.5"
               >
                 <SearchIcon className="w-3.5 h-3.5 text-sky-400 flex-none" />
                 <span className="truncate">Trang này là trang gì?</span>
@@ -376,15 +376,15 @@ export function ChatTab() {
                   <div
                     className={`max-w-[90%] rounded-2xl px-3 py-2 text-[11.5px] leading-relaxed shadow-sm ${
                       isUser
-                        ? "bg-indigo-600 text-white rounded-tr-xs"
-                        : "bg-[#181920] border border-zinc-800/90 text-zinc-200 rounded-tl-xs"
+                        ? "bg-[#2c608a] border border-sky-300/15 text-white rounded-tr-xs"
+                        : "bg-slate-900/70 border border-slate-700/45 text-zinc-200 rounded-tl-xs"
                     }`}
                   >
                     {msg.url && (
                       <div
                         className={`mb-1.5 rounded-lg p-1.5 text-[10px] font-mono border ${
                           isUser
-                            ? "bg-indigo-700/60 border-indigo-500/40 text-indigo-100"
+                            ? "bg-sky-950/35 border-sky-300/20 text-sky-100"
                             : "bg-zinc-900/90 border-zinc-800 text-zinc-400"
                         }`}
                       >
@@ -407,13 +407,13 @@ export function ChatTab() {
                             key={i}
                             className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9.5px] font-mono ${
                               !tc.done
-                                ? "border-indigo-800/60 bg-indigo-950/60 text-indigo-300"
+                                ? "border-sky-700/35 bg-sky-950/35 text-sky-300"
                                 : tc.isError
                                   ? "border-rose-900/60 bg-rose-950/40 text-rose-300"
                                   : "border-emerald-900/60 bg-emerald-950/40 text-emerald-300"
                             }`}
                           >
-                            {!tc.done && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-indigo-400" />}
+                            {!tc.done && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-sky-400" />}
                             <WrenchIcon className="w-2.5 h-2.5 flex-none" />
                             {tc.name.replace(/^mcp__browsercontrol__/, "")}
                           </span>
@@ -423,7 +423,7 @@ export function ChatTab() {
 
                     {!isUser && !hasContent ? (
                       <div className="flex items-center gap-2 py-0.5 text-zinc-400">
-                        <div className="h-2.5 w-2.5 animate-spin rounded-full border-2 border-indigo-400 border-t-transparent flex-none" />
+                        <div className="h-2.5 w-2.5 animate-spin rounded-full border-2 border-sky-400 border-t-transparent flex-none" />
                         <span className="text-[10.5px]">Đang phản hồi...</span>
                       </div>
                     ) : (
@@ -450,11 +450,11 @@ export function ChatTab() {
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="border-t border-zinc-800/80 bg-[#101116] p-2.5 space-y-2">
+      <div className="border-t border-slate-700/40 bg-slate-950/35 p-2.5 space-y-2 backdrop-blur-xl">
         {attachedContext && (
-          <div className="flex items-center justify-between rounded-lg bg-zinc-900 border border-indigo-500/40 px-2 py-1 text-[10px] font-mono text-indigo-300 animate-fade-in">
+          <div className="bc-surface flex items-center justify-between rounded-lg px-2 py-1 text-[10px] font-mono text-sky-300 animate-fade-in">
             <div className="flex items-center gap-1.5 min-w-0">
-              <PinIcon className="w-3.5 h-3.5 text-indigo-400 flex-none" />
+              <PinIcon className="w-3.5 h-3.5 text-sky-300 flex-none" />
               <span className="truncate max-w-[200px] text-zinc-200">
                 {attachedContext.title || attachedContext.url}
               </span>
@@ -479,7 +479,7 @@ export function ChatTab() {
             title="Ghim ngữ cảnh trang đang xem"
             className={`flex h-8 w-8 flex-none items-center justify-center rounded-lg border transition active:scale-95 ${
               attachedContext
-                ? "bg-indigo-950/80 border-indigo-500/50 text-indigo-300"
+                ? "bg-sky-950/45 border-sky-400/35 text-sky-300"
                 : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700"
             }`}
           >
@@ -498,7 +498,7 @@ export function ChatTab() {
             placeholder="Hỏi CLI Agent về trang đang mở..."
             rows={1}
             disabled={isProcessing}
-            className="flex-1 rounded-lg bg-zinc-900/90 border border-zinc-800/90 px-2.5 py-1.5 text-[11.5px] text-zinc-100 placeholder-zinc-500 outline-none focus:border-indigo-500/60 focus:ring-1 focus:ring-indigo-500/30 transition resize-none max-h-24 min-h-[32px] disabled:opacity-50"
+            className="bc-input flex-1 px-2.5 py-1.5 text-[11.5px] placeholder-zinc-500 outline-none transition resize-none max-h-24 min-h-[32px] disabled:opacity-50"
           />
 
           <button
@@ -506,7 +506,7 @@ export function ChatTab() {
             onClick={() => void handleSendMessage()}
             disabled={isProcessing || !inputText.trim()}
             title="Gửi câu hỏi (Enter)"
-            className="flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-indigo-600 text-white shadow-sm hover:bg-indigo-500 disabled:opacity-40 disabled:hover:bg-indigo-600 transition active:scale-95"
+            className="bc-primary-button flex h-8 w-8 flex-none disabled:opacity-40"
           >
             <SendIcon className="w-3.5 h-3.5" />
           </button>

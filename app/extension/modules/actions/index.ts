@@ -12,16 +12,33 @@ import {
     moveCursorTo,
     pageDelay,
     pulseCursorPress,
+    showActionHud,
     showClickRipple,
-    showKeyBadge,
+    showDragTrajectory,
+    showKeyMotion,
     showNativeHighlight,
-    showScrollIndicator,
+    showScrollMotion,
 } from "../overlay/index.js";
 import { waitForStableDom } from "../wait/index.js";
 import { KEY_DEFS, RISKY_NAME_PATTERN, SINGLE_CHAR_SYMBOL_CODES, SUPPORTED_KEYS } from "./constants.js";
 import type { ActionResult, AxInfo, DragOptions } from "./types.js";
 
 export type { ActionResult, AxInfo, DragOptions } from "./types.js";
+
+function classifyHudAction(kind: "click" | "type", axInfo: AxInfo): string {
+    const target = `${axInfo.role ?? ""} ${axInfo.name ?? ""}`.toLowerCase();
+    if (target.includes("search")) return "search";
+    if (target.includes("combobox") || target.includes("listbox") || target.includes("select")) return "select";
+    return kind;
+}
+
+function showHud(target: chrome.debugger.Debuggee, action: string, title: string, detail: string, fast: boolean): void {
+    void evalOnPage(
+        target,
+        `(${showActionHud.toString()})(${JSON.stringify(action)},${JSON.stringify(title)},${JSON.stringify(detail)},${fast})`,
+        true,
+    );
+}
 
 /** role+name (not backendDOMNodeId, meaningless after a reload) so replay.ts can re-resolve "the button named X" against a fresh snapshot. */
 export async function getAxInfoForNode(target: chrome.debugger.Debuggee, backendNodeId: number): Promise<AxInfo> {
@@ -108,6 +125,8 @@ export async function performClick(
         evalOnPage(target, `(${moveCursorTo.toString()})(${x}, ${y}, ${opts.fast})`, true),
         getAxInfoForNode(target, backendNodeId),
     ]);
+    const targetLabel = axInfo.name ?? axInfo.role ?? "Page element";
+    showHud(target, classifyHudAction("click", axInfo), targetLabel, `Clicking ${axInfo.role ?? "element"}`, opts.fast);
     await showNativeHighlight(target, box, KIND_COLORS.click.rgb);
     if (!opts.fast) await pageDelay(target, 350);
 
@@ -180,6 +199,15 @@ export async function performType(
             setTimeout(() => hideNativeHighlight(target), opts.fast ? 350 : 1200);
         }
     }
+
+    const targetLabel = axInfo.name ?? axInfo.role ?? "Focused field";
+    showHud(
+        target,
+        classifyHudAction("type", axInfo),
+        targetLabel,
+        `Typing ${text.length} character${text.length === 1 ? "" : "s"}`,
+        opts.fast,
+    );
 
     if (opts.fast) {
         await sendCommand(target, "Input.insertText", { text });
@@ -287,9 +315,17 @@ export async function performPressKey(
             void evalOnPage(target, `(${showClickRipple.toString()})(${cx}, ${cy}, 'type', ${opts.fast})`);
             setTimeout(() => hideNativeHighlight(target), opts.fast ? 350 : 1200);
         }
-    } else {
-        void evalOnPage(target, `(${showKeyBadge.toString()})(${JSON.stringify(def.key)}, ${opts.fast})`);
     }
+
+    const hudAction = def.key === "Enter" ? "enter" : "key";
+    showHud(
+        target,
+        hudAction,
+        def.key === "Enter" ? "Submit with Enter" : `Press ${def.key}`,
+        axInfo.name ? `On ${axInfo.name}` : "Keyboard input",
+        opts.fast,
+    );
+    void evalOnPage(target, `(${showKeyMotion.toString()})(${opts.fast})`, true);
 
     await sendCommand(target, "Input.dispatchKeyEvent", {
         type: "rawKeyDown",
@@ -328,7 +364,11 @@ export async function performScroll(
     deltaY: number,
     opts: { fast: boolean },
 ): Promise<ActionResult> {
-    void evalOnPage(target, `(${showScrollIndicator.toString()})(${deltaX}, ${deltaY}, ${opts.fast})`);
+    const vertical = Math.abs(deltaY) >= Math.abs(deltaX);
+    const direction = vertical ? (deltaY >= 0 ? "down" : "up") : deltaX >= 0 ? "right" : "left";
+    const distance = Math.round(Math.abs(vertical ? deltaY : deltaX));
+    showHud(target, "scroll", `Scroll ${direction}`, `${distance}px`, opts.fast);
+    void evalOnPage(target, `(${showScrollMotion.toString()})(${deltaX},${deltaY},${opts.fast})`, true);
     await sendCommand(
         target,
         "Input.dispatchMouseEvent",
@@ -387,6 +427,15 @@ export async function performDrag(
     }
     const button = opts.button ?? "left";
 
+    showHud(
+        target,
+        "drag",
+        `Drag to ${Math.round(end.x)}, ${Math.round(end.y)}`,
+        `From ${Math.round(start.x)}, ${Math.round(start.y)} · ${points.length} points`,
+        opts.fast,
+    );
+    void evalOnPage(target, `(${showDragTrajectory.toString()})(${JSON.stringify(points)},${opts.fast})`, true);
+
     // 1. Move cursor to start
     await evalOnPage(target, `(${moveCursorTo.toString()})(${start.x}, ${start.y}, ${opts.fast})`, true);
     void evalOnPage(target, `(${pulseCursorPress.toString()})(true)`);
@@ -417,6 +466,8 @@ export async function performDrag(
             await pageDelay(target, perStepDelay);
         }
     }
+
+    await evalOnPage(target, `(${moveCursorTo.toString()})(${end.x}, ${end.y}, true)`, true);
 
     // 4. Ripple & Mouse Release
     void evalOnPage(target, `(${showClickRipple.toString()})(${end.x}, ${end.y}, 'click', ${opts.fast})`);

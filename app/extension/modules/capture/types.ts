@@ -2,12 +2,16 @@ export interface FrameMessage {
     data: string;
     metadata: { deviceWidth: number; deviceHeight: number };
 }
-export type PortAck = { success: true } | { error: string; hint: string };
+export type PortAck = { success: true; tabId: number } | { error: string; hint: string };
 
 export interface CaptureAck {
     [key: string]: unknown;
     success: true;
     message: string;
+    tabId: number;
+    width: number;
+    height: number;
+    mimeType: string;
 }
 
 export interface CaptureResult {
@@ -18,6 +22,9 @@ export interface CaptureResult {
     isStreamed?: boolean;
     durationMs: number;
     frameCount: number;
+    width: number;
+    height: number;
+    mimeType: string;
 }
 
 export interface CaptureError {

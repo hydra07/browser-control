@@ -18,7 +18,7 @@ import { runFlowSteps } from "../flow/index.js";
 import { inspectElement } from "../inspect/index.js";
 import { clearBlockedRequests, setSandbox } from "../interceptor/index.js";
 import { clearNetworkRequests, getNetworkRequestDetail, listNetworkRequests } from "../network/index.js";
-import { NAVIGATE_ICON_SVG, showPillCaption } from "../overlay/index.js";
+import { showActionHud } from "../overlay/index.js";
 import { handlePeekScreenCommand } from "../peek/index.js";
 import { handleFindCommand, handleReadingModeCommand, handleSelectContentCommand } from "../read/index.js";
 import { flowRecorder } from "../recorder/index.js";
@@ -154,7 +154,7 @@ async function handleNavigate(
         } catch {}
         void evalOnPage(
             { tabId },
-            `(${showPillCaption.toString()})(${JSON.stringify(NAVIGATE_ICON_SVG)}, ${JSON.stringify(`Navigated to ${hostname}`)}, ${JSON.stringify("#6ee7b7")}, ${JSON.stringify("#34d399")}, false)`,
+            `(${showActionHud.toString()})("navigate",${JSON.stringify(hostname)},"Navigation complete",false)`,
         );
     }
 

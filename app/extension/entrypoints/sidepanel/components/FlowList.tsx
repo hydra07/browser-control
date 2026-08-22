@@ -48,49 +48,49 @@ function StepActionBadge({ action }: { action: FlowStep["action"] }) {
   switch (action) {
     case "click":
       return (
-        <span className="inline-flex items-center gap-1 rounded bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-mono font-medium text-blue-400 border border-blue-500/20">
+        <span className="bc-step-badge" data-action="click">
           <MousePointerIcon className="w-2.5 h-2.5" />
           <span>CLICK</span>
         </span>
       );
     case "type":
       return (
-        <span className="inline-flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-mono font-medium text-amber-400 border border-amber-500/20">
+        <span className="bc-step-badge" data-action="type">
           <KeyboardIcon className="w-2.5 h-2.5" />
           <span>TYPE</span>
         </span>
       );
     case "press_key":
       return (
-        <span className="inline-flex items-center gap-1 rounded bg-purple-500/10 px-1.5 py-0.5 text-[10px] font-mono font-medium text-purple-400 border border-purple-500/20">
+        <span className="bc-step-badge" data-action="press_key">
           <KeyReturnIcon className="w-2.5 h-2.5" />
           <span>KEY</span>
         </span>
       );
     case "wait_for":
       return (
-        <span className="inline-flex items-center gap-1 rounded bg-cyan-500/10 px-1.5 py-0.5 text-[10px] font-mono font-medium text-cyan-400 border border-cyan-500/20">
+        <span className="bc-step-badge" data-action="wait_for">
           <HourglassIcon className="w-2.5 h-2.5" />
           <span>WAIT</span>
         </span>
       );
     case "assert_text":
       return (
-        <span className="inline-flex items-center gap-1 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-mono font-medium text-emerald-400 border border-emerald-500/20">
+        <span className="bc-step-badge" data-action="assert_text">
           <ShieldCheckIcon className="w-2.5 h-2.5" />
           <span>ASSERT</span>
         </span>
       );
     case "scroll":
       return (
-        <span className="inline-flex items-center gap-1 rounded bg-zinc-500/10 px-1.5 py-0.5 text-[10px] font-mono font-medium text-zinc-400 border border-zinc-500/20">
+        <span className="bc-step-badge" data-action="scroll">
           <ScrollIcon className="w-2.5 h-2.5" />
           <span>SCROLL</span>
         </span>
       );
     case "drag":
       return (
-        <span className="inline-flex items-center gap-1 rounded bg-orange-500/10 px-1.5 py-0.5 text-[10px] font-mono font-medium text-orange-400 border border-orange-500/20">
+        <span className="bc-step-badge" data-action="drag">
           <MoveIcon className="w-2.5 h-2.5" />
           <span>DRAG</span>
         </span>
@@ -102,8 +102,10 @@ function StepActionBadge({ action }: { action: FlowStep["action"] }) {
 
 function StepRow({ step, index }: { step: FlowStep; index: number }) {
   return (
-    <div className="flex items-start gap-2 py-1 px-1.5 text-[11px] font-mono hover:bg-zinc-800/40 rounded transition">
-      <span className="w-4 flex-none text-[10px] text-zinc-500 text-right select-none">{index + 1}.</span>
+    <div className="group/step relative flex items-start gap-2.5 rounded-lg px-2 py-1.5 text-[11px] font-mono transition hover:bg-white/[0.025]">
+      <span className="grid h-5 w-5 flex-none place-items-center rounded-full border border-slate-600 bg-slate-900 text-[9px] text-slate-400 select-none">
+        {index + 1}
+      </span>
       <div className="flex-none pt-0.5">
         <StepActionBadge action={step.action} />
       </div>
@@ -117,7 +119,7 @@ function StepRow({ step, index }: { step: FlowStep; index: number }) {
         )}
         {step.action === "type" && (
           <span>
-            <span className="text-amber-300/90 font-sans font-medium">"{step.text}"</span>
+            <span className="font-sans font-medium text-slate-200">"{step.text}"</span>
             {(step.role || step.name) && (
               <span className="text-zinc-500">
                 {" "}
@@ -129,7 +131,7 @@ function StepRow({ step, index }: { step: FlowStep; index: number }) {
         )}
         {step.action === "press_key" && (
           <span>
-            <span className="text-purple-300 font-semibold">{step.key}</span>
+            <span className="font-semibold text-blue-300">{step.key}</span>
             {step.selector && <span className="text-zinc-500 text-[10px]"> on {step.selector}</span>}
           </span>
         )}
@@ -224,25 +226,21 @@ function FlowCard({ flow, onDeleted }: { flow: FlowMeta; onDeleted: (id: string)
   }
 
   return (
-    <div
-      className={`group rounded-lg border bg-[#14151a] transition ${
-        expanded ? "border-zinc-700/80 shadow-lg" : "border-zinc-800/80 hover:border-zinc-700/60"
-      }`}
-    >
-      <div className="flex items-center gap-3 p-3 cursor-pointer select-none" onClick={() => setExpanded(!expanded)}>
+    <div className={`bc-card group overflow-hidden rounded-xl transition ${expanded ? "border-slate-500/70" : ""}`}>
+      <div className="flex cursor-pointer items-center gap-3 p-3.5 select-none" onClick={() => setExpanded(!expanded)}>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="font-medium text-[12.5px] text-zinc-100 truncate">{flow.name}</span>
+            <span className="truncate text-[12.5px] font-semibold tracking-[-0.01em] text-zinc-50">{flow.name}</span>
             {flow.domain && (
-              <span className="rounded bg-zinc-800/80 px-1.5 py-0.5 text-[10px] font-mono text-zinc-400 border border-zinc-700/40">
+              <span className="rounded border border-slate-700 bg-slate-900/70 px-1.5 py-0.5 font-mono text-[9.5px] text-slate-400">
                 {flow.domain}
               </span>
             )}
           </div>
           {flow.description && <p className="mt-0.5 text-[11.5px] text-zinc-400 line-clamp-1">{flow.description}</p>}
-          <div className="mt-1 flex items-center gap-3 text-[10.5px] text-zinc-500 font-mono">
+          <div className="mt-1.5 flex items-center gap-2 text-[10px] text-zinc-500 font-mono">
             <span>{flow.stepCount} steps</span>
-            <span>•</span>
+            <span className="h-0.5 w-0.5 rounded-full bg-zinc-600" />
             <span>{formatRelativeTime(flow.updatedAt)}</span>
           </div>
         </div>
@@ -253,7 +251,7 @@ function FlowCard({ flow, onDeleted }: { flow: FlowMeta; onDeleted: (id: string)
             title="Run flow"
             disabled={runState.status === "running"}
             onClick={handleRun}
-            className="flex items-center gap-1 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 px-2 py-1 text-[11px] font-mono font-medium transition disabled:opacity-50"
+            className="bc-primary-button flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10.5px] font-semibold transition active:scale-95 disabled:opacity-50"
           >
             <PlayIcon className="w-3 h-3 fill-current" />
             <span>{runState.status === "running" ? "Running..." : "Run"}</span>
@@ -283,7 +281,7 @@ function FlowCard({ flow, onDeleted }: { flow: FlowMeta; onDeleted: (id: string)
       </div>
 
       {expanded && (
-        <div className="border-t border-zinc-800/80 bg-[#0f1013] p-3 rounded-b-lg space-y-3">
+        <div className="space-y-3 border-t border-white/[0.055] bg-black/15 p-3.5">
           {loadingFull && <div className="text-center py-2 text-[11px] text-zinc-500 font-mono">Loading steps...</div>}
 
           {fullFlow && (
@@ -300,7 +298,7 @@ function FlowCard({ flow, onDeleted }: { flow: FlowMeta; onDeleted: (id: string)
                 </button>
               </div>
 
-              <div className="rounded-md border border-zinc-800 bg-[#14151a]/60 p-1 divide-y divide-zinc-800/40">
+              <div className="divide-y divide-white/[0.045] rounded-lg border border-white/[0.06] bg-black/15 p-1">
                 {fullFlow.steps.map((step, idx) => (
                   <StepRow key={`${idx}-${step.action}`} step={step} index={idx} />
                 ))}
@@ -339,7 +337,15 @@ function FlowCard({ flow, onDeleted }: { flow: FlowMeta; onDeleted: (id: string)
   );
 }
 
-export function FlowList({ flows, onFlowDeleted }: { flows: FlowMeta[]; onFlowDeleted: (id: string) => void }) {
+export function FlowList({
+  flows,
+  onFlowDeleted,
+  onFlowSaved,
+}: {
+  flows: FlowMeta[];
+  onFlowDeleted: (id: string) => void;
+  onFlowSaved: (flow: FlowMeta) => void;
+}) {
   const [query, setQuery] = useState("");
   const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -400,8 +406,7 @@ export function FlowList({ flows, onFlowDeleted }: { flows: FlowMeta[]; onFlowDe
       });
       setShowSaveModal(false);
       setRecordedSteps([]);
-      // Trigger update by notifying parent or refreshing
-      onFlowDeleted(saved.id);
+      onFlowSaved(saved);
     } catch (e) {
       console.error("Failed to save flow", e);
     } finally {
@@ -433,53 +438,67 @@ export function FlowList({ flows, onFlowDeleted }: { flows: FlowMeta[]; onFlowDe
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      {/* Auto-Flow Recording Bar */}
-      <div className="flex-none p-2.5 border-b border-zinc-800/80 bg-[#16171d] flex items-center justify-between">
+      <div
+        className={`bc-surface mx-3 mt-3 flex flex-none items-center justify-between rounded-xl p-3 ${isRecording ? "border-red-400/25" : ""}`}
+      >
         <div className="flex items-center gap-2">
           {isRecording ? (
             <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
-              <span className="text-[11.5px] font-mono text-red-400 font-medium">Recording ({stepCount} steps)</span>
+              <span className="relative flex h-3 w-3 items-center justify-center">
+                <span className="absolute h-3 w-3 animate-ping rounded-full bg-red-400/30" />
+                <span className="relative h-2 w-2 rounded-full bg-red-400" />
+              </span>
+              <div>
+                <div className="text-[11px] font-semibold text-red-300">Recording flow</div>
+                <div className="font-mono text-[9.5px] text-red-300/60">{stepCount} actions captured</div>
+              </div>
             </div>
           ) : (
-            <div className="flex items-center gap-1.5 text-[11px] text-zinc-400 font-mono">
-              <WorkflowIcon className="w-3.5 h-3.5 text-zinc-500" />
-              <span>Auto-Flow Recorder</span>
+            <div className="flex items-center gap-2.5">
+              <div className="grid h-8 w-8 place-items-center rounded-md border border-slate-700 bg-slate-900 text-blue-300">
+                <WorkflowIcon className="h-4 w-4" />
+              </div>
+              <div>
+                <div className="text-[11px] font-semibold text-zinc-200">Capture a workflow</div>
+                <div className="text-[9.5px] text-zinc-500">Turn browser actions into a reusable flow</div>
+              </div>
             </div>
           )}
         </div>
         <button
           type="button"
           onClick={handleToggleRecording}
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-mono font-medium transition ${
+          className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10.5px] font-semibold transition active:scale-95 ${
             isRecording
-              ? "bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30"
-              : "bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20"
+              ? "border border-red-400/25 bg-red-400/15 text-red-200 hover:bg-red-400/20"
+              : "border border-slate-600 bg-slate-800 text-slate-200 hover:border-slate-500 hover:bg-slate-700"
           }`}
         >
-          <span>{isRecording ? "⏹ Stop & Save" : "🔴 Record Flow"}</span>
+          <span className={`h-2 w-2 ${isRecording ? "rounded-sm bg-red-300" : "rounded-full bg-red-400"}`} />
+          <span>{isRecording ? "Stop & save" : "Record"}</span>
         </button>
       </div>
 
       {/* Save Flow Modal */}
       {showSaveModal && (
-        <div className="p-3 border-b border-zinc-800 bg-[#121318] space-y-2.5">
-          <div className="text-[12px] font-semibold text-zinc-200">
-            Save Recorded Flow ({recordedSteps.length} steps)
+        <div className="bc-card mx-3 mt-2.5 space-y-2.5 rounded-xl p-3.5 animate-fade-in">
+          <div>
+            <div className="text-[12px] font-semibold text-zinc-100">Save captured flow</div>
+            <div className="mt-0.5 text-[10px] text-zinc-500">{recordedSteps.length} actions ready to reuse</div>
           </div>
           <input
             type="text"
             placeholder="Flow name (e.g. Login to Dashboard)"
             value={flowName}
             onChange={(e) => setFlowName(e.target.value)}
-            className="w-full rounded bg-zinc-900 border border-zinc-800 p-1.5 text-[11.5px] text-zinc-200 focus:outline-none focus:border-zinc-600"
+            className="bc-input w-full rounded-lg px-2.5 py-2 text-[11px]"
           />
           <input
             type="text"
             placeholder="Optional description"
             value={flowDesc}
             onChange={(e) => setFlowDesc(e.target.value)}
-            className="w-full rounded bg-zinc-900 border border-zinc-800 p-1.5 text-[11.5px] text-zinc-200 focus:outline-none focus:border-zinc-600"
+            className="bc-input w-full rounded-lg px-2.5 py-2 text-[11px]"
           />
           <div className="flex justify-end gap-2 pt-1">
             <button
@@ -493,7 +512,7 @@ export function FlowList({ flows, onFlowDeleted }: { flows: FlowMeta[]; onFlowDe
               type="button"
               disabled={saving || !flowName.trim()}
               onClick={handleSaveRecordedFlow}
-              className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-zinc-950 font-semibold text-[11px] transition disabled:opacity-50"
+              className="bc-primary-button rounded-lg px-3 py-1.5 text-[10.5px] font-semibold transition disabled:opacity-50"
             >
               {saving ? "Saving..." : "Save Flow"}
             </button>
@@ -501,8 +520,7 @@ export function FlowList({ flows, onFlowDeleted }: { flows: FlowMeta[]; onFlowDe
         </div>
       )}
 
-      {/* Search & Domain Filter Bar */}
-      <div className="flex-none p-2.5 space-y-2 border-b border-zinc-800/80 bg-[#111217]">
+      <div className="flex-none space-y-2 px-3 pb-2 pt-3">
         <div className="relative flex items-center">
           <SearchIcon className="absolute left-2.5 h-3.5 w-3.5 text-zinc-500" />
           <input
@@ -510,7 +528,7 @@ export function FlowList({ flows, onFlowDeleted }: { flows: FlowMeta[]; onFlowDe
             placeholder="Search flows by name, domain, behavior..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="w-full rounded-lg bg-zinc-900 border border-zinc-800/80 py-1.5 pl-8 pr-6 text-[11.5px] text-zinc-200 placeholder-zinc-500 focus:border-zinc-600 focus:outline-none transition"
+            className="bc-input w-full rounded-xl py-2 pl-8 pr-7 text-[11px] placeholder:text-zinc-600"
           />
           {query && (
             <button
@@ -530,8 +548,8 @@ export function FlowList({ flows, onFlowDeleted }: { flows: FlowMeta[]; onFlowDe
               onClick={() => setSelectedDomain(null)}
               className={`rounded-md px-2 py-0.5 font-mono transition ${
                 selectedDomain === null
-                  ? "bg-zinc-200 text-zinc-950 font-semibold"
-                  : "bg-zinc-800/60 text-zinc-400 hover:text-zinc-200"
+                  ? "border border-blue-400/30 bg-blue-400/10 text-blue-200 font-semibold"
+                  : "border border-transparent bg-white/[0.035] text-zinc-500 hover:text-zinc-200"
               }`}
             >
               ALL ({flows.length})
@@ -543,8 +561,8 @@ export function FlowList({ flows, onFlowDeleted }: { flows: FlowMeta[]; onFlowDe
                 onClick={() => setSelectedDomain(selectedDomain === dom ? null : dom)}
                 className={`rounded-md px-2 py-0.5 font-mono whitespace-nowrap transition ${
                   selectedDomain === dom
-                    ? "bg-zinc-200 text-zinc-950 font-semibold"
-                    : "bg-zinc-800/60 text-zinc-400 hover:text-zinc-200"
+                    ? "border border-blue-400/30 bg-blue-400/10 text-blue-200 font-semibold"
+                    : "border border-transparent bg-white/[0.035] text-zinc-500 hover:text-zinc-200"
                 }`}
               >
                 {dom}
@@ -554,18 +572,19 @@ export function FlowList({ flows, onFlowDeleted }: { flows: FlowMeta[]; onFlowDe
         )}
       </div>
 
-      <div className="flex-1 space-y-2.5 overflow-y-auto p-2.5">
+      <div className="flex-1 space-y-2.5 overflow-y-auto px-3 pb-3 pt-1">
         {filtered.map((flow) => (
           <FlowCard key={flow.id} flow={flow} onDeleted={onFlowDeleted} />
         ))}
 
         {flows.length === 0 && (
-          <div className="flex flex-1 flex-col items-center justify-center py-16 text-center text-zinc-500">
-            <WorkflowIcon className="w-8 h-8 text-zinc-600 mb-2" />
-            <div className="font-mono text-[11.5px] text-zinc-400">No flows recorded</div>
-            <div className="mt-1 text-[10.5px] text-zinc-600 max-w-[200px]">
-              Click <span className="font-mono text-red-400">🔴 Record Flow</span> above to capture human browser
-              actions into an automated flow.
+          <div className="bc-surface flex flex-col items-center justify-center rounded-xl py-14 text-center text-zinc-500">
+            <div className="mb-3 grid h-10 w-10 place-items-center rounded-md border border-slate-700 bg-slate-900">
+              <WorkflowIcon className="h-5 w-5 text-slate-500" />
+            </div>
+            <div className="text-[11.5px] font-semibold text-zinc-300">No flows yet</div>
+            <div className="mt-1 max-w-[220px] text-[10.5px] leading-relaxed text-zinc-600">
+              Record a browser task once, then replay it as a single reliable action.
             </div>
           </div>
         )}

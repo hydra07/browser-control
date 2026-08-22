@@ -412,44 +412,199 @@ export function generateWaypointsPath(cfg: TrajectoryConfig, fallbackCenter?: Po
   return result;
 }
 
+type ExprToken =
+  | { kind: "number"; value: number }
+  | { kind: "identifier"; value: string }
+  | { kind: "operator"; value: "+" | "-" | "*" | "/" | "%" | "^" }
+  | { kind: "open_paren" }
+  | { kind: "close_paren" }
+  | { kind: "comma" };
+
+type MathExpr = (vars: Readonly<Record<string, number>>) => number;
+
+const MATH_VARIABLES = new Set(["t", "theta", "cx", "cy", "x", "y", "r", "a", "b", "k", "w", "h", "size"]);
+const MATH_CONSTANTS = new Map<string, number>([
+  ["pi", Math.PI],
+  ["e", Math.E],
+]);
+const MATH_FUNCTIONS = new Map<string, (...args: number[]) => number>([
+  ["sin", Math.sin],
+  ["cos", Math.cos],
+  ["tan", Math.tan],
+  ["asin", Math.asin],
+  ["acos", Math.acos],
+  ["atan", Math.atan],
+  ["atan2", Math.atan2],
+  ["sinh", Math.sinh],
+  ["cosh", Math.cosh],
+  ["tanh", Math.tanh],
+  ["sqrt", Math.sqrt],
+  ["cbrt", Math.cbrt],
+  ["pow", Math.pow],
+  ["abs", Math.abs],
+  ["exp", Math.exp],
+  ["log", Math.log],
+  ["log2", Math.log2],
+  ["log10", Math.log10],
+  ["min", Math.min],
+  ["max", Math.max],
+  ["round", Math.round],
+  ["floor", Math.floor],
+  ["ceil", Math.ceil],
+  ["sign", Math.sign],
+]);
+
+function tokenizeMathExpression(expr: string): ExprToken[] {
+  const tokens: ExprToken[] = [];
+  const source = expr.replace(/\bMath\./g, "");
+  let index = 0;
+
+  while (index < source.length) {
+    const char = source[index];
+    if (!char) break;
+    if (/\s/.test(char)) {
+      index++;
+      continue;
+    }
+    if (/[0-9.]/.test(char)) {
+      const match = source.slice(index).match(/^(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?/i);
+      if (!match?.[0]) throw new Error(`Invalid number near "${source.slice(index)}"`);
+      const value = Number(match[0]);
+      if (!Number.isFinite(value)) throw new Error(`Invalid number "${match[0]}"`);
+      tokens.push({ kind: "number", value });
+      index += match[0].length;
+      continue;
+    }
+    if (/[a-zA-Z_]/.test(char)) {
+      const match = source.slice(index).match(/^[a-zA-Z_][a-zA-Z0-9_]*/);
+      if (!match?.[0]) throw new Error(`Invalid identifier near "${source.slice(index)}"`);
+      tokens.push({ kind: "identifier", value: match[0].toLowerCase() });
+      index += match[0].length;
+      continue;
+    }
+    if (char === "(" || char === ")" || char === ",") {
+      tokens.push(char === "(" ? { kind: "open_paren" } : char === ")" ? { kind: "close_paren" } : { kind: "comma" });
+      index++;
+      continue;
+    }
+    if (char === "+" || char === "-" || char === "*" || char === "/" || char === "%" || char === "^") {
+      tokens.push({ kind: "operator", value: char });
+      index++;
+      continue;
+    }
+    throw new Error(`Invalid character "${char}"`);
+  }
+
+  return tokens;
+}
+
+function parseMathExpression(tokens: readonly ExprToken[]): MathExpr {
+  let index = 0;
+
+  const peek = () => tokens[index];
+  const consume = () => {
+    const token = tokens[index];
+    index++;
+    return token;
+  };
+  const requireToken = (kind: ExprToken["kind"]) => {
+    const token = consume();
+    if (!token || token.kind !== kind) throw new Error(`Expected ${kind.replace("_", " ")}`);
+    return token;
+  };
+
+  const parsePrimary = (): MathExpr => {
+    const token = consume();
+    if (!token) throw new Error("Unexpected end of expression");
+    if (token.kind === "number") return () => token.value;
+    if (token.kind === "open_paren") {
+      const expression = parseAdditive();
+      requireToken("close_paren");
+      return expression;
+    }
+    if (token.kind !== "identifier")
+      throw new Error("Expected a number, variable, function, or parenthesized expression");
+
+    const constant = MATH_CONSTANTS.get(token.value);
+    if (constant !== undefined) return () => constant;
+    if (MATH_VARIABLES.has(token.value)) return (vars) => vars[token.value] ?? 0;
+
+    const mathFunction = MATH_FUNCTIONS.get(token.value);
+    if (!mathFunction) throw new Error(`Unsupported identifier "${token.value}"`);
+    requireToken("open_paren");
+    const args: MathExpr[] = [];
+    if (peek()?.kind !== "close_paren") {
+      do {
+        args.push(parseAdditive());
+        if (peek()?.kind !== "comma") break;
+        consume();
+      } while (true);
+    }
+    requireToken("close_paren");
+    return (vars) => mathFunction(...args.map((arg) => arg(vars)));
+  };
+
+  const parseUnary = (): MathExpr => {
+    const token = peek();
+    if (token?.kind === "operator" && (token.value === "+" || token.value === "-")) {
+      consume();
+      const operand = parseUnary();
+      return token.value === "+" ? operand : (vars) => -operand(vars);
+    }
+    return parsePrimary();
+  };
+
+  const parsePower = (): MathExpr => {
+    const base = parseUnary();
+    const operator = peek();
+    if (operator?.kind !== "operator" || operator.value !== "^") return base;
+    consume();
+    const exponent = parsePower();
+    return (vars) => base(vars) ** exponent(vars);
+  };
+
+  const parseMultiplicative = (): MathExpr => {
+    let expression = parsePower();
+    while (true) {
+      const operator = peek();
+      if (operator?.kind !== "operator" || !["*", "/", "%"].includes(operator.value)) break;
+      consume();
+      const right = parsePower();
+      const left = expression;
+      if (operator.value === "*") expression = (vars) => left(vars) * right(vars);
+      else if (operator.value === "/") expression = (vars) => left(vars) / right(vars);
+      else expression = (vars) => left(vars) % right(vars);
+    }
+    return expression;
+  };
+
+  const parseAdditive = (): MathExpr => {
+    let expression = parseMultiplicative();
+    while (true) {
+      const operator = peek();
+      if (operator?.kind !== "operator" || (operator.value !== "+" && operator.value !== "-")) break;
+      consume();
+      const right = parseMultiplicative();
+      const left = expression;
+      expression = operator.value === "+" ? (vars) => left(vars) + right(vars) : (vars) => left(vars) - right(vars);
+    }
+    return expression;
+  };
+
+  const expression = parseAdditive();
+  if (index !== tokens.length) throw new Error("Unexpected token after expression");
+  return expression;
+}
+
+/** Compiles a mathematical trajectory expression without executing caller-provided JavaScript. */
 export function compileMathExpr(expr: string): (vars: Record<string, number>) => number {
-  if (!expr || typeof expr !== "string") return () => 0;
+  if (!expr || typeof expr !== "string") throw new Error("A mathematical expression is required");
 
-  const sanitized = expr
-    .replace(/\bPI\b/gi, "Math.PI")
-    .replace(/\bE\b/g, "Math.E")
-    .replace(
-      /\b(sin|cos|tan|asin|acos|atan|atan2|sinh|cosh|tanh|sqrt|cbrt|pow|abs|exp|log|log2|log10|min|max|round|floor|ceil|sign)\b/gi,
-      "Math.$1",
-    )
-    .replace(/\^/g, "**");
-
-  if (!/^[\d\s+\-*/%(),.Matha-zA-Z_]+$/.test(sanitized)) {
-    throw new Error(`Invalid characters in mathematical expression: "${expr}"`);
-  }
-
-  try {
-    const fn = new Function(
-      "vars",
-      `
-      with (Math) {
-        const { t = 0, theta = 0, cx = 0, cy = 0, x = 0, y = 0, r = 0, a = 0, b = 0, k = 0, w = 0, h = 0, size = 0 } = vars || {};
-        return ${sanitized};
-      }
-      `,
-    ) as (vars: Record<string, number>) => number;
-
-    return (vars) => {
-      try {
-        const val = Number(fn(vars));
-        return Number.isFinite(val) ? val : 0;
-      } catch {
-        return 0;
-      }
-    };
-  } catch {
-    return () => 0;
-  }
+  const evaluate = parseMathExpression(tokenizeMathExpression(expr));
+  return (vars) => {
+    const value = evaluate(vars);
+    return Number.isFinite(value) ? value : 0;
+  };
 }
 
 export function generateParametricPath(cfg: TrajectoryConfig, fallbackCenter?: Point): Point[] {

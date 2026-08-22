@@ -4,7 +4,7 @@
 
 import { getSettings } from "../../configs/settings.js";
 import { evalOnPage } from "../../libs/cdp.js";
-import { SWITCH_TAB_ICON_SVG, showPillCaption } from "../overlay/index.js";
+import { showActionHud } from "../overlay/index.js";
 import type { SwitchTabResult } from "./types.js";
 
 export type { SwitchTabResult } from "./types.js";
@@ -134,7 +134,7 @@ export class TabManager {
         }
         void evalOnPage(
             { tabId },
-            `(${showPillCaption.toString()})(${JSON.stringify(SWITCH_TAB_ICON_SVG)}, ${JSON.stringify(`Switched to tab: ${tab?.title ?? tabId}`)}, ${JSON.stringify("#c4b5fd")}, ${JSON.stringify("#8b5cf6")}, false)`,
+            `(${showActionHud.toString()})("switch_tab",${JSON.stringify(tab?.title ?? `Tab ${tabId}`)},"Tab focused",false)`,
         );
         return {
             success: true,

@@ -1,9 +1,9 @@
 /**
  * Reading mode content extraction and element text search handlers.
  */
-import { quadToBox, sendCommand } from "../../libs/cdp.js";
+import { evalOnPage, quadToBox, sendCommand } from "../../libs/cdp.js";
 import { type AxInfo, getAxInfoForNode } from "../actions/index.js";
-import { hideNativeHighlight, showNativeHighlight } from "../overlay/index.js";
+import { hideNativeHighlight, showActionHud, showNativeHighlight } from "../overlay/index.js";
 import { DEFAULT_MAX_READING_CHARS, DEFAULT_MAX_SELECT_CHARS, DEFAULT_MAX_SELECT_MATCHES } from "./constants.js";
 
 /**
@@ -363,6 +363,12 @@ export async function handleFindCommand(
         }
     }
 
+    void evalOnPage(
+        target,
+        `(${showActionHud.toString()})("search",${JSON.stringify(query)},${JSON.stringify(`${search.resultCount} match${search.resultCount === 1 ? "" : "es"}`)},false)`,
+        true,
+    );
+
     return {
         message: `Found ${search.resultCount} match(es) for "${query}"${search.resultCount > capped ? ` (showing first ${capped})` : ""}. Use these ids with browser_act's click/type or browser_inspect's inspect_element/select_content.`,
         count: search.resultCount,
@@ -525,6 +531,13 @@ export async function handleSelectContentCommand(
         cappedBlocks.push(block);
         usedChars += block.length;
     }
+
+    const selectionLabel = opts.selector ?? `Node ${opts.nodeId}`;
+    void evalOnPage(
+        target,
+        `(${showActionHud.toString()})("select",${JSON.stringify(selectionLabel)},${JSON.stringify(`${cappedBlocks.length} content block${cappedBlocks.length === 1 ? "" : "s"} selected`)},false)`,
+        true,
+    );
 
     return {
         message: `Extracted ${cappedBlocks.length} of ${matchCount} matched element(s) as markdown.${matchCount > cappedBlocks.length ? ` Narrow the selector or raise maxMatches/maxChars to get the rest.` : ""}`,
