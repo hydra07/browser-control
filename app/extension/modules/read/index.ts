@@ -1,9 +1,9 @@
 /**
  * Reading mode content extraction and element text search handlers.
  */
-import { evalOnPage, quadToBox, sendCommand } from "../../libs/cdp.js";
+import { quadToBox, sendCommand } from "../../libs/cdp.js";
 import { type AxInfo, getAxInfoForNode } from "../actions/index.js";
-import { hideNativeHighlight, showActionHud, showNativeHighlight } from "../overlay/index.js";
+import { hideNativeHighlight, runCanvasOverlay, showActionHud, showNativeHighlight } from "../overlay/index.js";
 import { DEFAULT_MAX_READING_CHARS, DEFAULT_MAX_SELECT_CHARS, DEFAULT_MAX_SELECT_MATCHES } from "./constants.js";
 
 /**
@@ -363,7 +363,7 @@ export async function handleFindCommand(
         }
     }
 
-    void evalOnPage(
+    void runCanvasOverlay(
         target,
         `(${showActionHud.toString()})("search",${JSON.stringify(query)},${JSON.stringify(`${search.resultCount} match${search.resultCount === 1 ? "" : "es"}`)},false)`,
         true,
@@ -533,7 +533,7 @@ export async function handleSelectContentCommand(
     }
 
     const selectionLabel = opts.selector ?? `Node ${opts.nodeId}`;
-    void evalOnPage(
+    void runCanvasOverlay(
         target,
         `(${showActionHud.toString()})("select",${JSON.stringify(selectionLabel)},${JSON.stringify(`${cappedBlocks.length} content block${cappedBlocks.length === 1 ? "" : "s"} selected`)},false)`,
         true,

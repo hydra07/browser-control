@@ -4,7 +4,7 @@
  */
 import type { BrowserCommand } from "@browsercontrol/shared";
 import { getSettings, getSettingsSync } from "../../configs/settings.js";
-import { evalOnPage, sendCommand } from "../../libs/cdp.js";
+import { sendCommand } from "../../libs/cdp.js";
 import { errorMessage } from "../../libs/errorMessage.js";
 import { performClick, performDrag, performPressKey, performScroll, performType } from "../actions/index.js";
 import {
@@ -18,7 +18,7 @@ import { runFlowSteps } from "../flow/index.js";
 import { inspectElement } from "../inspect/index.js";
 import { clearBlockedRequests, setSandbox } from "../interceptor/index.js";
 import { clearNetworkRequests, getNetworkRequestDetail, listNetworkRequests } from "../network/index.js";
-import { showActionHud } from "../overlay/index.js";
+import { runCanvasOverlay, showActionHud } from "../overlay/index.js";
 import { handlePeekScreenCommand } from "../peek/index.js";
 import { handleFindCommand, handleReadingModeCommand, handleSelectContentCommand } from "../read/index.js";
 import { flowRecorder } from "../recorder/index.js";
@@ -152,7 +152,7 @@ async function handleNavigate(
         try {
             hostname = new URL(url).hostname || url;
         } catch {}
-        void evalOnPage(
+        void runCanvasOverlay(
             { tabId },
             `(${showActionHud.toString()})("navigate",${JSON.stringify(hostname)},"Navigation complete",false)`,
         );

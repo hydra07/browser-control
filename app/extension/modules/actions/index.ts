@@ -4,7 +4,7 @@
  */
 
 import type { Point } from "@browsercontrol/shared";
-import { evalOnPage, quadToBox, sendCommand } from "../../libs/cdp.js";
+import { quadToBox, sendCommand } from "../../libs/cdp.js";
 import { errorMessage } from "../../libs/errorMessage.js";
 import {
     hideNativeHighlight,
@@ -12,6 +12,7 @@ import {
     moveCursorTo,
     pageDelay,
     pulseCursorPress,
+    runCanvasOverlay,
     showActionHud,
     showClickRipple,
     showDragTrajectory,
@@ -33,7 +34,7 @@ function classifyHudAction(kind: "click" | "type", axInfo: AxInfo): string {
 }
 
 function showHud(target: chrome.debugger.Debuggee, action: string, title: string, detail: string, fast: boolean): void {
-    void evalOnPage(
+    void runCanvasOverlay(
         target,
         `(${showActionHud.toString()})(${JSON.stringify(action)},${JSON.stringify(title)},${JSON.stringify(detail)},${fast})`,
         true,
@@ -122,7 +123,7 @@ export async function performClick(
     const y = box.y + box.h / 2;
 
     const [, axInfo] = await Promise.all([
-        evalOnPage(target, `(${moveCursorTo.toString()})(${x}, ${y}, ${opts.fast})`, true),
+        runCanvasOverlay(target, `(${moveCursorTo.toString()})(${x}, ${y}, ${opts.fast})`, true),
         getAxInfoForNode(target, backendNodeId),
     ]);
     const targetLabel = axInfo.name ?? axInfo.role ?? "Page element";
@@ -130,7 +131,7 @@ export async function performClick(
     await showNativeHighlight(target, box, KIND_COLORS.click.rgb);
     if (!opts.fast) await pageDelay(target, 350);
 
-    void evalOnPage(target, `(${pulseCursorPress.toString()})(true)`);
+    void runCanvasOverlay(target, `(${pulseCursorPress.toString()})(true)`);
     await sendCommand(target, "Input.dispatchMouseEvent", {
         type: "mousePressed",
         x,
@@ -138,9 +139,9 @@ export async function performClick(
         button: "left",
         clickCount: 1,
     });
-    void evalOnPage(target, `(${showClickRipple.toString()})(${x}, ${y}, 'click', ${opts.fast})`);
+    void runCanvasOverlay(target, `(${showClickRipple.toString()})(${x}, ${y}, 'click', ${opts.fast})`);
     if (!opts.fast) await pageDelay(target, 130);
-    void evalOnPage(target, `(${pulseCursorPress.toString()})(false)`);
+    void runCanvasOverlay(target, `(${pulseCursorPress.toString()})(false)`);
     await sendCommand(target, "Input.dispatchMouseEvent", {
         type: "mouseReleased",
         x,
@@ -192,10 +193,10 @@ export async function performType(
             const box = quadToBox(boxModel.model.content);
             const cx = box.x + box.w / 2;
             const cy = box.y + box.h / 2;
-            await evalOnPage(target, `(${moveCursorTo.toString()})(${cx}, ${cy}, ${opts.fast})`, true);
+            await runCanvasOverlay(target, `(${moveCursorTo.toString()})(${cx}, ${cy}, ${opts.fast})`, true);
             await showNativeHighlight(target, box, KIND_COLORS.type.rgb);
             if (!opts.fast) await pageDelay(target, 350);
-            void evalOnPage(target, `(${showClickRipple.toString()})(${cx}, ${cy}, 'type', ${opts.fast})`);
+            void runCanvasOverlay(target, `(${showClickRipple.toString()})(${cx}, ${cy}, 'type', ${opts.fast})`);
             setTimeout(() => hideNativeHighlight(target), opts.fast ? 350 : 1200);
         }
     }
@@ -309,10 +310,10 @@ export async function performPressKey(
             const box = quadToBox(boxModel.model.content);
             const cx = box.x + box.w / 2;
             const cy = box.y + box.h / 2;
-            await evalOnPage(target, `(${moveCursorTo.toString()})(${cx}, ${cy}, ${opts.fast})`, true);
+            await runCanvasOverlay(target, `(${moveCursorTo.toString()})(${cx}, ${cy}, ${opts.fast})`, true);
             await showNativeHighlight(target, box, KIND_COLORS.type.rgb);
             if (!opts.fast) await pageDelay(target, 350);
-            void evalOnPage(target, `(${showClickRipple.toString()})(${cx}, ${cy}, 'type', ${opts.fast})`);
+            void runCanvasOverlay(target, `(${showClickRipple.toString()})(${cx}, ${cy}, 'type', ${opts.fast})`);
             setTimeout(() => hideNativeHighlight(target), opts.fast ? 350 : 1200);
         }
     }
@@ -325,7 +326,7 @@ export async function performPressKey(
         axInfo.name ? `On ${axInfo.name}` : "Keyboard input",
         opts.fast,
     );
-    void evalOnPage(target, `(${showKeyMotion.toString()})(${opts.fast})`, true);
+    void runCanvasOverlay(target, `(${showKeyMotion.toString()})(${opts.fast})`, true);
 
     await sendCommand(target, "Input.dispatchKeyEvent", {
         type: "rawKeyDown",
@@ -368,7 +369,7 @@ export async function performScroll(
     const direction = vertical ? (deltaY >= 0 ? "down" : "up") : deltaX >= 0 ? "right" : "left";
     const distance = Math.round(Math.abs(vertical ? deltaY : deltaX));
     showHud(target, "scroll", `Scroll ${direction}`, `${distance}px`, opts.fast);
-    void evalOnPage(target, `(${showScrollMotion.toString()})(${deltaX},${deltaY},${opts.fast})`, true);
+    void runCanvasOverlay(target, `(${showScrollMotion.toString()})(${deltaX},${deltaY},${opts.fast})`, true);
     await sendCommand(
         target,
         "Input.dispatchMouseEvent",
@@ -434,11 +435,11 @@ export async function performDrag(
         `From ${Math.round(start.x)}, ${Math.round(start.y)} · ${points.length} points`,
         opts.fast,
     );
-    void evalOnPage(target, `(${showDragTrajectory.toString()})(${JSON.stringify(points)},${opts.fast})`, true);
+    void runCanvasOverlay(target, `(${showDragTrajectory.toString()})(${JSON.stringify(points)},${opts.fast})`, true);
 
     // 1. Move cursor to start
-    await evalOnPage(target, `(${moveCursorTo.toString()})(${start.x}, ${start.y}, ${opts.fast})`, true);
-    void evalOnPage(target, `(${pulseCursorPress.toString()})(true)`);
+    await runCanvasOverlay(target, `(${moveCursorTo.toString()})(${start.x}, ${start.y}, ${opts.fast})`, true);
+    void runCanvasOverlay(target, `(${pulseCursorPress.toString()})(true)`);
 
     // 2. Mouse Press
     await sendCommand(target, "Input.dispatchMouseEvent", {
@@ -460,18 +461,18 @@ export async function performDrag(
             button,
         });
         if (!opts.fast && i % 2 === 0) {
-            void evalOnPage(target, `(${moveCursorTo.toString()})(${pt.x}, ${pt.y}, true)`);
+            void runCanvasOverlay(target, `(${moveCursorTo.toString()})(${pt.x}, ${pt.y}, true)`);
         }
         if (perStepDelay > 0) {
             await pageDelay(target, perStepDelay);
         }
     }
 
-    await evalOnPage(target, `(${moveCursorTo.toString()})(${end.x}, ${end.y}, true)`, true);
+    await runCanvasOverlay(target, `(${moveCursorTo.toString()})(${end.x}, ${end.y}, true)`, true);
 
     // 4. Ripple & Mouse Release
-    void evalOnPage(target, `(${showClickRipple.toString()})(${end.x}, ${end.y}, 'click', ${opts.fast})`);
-    void evalOnPage(target, `(${pulseCursorPress.toString()})(false)`);
+    void runCanvasOverlay(target, `(${showClickRipple.toString()})(${end.x}, ${end.y}, 'click', ${opts.fast})`);
+    void runCanvasOverlay(target, `(${pulseCursorPress.toString()})(false)`);
     await sendCommand(target, "Input.dispatchMouseEvent", {
         type: "mouseReleased",
         x: end.x,

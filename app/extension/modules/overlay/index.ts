@@ -1,5 +1,44 @@
-/** In-page visual feedback for browser actions. */
+/** Canvas-rendered visual feedback for browser actions. */
 import { evalOnPage, sendCommand } from "../../libs/cdp.js";
+
+type CanvasEffectKind = 0 | 1 | 2 | 3;
+
+type CanvasEffect = {
+    kind: CanvasEffectKind;
+    start: number;
+    duration: number;
+    x: number;
+    y: number;
+    dx: number;
+    dy: number;
+    color: string;
+    points: Float32Array | null;
+};
+
+type CanvasHudEntry = {
+    action: string;
+    code: string;
+    title: string;
+    detail: string;
+    start: number;
+    duration: number;
+};
+
+type CanvasOverlayRuntime = {
+    canvas: HTMLCanvasElement;
+    moveCursor: (x: number, y: number, duration: number) => void;
+    setPressed: (pressed: boolean) => void;
+    addClick: (x: number, y: number, color: string, duration: number) => void;
+    addKey: (duration: number) => void;
+    addScroll: (deltaX: number, deltaY: number, duration: number) => void;
+    addDrag: (points: Array<{ x: number; y: number }>, duration: number) => void;
+    addHud: (action: string, title: string, detail: string, duration: number) => void;
+};
+
+type OverlayWindow = Window & { __bcCanvasOverlay?: CanvasOverlayRuntime };
+
+const canvasInstallations = new Map<number, Promise<boolean>>();
+let canvasLifecycleRegistered = false;
 
 export type ActionKind = "click" | "type" | "key" | "scroll" | "drag" | "select" | "search";
 
@@ -14,134 +53,544 @@ export const KIND_COLORS: Record<string, { rgb: { r: number; g: number; b: numbe
     search: { rgb: { r: 103, g: 194, b: 184 }, from: "#7acbc2", to: "#3f8f87" },
 };
 
-/** Moves the agent cursor and preserves a precise source-to-target trace. */
-export function moveCursorTo(x: number, y: number, fast?: boolean): Promise<void> {
-    return new Promise((resolve) => {
-        if (!document.getElementById("__bc_cursor_style__")) {
-            const style = document.createElement("style");
-            style.id = "__bc_cursor_style__";
-            style.textContent = `
-                @keyframes __bc_trace_fade__{0%{opacity:.78}68%{opacity:.5}100%{opacity:0}}
-                @keyframes __bc_origin_settle__{0%{opacity:0;transform:scale(.45)}35%{opacity:.8}100%{opacity:0;transform:scale(1.5)}}
-                #__bc_cursor__ [data-bc-ring]{animation:__bc_cursor_idle__ 2.4s ease-in-out infinite}
-                @keyframes __bc_cursor_idle__{0%,100%{opacity:.62;transform:scale(1)}50%{opacity:.28;transform:scale(1.18)}}
-                @media(prefers-reduced-motion:reduce){#__bc_cursor__{transition:none!important}.bc-cursor-trace{display:none!important}}
-            `;
-            document.documentElement.appendChild(style);
+/** Installs the single demand-driven canvas renderer inside the page. */
+export function installCanvasOverlay(): void {
+    const overlayWindow = window as OverlayWindow;
+    const installed = overlayWindow.__bcCanvasOverlay;
+    if (installed?.canvas.isConnected) return;
+
+    document.getElementById("__bc_overlay_canvas__")?.remove();
+    const canvas = document.createElement("canvas");
+    canvas.id = "__bc_overlay_canvas__";
+    canvas.setAttribute("aria-hidden", "true");
+    canvas.style.setProperty("all", "initial", "important");
+    canvas.style.setProperty("position", "fixed", "important");
+    canvas.style.setProperty("inset", "0", "important");
+    canvas.style.setProperty("width", "100vw", "important");
+    canvas.style.setProperty("height", "100vh", "important");
+    canvas.style.setProperty("display", "block", "important");
+    canvas.style.setProperty("pointer-events", "none", "important");
+    canvas.style.setProperty("z-index", "2147483647", "important");
+    canvas.style.setProperty("contain", "strict", "important");
+    document.documentElement.appendChild(canvas);
+
+    const context = canvas.getContext("2d", { alpha: true, desynchronized: true });
+    if (!context) {
+        canvas.remove();
+        return;
+    }
+
+    const effects: CanvasEffect[] = [];
+    const hudEntries: CanvasHudEntry[] = [];
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const actionCodes = {
+        click: "CLICK",
+        type: "TYPE",
+        enter: "ENTER",
+        key: "KEY",
+        scroll: "SCROLL",
+        drag: "DRAG",
+        search: "FIND",
+        select: "SELECT",
+        navigate: "GO",
+        switch_tab: "TAB",
+    } as const;
+
+    let viewportWidth = 0;
+    let viewportHeight = 0;
+    let pixelRatio = 1;
+    let animationFrame = 0;
+    let cursorVisible = false;
+    let cursorPressed = false;
+    let cursorStartX = -100;
+    let cursorStartY = -100;
+    let cursorX = -100;
+    let cursorY = -100;
+    let cursorTargetX = -100;
+    let cursorTargetY = -100;
+    let cursorMoveStart = 0;
+    let cursorMoveDuration = 0;
+
+    const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+    const easeOut = (value: number) => 1 - (1 - value) ** 3;
+
+    const resize = () => {
+        const nextWidth = Math.max(1, window.innerWidth);
+        const nextHeight = Math.max(1, window.innerHeight);
+        const nextRatio = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+        if (nextWidth === viewportWidth && nextHeight === viewportHeight && nextRatio === pixelRatio) return;
+        viewportWidth = nextWidth;
+        viewportHeight = nextHeight;
+        pixelRatio = nextRatio;
+        canvas.width = Math.round(nextWidth * nextRatio);
+        canvas.height = Math.round(nextHeight * nextRatio);
+        context.setTransform(nextRatio, 0, 0, nextRatio, 0, 0);
+    };
+
+    const roundedRect = (x: number, y: number, width: number, height: number, radius: number) => {
+        context.beginPath();
+        context.roundRect(x, y, width, height, Math.min(radius, width / 2, height / 2));
+    };
+
+    const drawGlass = (x: number, y: number, width: number, height: number, radius: number, opacity: number) => {
+        context.save();
+        context.globalAlpha = opacity;
+        roundedRect(x, y, width, height, radius);
+        const fill = context.createLinearGradient(x, y, x + width, y + height);
+        fill.addColorStop(0, "rgba(19,30,42,.72)");
+        fill.addColorStop(0.48, "rgba(7,13,20,.58)");
+        fill.addColorStop(1, "rgba(16,27,38,.68)");
+        context.fillStyle = fill;
+        context.fill();
+
+        const rim = context.createLinearGradient(x, y, x + width, y + height);
+        rim.addColorStop(0, "rgba(244,250,255,.7)");
+        rim.addColorStop(0.3, "rgba(188,221,248,.18)");
+        rim.addColorStop(0.72, "rgba(83,151,204,.08)");
+        rim.addColorStop(1, "rgba(96,181,240,.42)");
+        context.strokeStyle = rim;
+        context.lineWidth = 1;
+        context.stroke();
+
+        roundedRect(x + 1.5, y + 1.5, width - 3, height - 3, Math.max(1, radius - 1.5));
+        const sheen = context.createLinearGradient(x, y, x, y + height * 0.6);
+        sheen.addColorStop(0, "rgba(255,255,255,.12)");
+        sheen.addColorStop(1, "rgba(255,255,255,0)");
+        context.strokeStyle = sheen;
+        context.stroke();
+        context.restore();
+    };
+
+    const cursorPosition = (now: number) => {
+        if (cursorMoveDuration <= 0) return { x: cursorTargetX, y: cursorTargetY, progress: 1 };
+        const progress = clamp01((now - cursorMoveStart) / cursorMoveDuration);
+        const eased = easeOut(progress);
+        return {
+            x: cursorStartX + (cursorTargetX - cursorStartX) * eased,
+            y: cursorStartY + (cursorTargetY - cursorStartY) * eased,
+            progress,
+        };
+    };
+
+    const drawCursor = (now: number) => {
+        if (!cursorVisible) return false;
+        const position = cursorPosition(now);
+        cursorX = position.x;
+        cursorY = position.y;
+
+        if (position.progress < 1) {
+            const trace = context.createLinearGradient(cursorStartX, cursorStartY, cursorX, cursorY);
+            trace.addColorStop(0, "rgba(91,164,219,.08)");
+            trace.addColorStop(0.72, "rgba(106,183,238,.5)");
+            trace.addColorStop(1, "rgba(210,238,255,.82)");
+            context.beginPath();
+            context.moveTo(cursorStartX, cursorStartY);
+            context.lineTo(cursorX, cursorY);
+            context.strokeStyle = trace;
+            context.lineWidth = 1.25;
+            context.stroke();
+
+            context.beginPath();
+            context.arc(cursorStartX, cursorStartY, 3 + position.progress * 3, 0, Math.PI * 2);
+            context.strokeStyle = `rgba(119,191,242,${0.55 * (1 - position.progress)})`;
+            context.lineWidth = 1;
+            context.stroke();
         }
 
-        const durationMs = fast ? 180 : 520;
-        let cursor = document.getElementById("__bc_cursor__") as HTMLDivElement | null;
-        if (!cursor) {
-            cursor = document.createElement("div");
-            cursor.id = "__bc_cursor__";
-            cursor.innerHTML =
-                '<div data-bc-ring style="position:absolute;left:-10px;top:-10px;width:20px;height:20px;border:1px solid rgba(132,199,250,.72);border-radius:50%;box-sizing:border-box;pointer-events:none"></div>' +
-                '<div data-bc-dot style="position:absolute;left:-4px;top:-4px;width:8px;height:8px;border:1.5px solid rgba(255,255,255,.92);border-radius:50%;background:#4f9bd3;box-shadow:0 2px 6px rgba(0,0,0,.48),inset 0 1px rgba(255,255,255,.5);box-sizing:border-box;transition:transform 150ms cubic-bezier(.2,.9,.2,1),background 120ms ease;pointer-events:none"></div>';
-            document.documentElement.appendChild(cursor);
+        context.save();
+        context.translate(cursorX, cursorY);
+        context.scale(cursorPressed ? 1.36 : 1, cursorPressed ? 0.7 : 1);
+        context.beginPath();
+        context.arc(0, 0, 10, 0, Math.PI * 2);
+        context.strokeStyle = cursorPressed ? "rgba(220,242,255,.88)" : "rgba(126,196,246,.68)";
+        context.lineWidth = 1;
+        context.stroke();
+        context.beginPath();
+        context.arc(0, 0, 4, 0, Math.PI * 2);
+        context.fillStyle = cursorPressed ? "#dff3ff" : "#4f9bd3";
+        context.fill();
+        context.strokeStyle = "rgba(255,255,255,.9)";
+        context.lineWidth = 1.25;
+        context.stroke();
+        context.restore();
+        return position.progress < 1;
+    };
+
+    const drawClick = (effect: CanvasEffect, progress: number) => {
+        const eased = easeOut(progress);
+        const radius = 7 + eased * 17;
+        const alpha = 1 - progress;
+        context.beginPath();
+        context.arc(effect.x, effect.y, radius, 0, Math.PI * 2);
+        context.strokeStyle = effect.color;
+        context.globalAlpha = alpha * 0.9;
+        context.lineWidth = 1.5;
+        context.stroke();
+        context.beginPath();
+        context.ellipse(effect.x, effect.y, 5 * (1 - eased * 0.62), 5 * (1 + eased * 0.3), 0, 0, Math.PI * 2);
+        context.strokeStyle = "rgba(239,249,255,.86)";
+        context.globalAlpha = alpha;
+        context.lineWidth = 1;
+        context.stroke();
+        context.globalAlpha = 1;
+    };
+
+    const drawKey = (effect: CanvasEffect, progress: number) => {
+        const radiusX = 7 + progress * 18;
+        const radiusY = 4 + progress * 7;
+        context.save();
+        context.globalAlpha = 1 - progress;
+        context.beginPath();
+        context.ellipse(effect.x, effect.y, radiusX, radiusY, 0, Math.PI * 1.08, Math.PI * 1.92);
+        context.strokeStyle = "rgba(116,205,194,.9)";
+        context.lineWidth = 1.2;
+        context.stroke();
+        context.beginPath();
+        context.ellipse(effect.x, effect.y, radiusX, radiusY, 0, Math.PI * 0.08, Math.PI * 0.92);
+        context.strokeStyle = "rgba(214,245,239,.62)";
+        context.stroke();
+        context.restore();
+    };
+
+    const drawScroll = (effect: CanvasEffect, progress: number) => {
+        const length = Math.hypot(effect.dx, effect.dy) || 1;
+        const vectorX = (effect.dx / length) * 28;
+        const vectorY = (effect.dy / length) * 28;
+        const startX = effect.x - vectorX * 0.5 + vectorX * progress;
+        const startY = effect.y - vectorY * 0.5 + vectorY * progress;
+        const endX = startX + vectorX * 0.55;
+        const endY = startY + vectorY * 0.55;
+        context.save();
+        context.globalAlpha = Math.sin(progress * Math.PI) * 0.9;
+        const gradient = context.createLinearGradient(startX, startY, endX, endY);
+        gradient.addColorStop(0, "rgba(201,183,137,0)");
+        gradient.addColorStop(1, "rgba(224,205,157,.94)");
+        context.beginPath();
+        context.moveTo(startX, startY);
+        context.lineTo(endX, endY);
+        context.strokeStyle = gradient;
+        context.lineWidth = 1.5;
+        context.stroke();
+        context.beginPath();
+        context.arc(endX, endY, 2.25, 0, Math.PI * 2);
+        context.fillStyle = "rgba(236,219,175,.92)";
+        context.fill();
+        context.restore();
+    };
+
+    const drawDrag = (effect: CanvasEffect, progress: number) => {
+        const points = effect.points;
+        if (!points || points.length < 4) return;
+        const pointCount = points.length / 2;
+        context.save();
+        context.beginPath();
+        context.moveTo(points[0]!, points[1]!);
+        for (let index = 1; index < pointCount; index += 1) {
+            context.lineTo(points[index * 2]!, points[index * 2 + 1]!);
         }
+        context.setLineDash([3, 5]);
+        context.strokeStyle = "rgba(106,179,233,.28)";
+        context.lineWidth = 1.25;
+        context.stroke();
+        context.setLineDash([]);
 
-        const fromX = Number.parseFloat(cursor.style.left);
-        const fromY = Number.parseFloat(cursor.style.top);
-        if (Number.isFinite(fromX) && Number.isFinite(fromY) && fromX >= 0 && fromY >= 0) {
-            const deltaX = x - fromX;
-            const deltaY = y - fromY;
-            const distance = Math.hypot(deltaX, deltaY);
-            if (distance > 5) {
-                const trace = document.createElement("div");
-                trace.className = "bc-cursor-trace";
-                trace.style.cssText = `all:initial;position:fixed;left:${fromX}px;top:${fromY}px;width:${distance}px;height:1px;z-index:2147483645;pointer-events:none;transform-origin:0 50%;transform:rotate(${Math.atan2(deltaY, deltaX)}rad);background:linear-gradient(90deg,rgba(115,181,232,.16),rgba(115,181,232,.68));animation:__bc_trace_fade__ ${fast ? 420 : 760}ms ease-out forwards;`;
+        const progressIndex = progress * (pointCount - 1);
+        const wholeIndex = Math.floor(progressIndex);
+        const remainder = progressIndex - wholeIndex;
+        context.beginPath();
+        context.moveTo(points[0]!, points[1]!);
+        for (let index = 1; index <= wholeIndex; index += 1) {
+            context.lineTo(points[index * 2]!, points[index * 2 + 1]!);
+        }
+        if (wholeIndex < pointCount - 1) {
+            const fromX = points[wholeIndex * 2]!;
+            const fromY = points[wholeIndex * 2 + 1]!;
+            const toX = points[(wholeIndex + 1) * 2]!;
+            const toY = points[(wholeIndex + 1) * 2 + 1]!;
+            context.lineTo(fromX + (toX - fromX) * remainder, fromY + (toY - fromY) * remainder);
+        }
+        context.strokeStyle = "rgba(116,190,244,.94)";
+        context.lineWidth = 2;
+        context.stroke();
 
-                const origin = document.createElement("div");
-                origin.className = "bc-cursor-trace";
-                origin.style.cssText = `all:initial;position:fixed;left:${fromX - 3}px;top:${fromY - 3}px;width:6px;height:6px;z-index:2147483645;pointer-events:none;border:1px solid rgba(130,196,244,.7);border-radius:50%;box-sizing:border-box;animation:__bc_origin_settle__ ${fast ? 340 : 620}ms ease-out forwards;`;
-                document.documentElement.append(trace, origin);
-                setTimeout(
-                    () => {
-                        trace.remove();
-                        origin.remove();
-                    },
-                    fast ? 460 : 800,
-                );
+        const firstX = points[0]!;
+        const firstY = points[1]!;
+        const lastX = points[points.length - 2]!;
+        const lastY = points[points.length - 1]!;
+        context.beginPath();
+        context.arc(firstX, firstY, 4, 0, Math.PI * 2);
+        context.fillStyle = "rgba(8,15,23,.88)";
+        context.fill();
+        context.strokeStyle = "rgba(190,226,252,.88)";
+        context.stroke();
+        context.beginPath();
+        context.arc(lastX, lastY, 5, 0, Math.PI * 2);
+        context.fillStyle = "rgba(112,184,237,.94)";
+        context.fill();
+        context.stroke();
+        context.font = "700 9px ui-monospace, SFMono-Regular, Consolas, monospace";
+        context.fillStyle = "rgba(198,226,246,.9)";
+        context.fillText("FROM", firstX + 10, firstY - 7);
+        context.fillText("TO", lastX + 10, lastY - 7);
+        context.restore();
+    };
 
-                const traces = document.querySelectorAll(".bc-cursor-trace");
-                for (let index = 0; index < traces.length - 8; index += 1) traces[index]?.remove();
+    const drawEffects = (now: number) => {
+        let writeIndex = 0;
+        for (let index = 0; index < effects.length; index += 1) {
+            const effect = effects[index]!;
+            const progress = clamp01((now - effect.start) / effect.duration);
+            if (effect.kind === 0) drawClick(effect, progress);
+            else if (effect.kind === 1) drawKey(effect, progress);
+            else if (effect.kind === 2) drawScroll(effect, progress);
+            else drawDrag(effect, progress);
+            if (progress < 1) effects[writeIndex++] = effect;
+        }
+        effects.length = writeIndex;
+        return writeIndex > 0;
+    };
+
+    const drawHudText = (entry: CanvasHudEntry, x: number, y: number, width: number, compact: boolean) => {
+        const badgeWidth = compact ? 34 : 42;
+        context.fillStyle = entry.action === "scroll" ? "#d7c18e" : entry.action === "enter" ? "#afe2c8" : "#b9daf4";
+        context.font = "700 9px ui-monospace, SFMono-Regular, Consolas, monospace";
+        context.textBaseline = "middle";
+        context.fillText(entry.code, x + 11, y + (compact ? 12 : 23));
+        context.save();
+        context.beginPath();
+        context.rect(x + badgeWidth + 12, y + 4, width - badgeWidth - 20, compact ? 17 : 39);
+        context.clip();
+        context.fillStyle = "#f2f6f9";
+        context.font = `${compact ? "600 10px" : "620 12px"} Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif`;
+        context.fillText(entry.title, x + badgeWidth + 12, y + (compact ? 12 : 18));
+        if (!compact && entry.detail) {
+            context.fillStyle = "#8e9baa";
+            context.font = "550 9.5px ui-monospace, SFMono-Regular, Consolas, monospace";
+            context.fillText(entry.detail, x + badgeWidth + 12, y + 33);
+        }
+        context.restore();
+    };
+
+    const drawHud = (now: number) => {
+        let writeIndex = 0;
+        for (let index = 0; index < hudEntries.length; index += 1) {
+            const entry = hudEntries[index]!;
+            if (now - entry.start < entry.duration + 190) hudEntries[writeIndex++] = entry;
+        }
+        hudEntries.length = writeIndex;
+        if (writeIndex === 0) return false;
+
+        const active = hudEntries[0]!;
+        const activeAge = now - active.start;
+        const enter = easeOut(clamp01(activeAge / 260));
+        const exit = clamp01((activeAge - active.duration) / 190);
+        const fullWidth = Math.min(370, viewportWidth - 24);
+        const activeWidth = 92 + (fullWidth - 92) * enter;
+        const activeX = (viewportWidth - activeWidth) / 2;
+        const activeOpacity = 1 - exit;
+        drawGlass(activeX, 14 - (1 - enter) * 8 - exit * 7, activeWidth, 46, 13, activeOpacity);
+        drawHudText(active, activeX, 14 - (1 - enter) * 8 - exit * 7, activeWidth, false);
+
+        const progress = clamp01(activeAge / active.duration);
+        context.save();
+        context.globalAlpha = activeOpacity * 0.82;
+        roundedRect(activeX + 1, 58, (activeWidth - 2) * (1 - progress), 2, 1);
+        context.fillStyle = active.action === "scroll" ? "#b99d65" : active.action === "enter" ? "#69bf95" : "#69afe4";
+        context.fill();
+        context.restore();
+
+        const historyCount = Math.min(2, writeIndex - 1);
+        if (historyCount > 0) {
+            const gap = 5;
+            const chipWidth = Math.min(160, (fullWidth - gap) / historyCount);
+            const totalWidth = chipWidth * historyCount + gap * (historyCount - 1);
+            const startX = (viewportWidth - totalWidth) / 2;
+            for (let index = 0; index < historyCount; index += 1) {
+                const entry = hudEntries[index + 1]!;
+                const x = startX + index * (chipWidth + gap);
+                drawGlass(x, 66, chipWidth, 24, 9, 0.44 - index * 0.1);
+                drawHudText(entry, x, 66, chipWidth, true);
             }
         }
+        return true;
+    };
 
-        cursor.style.cssText = `all:initial;position:fixed;width:0;height:0;z-index:2147483647;pointer-events:none;left:${cursor.style.left || "-100px"};top:${cursor.style.top || "-100px"};transition:left ${durationMs}ms cubic-bezier(.22,1,.36,1),top ${durationMs}ms cubic-bezier(.22,1,.36,1);`;
-        void cursor.offsetWidth;
-        cursor.style.left = `${x}px`;
-        cursor.style.top = `${y}px`;
-        setTimeout(resolve, durationMs + 20);
-    });
+    const render = (now: number) => {
+        animationFrame = 0;
+        resize();
+        context.clearRect(0, 0, viewportWidth, viewportHeight);
+        const effectsActive = drawEffects(now);
+        const cursorActive = drawCursor(now);
+        const hudActive = drawHud(now);
+        if (effectsActive || cursorActive || hudActive) animationFrame = requestAnimationFrame(render);
+    };
+
+    const schedule = () => {
+        if (animationFrame === 0) animationFrame = requestAnimationFrame(render);
+    };
+
+    const addEffect = (
+        kind: CanvasEffectKind,
+        x: number,
+        y: number,
+        dx: number,
+        dy: number,
+        color: string,
+        points: Float32Array | null,
+        duration: number,
+    ) => {
+        effects.push({ kind, start: performance.now(), duration, x, y, dx, dy, color, points });
+        if (effects.length > 16) effects.splice(0, effects.length - 16);
+        schedule();
+    };
+
+    const runtime: CanvasOverlayRuntime = {
+        canvas,
+        moveCursor(x, y, duration) {
+            const now = performance.now();
+            if (cursorVisible) {
+                const position = cursorPosition(now);
+                cursorStartX = position.x;
+                cursorStartY = position.y;
+            } else {
+                cursorVisible = true;
+                cursorStartX = x;
+                cursorStartY = y;
+                cursorX = x;
+                cursorY = y;
+            }
+            cursorTargetX = x;
+            cursorTargetY = y;
+            cursorMoveStart = now;
+            cursorMoveDuration = reducedMotion ? 1 : duration;
+            schedule();
+        },
+        setPressed(pressed) {
+            cursorPressed = pressed;
+            schedule();
+        },
+        addClick(x, y, color, duration) {
+            addEffect(0, x, y, 0, 0, color, null, reducedMotion ? 1 : duration);
+        },
+        addKey(duration) {
+            addEffect(1, cursorX, cursorY, 0, 0, "", null, reducedMotion ? 1 : duration);
+        },
+        addScroll(deltaX, deltaY, duration) {
+            const x = cursorVisible ? cursorX : viewportWidth / 2;
+            const y = cursorVisible ? cursorY : viewportHeight / 2;
+            addEffect(2, x, y, deltaX, deltaY, "", null, reducedMotion ? 1 : duration);
+        },
+        addDrag(points, duration) {
+            const coordinates = new Float32Array(points.length * 2);
+            for (let index = 0; index < points.length; index += 1) {
+                const point = points[index]!;
+                coordinates[index * 2] = point.x;
+                coordinates[index * 2 + 1] = point.y;
+            }
+            addEffect(3, 0, 0, 0, 0, "", coordinates, reducedMotion ? 1 : duration);
+        },
+        addHud(action, title, detail, duration) {
+            const code = actionCodes[action as keyof typeof actionCodes] ?? action.slice(0, 6).toUpperCase();
+            hudEntries.unshift({
+                action,
+                code,
+                title: title.trim().slice(0, 100),
+                detail: detail.trim().slice(0, 120),
+                start: performance.now(),
+                duration: reducedMotion ? 400 : duration,
+            });
+            if (hudEntries.length > 3) hudEntries.length = 3;
+            schedule();
+        },
+    };
+
+    overlayWindow.__bcCanvasOverlay = runtime;
+    window.addEventListener("resize", schedule, { passive: true });
+    resize();
+    schedule();
 }
 
-/** Squashes the cursor lens in sync with the real pointer state. */
+function registerCanvasLifecycle(): void {
+    if (canvasLifecycleRegistered) return;
+    canvasLifecycleRegistered = true;
+    chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+        if (changeInfo.status === "loading") canvasInstallations.delete(tabId);
+    });
+    chrome.tabs.onRemoved.addListener((tabId) => canvasInstallations.delete(tabId));
+}
+
+async function ensureCanvasOverlay(target: chrome.debugger.Debuggee): Promise<boolean> {
+    registerCanvasLifecycle();
+    const tabId = target.tabId;
+    if (tabId === undefined) {
+        await evalOnPage(target, `(${installCanvasOverlay.toString()})()`, true);
+        return true;
+    }
+
+    const activeInstallation = canvasInstallations.get(tabId);
+    if (activeInstallation) return activeInstallation;
+
+    const installation = (async () => {
+        try {
+            const result = await sendCommand(target, "Runtime.evaluate", {
+                expression: `(${installCanvasOverlay.toString()})()`,
+                awaitPromise: true,
+            });
+            if (result?.exceptionDetails) {
+                console.error(
+                    "[browsercontrol] canvas overlay installation failed:",
+                    result.exceptionDetails.exception?.description ?? result.exceptionDetails.text,
+                );
+                return false;
+            }
+            return true;
+        } catch (error) {
+            console.error("[browsercontrol] canvas overlay installation failed:", String(error));
+            return false;
+        }
+    })();
+    canvasInstallations.set(tabId, installation);
+    if (!(await installation)) canvasInstallations.delete(tabId);
+    return installation;
+}
+
+/** Runs a small canvas command after installing the renderer once per document. */
+export async function runCanvasOverlay(
+    target: chrome.debugger.Debuggee,
+    invocation: string,
+    awaitPromise = false,
+): Promise<void> {
+    if (!(await ensureCanvasOverlay(target))) return;
+    await evalOnPage(target, invocation, awaitPromise);
+}
+
+/** Moves the shared canvas cursor and preserves a precise source-to-target trace. */
+export function moveCursorTo(x: number, y: number, fast?: boolean): Promise<void> {
+    const runtime = (window as OverlayWindow).__bcCanvasOverlay;
+    const duration = fast ? 180 : 520;
+    runtime?.moveCursor(x, y, duration);
+    return new Promise((resolve) => setTimeout(resolve, duration + 20));
+}
+
+/** Squashes the shared canvas cursor in sync with the real pointer state. */
 export function pulseCursorPress(pressed: boolean): void {
-    const dot = document.querySelector("#__bc_cursor__ [data-bc-dot]") as HTMLElement | null;
-    const ring = document.querySelector("#__bc_cursor__ [data-bc-ring]") as HTMLElement | null;
-    if (dot) {
-        dot.style.transform = pressed ? "scale(1.45,.68)" : "scale(1)";
-        dot.style.background = pressed ? "#d9efff" : "#4f9bd3";
-    }
-    if (ring) ring.style.transform = pressed ? "scale(.72,1.08)" : "scale(1)";
+    (window as OverlayWindow).__bcCanvasOverlay?.setPressed(pressed);
 }
 
-/** Shows a restrained lens-compression ripple at the target. */
+/** Adds a lens-compression ripple to the shared canvas. */
 export function showClickRipple(x: number, y: number, kind: "click" | "type" = "click", fast?: boolean): void {
-    if (!document.getElementById("__bc_ripple_style__")) {
-        const style = document.createElement("style");
-        style.id = "__bc_ripple_style__";
-        style.textContent = `
-            @keyframes __bc_ripple_outer__{0%{opacity:.9;transform:scale(.35)}100%{opacity:0;transform:scale(1.25)}}
-            @keyframes __bc_ripple_core__{0%{opacity:.75;transform:scale(1)}50%{transform:scale(.55,1.25)}100%{opacity:0;transform:scale(.25)}}
-        `;
-        document.documentElement.appendChild(style);
-    }
-    const color = kind === "type" ? "111,199,190" : "111,183,239";
-    const container = document.createElement("div");
-    container.style.cssText = `all:initial;position:fixed;left:${x}px;top:${y}px;width:0;height:0;z-index:2147483647;pointer-events:none`;
-    const ring = document.createElement("div");
-    ring.style.cssText = `position:absolute;left:-18px;top:-18px;width:36px;height:36px;border:1.5px solid rgba(${color},.9);border-radius:50%;box-sizing:border-box;animation:__bc_ripple_outer__ ${fast ? 260 : 430}ms cubic-bezier(.16,1,.3,1) forwards`;
-    const core = document.createElement("div");
-    core.style.cssText = `position:absolute;left:-5px;top:-5px;width:10px;height:10px;border:1px solid rgba(255,255,255,.84);border-radius:50%;background:rgba(${color},.26);box-sizing:border-box;animation:__bc_ripple_core__ ${fast ? 220 : 360}ms ease-out forwards`;
-    container.append(ring, core);
-    document.documentElement.appendChild(container);
-    setTimeout(() => container.remove(), fast ? 300 : 470);
+    const color = kind === "type" ? "rgba(111,199,190,.92)" : "rgba(111,183,239,.92)";
+    (window as OverlayWindow).__bcCanvasOverlay?.addClick(x, y, color, fast ? 260 : 430);
 }
 
-/** Pulses the cursor lens for keyboard input without creating another badge. */
+/** Adds keyboard motion at the current canvas cursor position. */
 export function showKeyMotion(fast?: boolean): void {
-    const cursor = document.getElementById("__bc_cursor__");
-    const x = cursor ? Number.parseFloat(cursor.style.left) : window.innerWidth / 2;
-    const y = cursor ? Number.parseFloat(cursor.style.top) : window.innerHeight / 2;
-    const cue = document.createElement("div");
-    cue.style.cssText = `all:initial;position:fixed;left:${Number.isFinite(x) ? x : window.innerWidth / 2}px;top:${Number.isFinite(y) ? y : window.innerHeight / 2}px;width:26px;height:14px;margin:-7px -13px;z-index:2147483646;pointer-events:none;border-top:1px solid rgba(119,205,194,.85);border-bottom:1px solid rgba(119,205,194,.52);border-radius:50%;box-sizing:border-box;opacity:.9;transform:scale(.5);transition:transform ${fast ? 180 : 300}ms cubic-bezier(.16,1,.3,1),opacity ${fast ? 180 : 300}ms ease`;
-    document.documentElement.appendChild(cue);
-    requestAnimationFrame(() => {
-        cue.style.transform = "scale(1.35,.8)";
-        cue.style.opacity = "0";
-    });
-    setTimeout(() => cue.remove(), fast ? 220 : 340);
+    (window as OverlayWindow).__bcCanvasOverlay?.addKey(fast ? 190 : 320);
 }
 
-/** Draws directional scroll motion near the pointer while the HUD owns the label. */
+/** Adds a directional scroll vector to the shared canvas. */
 export function showScrollMotion(deltaX: number, deltaY: number, fast?: boolean): void {
-    const cursor = document.getElementById("__bc_cursor__");
-    const vertical = Math.abs(deltaY) >= Math.abs(deltaX);
-    const positive = (vertical ? deltaY : deltaX) >= 0;
-    const x = cursor ? Number.parseFloat(cursor.style.left) : window.innerWidth / 2;
-    const y = cursor ? Number.parseFloat(cursor.style.top) : window.innerHeight / 2;
-    const cue = document.createElement("div");
-    const axisTransform = vertical ? `translateY(${positive ? 18 : -18}px)` : `translateX(${positive ? 18 : -18}px)`;
-    cue.style.cssText = `all:initial;position:fixed;left:${Number.isFinite(x) ? x : window.innerWidth / 2}px;top:${Number.isFinite(y) ? y : window.innerHeight / 2}px;width:${vertical ? 2 : 30}px;height:${vertical ? 30 : 2}px;margin:${vertical ? "-15px -1px" : "-1px -15px"};z-index:2147483646;pointer-events:none;border-radius:999px;background:linear-gradient(${vertical ? (positive ? "180deg" : "0deg") : positive ? "90deg" : "270deg"},transparent,rgba(197,177,126,.88));opacity:.88;transition:transform ${fast ? 210 : 380}ms cubic-bezier(.16,1,.3,1),opacity ${fast ? 210 : 380}ms ease`;
-    document.documentElement.appendChild(cue);
-    requestAnimationFrame(() => {
-        cue.style.transform = axisTransform;
-        cue.style.opacity = "0";
-    });
-    setTimeout(() => cue.remove(), fast ? 250 : 420);
+    (window as OverlayWindow).__bcCanvasOverlay?.addScroll(deltaX, deltaY, fast ? 220 : 390);
 }
 
 /** Highlights a browser target outside the page's stacking contexts. */
@@ -169,161 +618,13 @@ export function pageDelay(target: chrome.debugger.Debuggee, ms: number): Promise
     return evalOnPage(target, `new Promise((r) => setTimeout(r, ${ms}))`, true);
 }
 
-/** Adds an action to the single top-center browser-control rail. */
+/** Adds an action to the single canvas-rendered browser-control rail. */
 export function showActionHud(action: string, title: string, detail?: string, fast?: boolean): void {
-    if (!document.getElementById("__bc_hud_style__")) {
-        const style = document.createElement("style");
-        style.id = "__bc_hud_style__";
-        style.textContent = `
-            @keyframes __bc_rail_in__{0%{opacity:0;clip-path:inset(0 46% round 12px);transform:translateY(-8px) scale(.98)}100%{opacity:1;clip-path:inset(0 round 12px);transform:translateY(0) scale(1)}}
-            @keyframes __bc_rail_out__{to{opacity:0;clip-path:inset(0 18% round 12px);transform:translateY(-7px) scale(.98)}}
-            @keyframes __bc_rail_progress__{to{transform:scaleX(0)}}
-            #__bc_activity_hud__{all:initial;position:fixed;top:14px;left:50%;z-index:2147483647;width:min(370px,calc(100vw - 24px));pointer-events:none;display:flex;flex-direction:column;gap:5px;transform:translateX(-50%);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-            #__bc_activity_hud__ .bc-hud-pill{all:initial;position:relative;display:grid;grid-template-columns:38px minmax(0,1fr);align-items:center;gap:10px;min-height:46px;padding:6px 13px 6px 7px;overflow:hidden;border:1px solid rgba(224,239,255,.17);border-radius:13px;background:radial-gradient(circle at 26% -30%,rgba(190,224,255,.12),transparent 43%),rgba(9,14,21,.76);box-shadow:0 14px 34px rgba(0,0,0,.34),inset 0 1px rgba(255,255,255,.13),inset 0 -1px rgba(0,0,0,.2);-webkit-backdrop-filter:blur(22px) saturate(125%);backdrop-filter:blur(22px) saturate(125%);box-sizing:border-box;animation:__bc_rail_in__ 300ms cubic-bezier(.16,1,.3,1) both;transition:opacity 180ms ease,transform 240ms cubic-bezier(.2,.8,.2,1)}
-            #__bc_activity_hud__ .bc-hud-pill::after{position:absolute;inset:0;padding:1px;border-radius:inherit;background:linear-gradient(132deg,rgba(255,255,255,.2),transparent 31% 73%,rgba(79,151,211,.1));content:"";pointer-events:none;mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude}
-            #__bc_activity_hud__ .bc-hud-pill[data-history="true"]{opacity:.42;transform:scale(.965);min-height:34px}
-            #__bc_activity_hud__ .bc-hud-pill[data-history="true"] .bc-hud-detail{display:none}
-            #__bc_activity_hud__ .bc-hud-pill[data-exit="true"]{animation:__bc_rail_out__ 190ms ease-in forwards}
-            #__bc_activity_hud__ .bc-hud-badge{all:initial;display:grid;width:38px;height:30px;place-items:center;border:1px solid rgba(195,224,250,.18);border-radius:9px;background:rgba(77,133,181,.14);color:#b9daf4;font:700 9px/1 ui-monospace,"SFMono-Regular",Consolas,monospace;letter-spacing:.05em;box-shadow:inset 0 1px rgba(255,255,255,.11);box-sizing:border-box}
-            #__bc_activity_hud__ .bc-hud-content{all:initial;display:flex;min-width:0;flex-direction:column;gap:2px;font-family:inherit}
-            #__bc_activity_hud__ .bc-hud-title{all:initial;overflow:hidden;color:#f3f6f9;font:620 12px/1.25 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-overflow:ellipsis;white-space:nowrap}
-            #__bc_activity_hud__ .bc-hud-detail{all:initial;overflow:hidden;color:#8f9cac;font:550 9.5px/1.25 ui-monospace,"SFMono-Regular",Consolas,monospace;text-overflow:ellipsis;white-space:nowrap}
-            #__bc_activity_hud__ .bc-hud-bar{all:initial;position:absolute;right:0;bottom:0;left:0;height:2px;background:#69afe4;transform-origin:0 50%;animation:__bc_rail_progress__ var(--bc-duration) linear forwards}
-            @media(prefers-reduced-motion:reduce){#__bc_activity_hud__ *{animation:none!important;transition:none!important}}
-        `;
-        document.documentElement.appendChild(style);
-    }
-
-    let root = document.getElementById("__bc_activity_hud__");
-    if (!root) {
-        root = document.createElement("div");
-        root.id = "__bc_activity_hud__";
-        document.documentElement.appendChild(root);
-    }
-    for (const previous of Array.from(root.children)) (previous as HTMLElement).dataset.history = "true";
-
-    const codes: Record<string, string> = {
-        click: "CLICK",
-        type: "TYPE",
-        enter: "ENTER",
-        key: "KEY",
-        scroll: "SCROLL",
-        drag: "DRAG",
-        search: "FIND",
-        select: "SELECT",
-        navigate: "GO",
-        switch_tab: "TAB",
-    };
-    const durationMs = fast ? 900 : 1800;
-    const pill = document.createElement("div");
-    pill.className = "bc-hud-pill";
-    pill.style.setProperty("--bc-duration", `${durationMs}ms`);
-
-    const badge = document.createElement("div");
-    badge.className = "bc-hud-badge";
-    badge.textContent = codes[action] ?? action.slice(0, 6).toUpperCase();
-    if (action === "enter") badge.style.color = "#aee0c6";
-    else if (action === "scroll") badge.style.color = "#d8c18e";
-
-    const content = document.createElement("div");
-    content.className = "bc-hud-content";
-    const titleElement = document.createElement("div");
-    titleElement.className = "bc-hud-title";
-    titleElement.textContent = title.trim().slice(0, 100);
-    content.appendChild(titleElement);
-    if (detail) {
-        const detailElement = document.createElement("div");
-        detailElement.className = "bc-hud-detail";
-        detailElement.textContent = detail.trim().slice(0, 120);
-        content.appendChild(detailElement);
-    }
-    const bar = document.createElement("div");
-    bar.className = "bc-hud-bar";
-    if (action === "enter") bar.style.background = "#69bf95";
-    else if (action === "scroll") bar.style.background = "#b99d65";
-
-    pill.append(badge, content, bar);
-    root.prepend(pill);
-    while (root.children.length > 3) root.lastElementChild?.remove();
-
-    const hud = root;
-    setTimeout(() => {
-        pill.dataset.exit = "true";
-        setTimeout(() => {
-            pill.remove();
-            if (hud.children.length === 0) hud.remove();
-        }, 210);
-    }, durationMs);
+    (window as OverlayWindow).__bcCanvasOverlay?.addHud(action, title, detail ?? "", fast ? 900 : 1800);
 }
 
-/** Reveals drag origin, destination, and progress on one precise trajectory. */
+/** Adds drag origin, destination, and progress to the shared canvas. */
 export function showDragTrajectory(points: Array<{ x: number; y: number }>, fast?: boolean): void {
     if (points.length < 2) return;
-    document.getElementById("__bc_drag_path__")?.remove();
-
-    const namespace = "http://www.w3.org/2000/svg";
-    const svg = document.createElementNS(namespace, "svg");
-    svg.id = "__bc_drag_path__";
-    svg.setAttribute("viewBox", `0 0 ${window.innerWidth} ${window.innerHeight}`);
-    svg.style.cssText =
-        "all:initial;position:fixed;inset:0;width:100vw;height:100vh;z-index:2147483645;pointer-events:none;overflow:visible";
-    const pathData = points.map((point, index) => `${index === 0 ? "M" : "L"}${point.x} ${point.y}`).join(" ");
-
-    const guide = document.createElementNS(namespace, "path");
-    guide.setAttribute("d", pathData);
-    guide.setAttribute("fill", "none");
-    guide.setAttribute("stroke", "rgba(112,181,235,.28)");
-    guide.setAttribute("stroke-width", "1.5");
-    guide.setAttribute("stroke-linecap", "round");
-    guide.setAttribute("stroke-linejoin", "round");
-    guide.setAttribute("stroke-dasharray", "3 5");
-
-    const progress = document.createElementNS(namespace, "path");
-    progress.setAttribute("d", pathData);
-    progress.setAttribute("fill", "none");
-    progress.setAttribute("stroke", "#73b8ed");
-    progress.setAttribute("stroke-width", "2");
-    progress.setAttribute("stroke-linecap", "round");
-    progress.setAttribute("stroke-linejoin", "round");
-
-    const addMarker = (point: { x: number; y: number }, label: string, filled: boolean) => {
-        const circle = document.createElementNS(namespace, "circle");
-        circle.setAttribute("cx", `${point.x}`);
-        circle.setAttribute("cy", `${point.y}`);
-        circle.setAttribute("r", filled ? "5" : "4");
-        circle.setAttribute("fill", filled ? "#73b8ed" : "rgba(8,14,21,.82)");
-        circle.setAttribute("stroke", "rgba(210,235,255,.9)");
-        circle.setAttribute("stroke-width", "1.5");
-        const text = document.createElementNS(namespace, "text");
-        text.setAttribute("x", `${point.x + 10}`);
-        text.setAttribute("y", `${point.y - 7}`);
-        text.setAttribute("fill", "rgba(196,222,243,.88)");
-        text.setAttribute("font-family", "ui-monospace, SFMono-Regular, Consolas, monospace");
-        text.setAttribute("font-size", "9");
-        text.setAttribute("font-weight", "700");
-        text.textContent = label;
-        svg.append(circle, text);
-    };
-
-    svg.append(guide, progress);
-    addMarker(points[0]!, "FROM", false);
-    addMarker(points[points.length - 1]!, "TO", true);
-    document.documentElement.appendChild(svg);
-
-    const length = progress.getTotalLength();
-    progress.style.strokeDasharray = `${length}`;
-    progress.style.strokeDashoffset = `${length}`;
-    progress.style.transition = `stroke-dashoffset ${fast ? 320 : 720}ms cubic-bezier(.16,1,.3,1)`;
-    requestAnimationFrame(() => {
-        progress.style.strokeDashoffset = "0";
-    });
-
-    setTimeout(
-        () => {
-            svg.style.transition = "opacity 240ms ease";
-            svg.style.opacity = "0";
-            setTimeout(() => svg.remove(), 250);
-        },
-        fast ? 1000 : 1750,
-    );
+    (window as OverlayWindow).__bcCanvasOverlay?.addDrag(points, fast ? 1_000 : 1_750);
 }
