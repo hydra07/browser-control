@@ -204,13 +204,13 @@ function BehaviorSettings() {
         </div>
       </div>
 
-      <div className="rounded-md border border-indigo-900/40 bg-[#13141c] p-3 space-y-3 shadow-sm">
+      <div className="bc-card rounded-md p-3 space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5 font-semibold text-zinc-100 text-[11.5px]">
-            <SparklesIcon className="w-3.5 h-3.5 text-indigo-400" />
+            <SparklesIcon className="w-3.5 h-3.5 text-sky-300" />
             <span>CLI Agents Execution (Experiment)</span>
           </div>
-          <span className="rounded bg-indigo-950/80 px-1.5 py-0.2 font-mono text-[9px] text-indigo-300 border border-indigo-800/60">
+          <span className="rounded bg-sky-950/40 px-1.5 py-0.2 font-mono text-[9px] text-sky-300 border border-sky-700/30">
             LABS
           </span>
         </div>
@@ -267,7 +267,7 @@ function BehaviorSettings() {
         <div className="flex items-center justify-between gap-3 pt-2 border-t border-zinc-800/80">
           <div>
             <div className="font-medium text-zinc-200 text-[11px] flex items-center gap-1.5">
-              <ChatIcon className="w-3.5 h-3.5 text-indigo-400" />
+              <ChatIcon className="w-3.5 h-3.5 text-sky-300" />
               <span>Hiển thị Tab Chat trên thanh điều hướng</span>
             </div>
             <div className="mt-0.5 text-[10px] leading-snug text-zinc-400">
@@ -286,7 +286,7 @@ function BehaviorSettings() {
               onChange={(e) => setTestPrompt(e.target.value)}
               placeholder="Prompt for active page..."
               disabled={isRunningTest}
-              className="flex-1 rounded bg-zinc-900 border border-zinc-800 px-2 py-1 text-[11px] text-zinc-200 outline-none focus:border-indigo-500/50"
+              className="bc-input flex-1 px-2 py-1 text-[11px] text-zinc-200 outline-none"
             />
             {isRunningTest ? (
               <button
@@ -301,7 +301,7 @@ function BehaviorSettings() {
                 type="button"
                 onClick={handleRunCliAgentTest}
                 disabled={!testPrompt.trim()}
-                className="flex items-center gap-1 rounded bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 px-2.5 py-1 text-[11px] font-medium text-white shadow-sm transition active:scale-95"
+                className="bc-primary-button px-2.5 py-1 text-[11px] disabled:opacity-40"
               >
                 <PinIcon className="w-3 h-3" />
                 <span>Ping & Run</span>
@@ -310,8 +310,8 @@ function BehaviorSettings() {
           </div>
 
           {isRunningTest && (
-            <div className="flex items-center gap-2 rounded bg-zinc-950 p-2 text-[10.5px] text-indigo-300 font-mono border border-indigo-900/40 animate-pulse">
-              <div className="h-3 w-3 animate-spin rounded-full border border-indigo-400 border-t-transparent flex-none" />
+            <div className="bc-surface flex items-center gap-2 rounded p-2 text-[10.5px] text-sky-300 font-mono animate-pulse">
+              <div className="h-3 w-3 animate-spin rounded-full border border-sky-400 border-t-transparent flex-none" />
               <span>Executing CLI Agent in sandbox...</span>
             </div>
           )}
@@ -434,11 +434,7 @@ export function SettingsTab({ daemonStatus, onRefresh }: SettingsTabProps) {
           <div className="font-medium text-zinc-200 text-[11.5px]">Daemon Connection</div>
           <div className="flex items-center gap-1.5">
             <span
-              className={`h-2 w-2 rounded-full ${
-                daemonStatus?.extensionConnected
-                  ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]"
-                  : "bg-amber-400"
-              }`}
+              className={`h-2 w-2 rounded-full ${daemonStatus?.extensionConnected ? "bg-emerald-400" : "bg-amber-400"}`}
             />
             <span className="text-[10px] font-mono text-zinc-400">
               {daemonStatus?.extensionConnected ? "PAIRED" : "UNPAIRED"}

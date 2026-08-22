@@ -8,23 +8,25 @@ import { errorMessage } from "../../libs/errorMessage.js";
 
 export class ScreencastRelay {
     private capturePort: chrome.runtime.Port | null;
+    private recordingTabId: number | null;
     private relayedFrameCount: number;
     private listener: ((source: chrome.debugger.Debuggee, method: string, params?: unknown) => void) | null;
 
     constructor() {
         this.capturePort = null;
+        this.recordingTabId = null;
         this.relayedFrameCount = 0;
         this.listener = null;
     }
 
-    public install(getActiveTabId: () => number | null): void {
+    public install(): void {
         if (this.listener) {
             chrome.debugger.onEvent.removeListener(this.listener);
         }
         this.listener = (source, method, params) => {
             if (method !== "Page.screencastFrame") return;
             if (!this.capturePort) return;
-            if (!source.tabId || source.tabId !== getActiveTabId()) return;
+            if (!source.tabId || source.tabId !== this.recordingTabId) return;
             const p = params as Protocol.Page.ScreencastFrameEvent;
             try {
                 this.capturePort.postMessage({ data: p.data, metadata: p.metadata });
@@ -49,7 +51,16 @@ export class ScreencastRelay {
                 hint: 'Only one recording can run at a time — call browser_session({action:"stop_recording"}) first.',
             };
         }
+        if (target.tabId == null) {
+            return {
+                error: "No recording tab",
+                hint: "A concrete tabId is required to start a screencast.",
+            };
+        }
         this.relayedFrameCount = 0;
+        /** CDP can emit the first frame before startScreencast resolves; install routing first so that frame is ACKed. */
+        this.capturePort = port;
+        this.recordingTabId = target.tabId;
         try {
             const { recordingQuality, recordingMaxWidth, recordingMaxHeight } = await getSettings();
             await sendCommand(target, "Page.startScreencast", {
@@ -60,12 +71,13 @@ export class ScreencastRelay {
                 everyNthFrame: 1,
             });
         } catch (e) {
+            this.capturePort = null;
+            this.recordingTabId = null;
             return {
                 error: "Failed to start screencast",
                 hint: errorMessage(e),
             };
         }
-        this.capturePort = port;
         return { success: true };
     }
 
@@ -77,8 +89,13 @@ export class ScreencastRelay {
         return this.relayedFrameCount;
     }
 
+    public getRecordingTabId(): number | null {
+        return this.recordingTabId;
+    }
+
     public async stop(target: chrome.debugger.Debuggee): Promise<void> {
         this.capturePort = null;
+        this.recordingTabId = null;
         try {
             await sendCommand(target, "Page.stopScreencast");
         } catch {
@@ -93,14 +110,15 @@ export class ScreencastRelay {
         }
         this.capturePort?.disconnect();
         this.capturePort = null;
+        this.recordingTabId = null;
         this.relayedFrameCount = 0;
     }
 }
 
 export const screencastRelay = new ScreencastRelay();
 
-export function installScreencastFrameRelay(getActiveTabId: () => number | null): void {
-    screencastRelay.install(getActiveTabId);
+export function installScreencastFrameRelay(): void {
+    screencastRelay.install();
 }
 
 export function startScreencastRelay(
@@ -112,6 +130,10 @@ export function startScreencastRelay(
 
 export function isRecording(): boolean {
     return screencastRelay.isRecording();
+}
+
+export function getRecordingTabId(): number | null {
+    return screencastRelay.getRecordingTabId();
 }
 
 export function stopScreencastRelay(target: chrome.debugger.Debuggee): Promise<void> {

@@ -3,8 +3,7 @@
  */
 
 import { getSettings } from "../../configs/settings.js";
-import { evalOnPage } from "../../libs/cdp.js";
-import { SWITCH_TAB_ICON_SVG, showPillCaption } from "../overlay/index.js";
+import { runCanvasOverlay, showActionHud } from "../overlay/index.js";
 import type { SwitchTabResult } from "./types.js";
 
 export type { SwitchTabResult } from "./types.js";
@@ -132,9 +131,9 @@ export class TabManager {
                 if (chrome.runtime.lastError) console.log("Could not focus window:", chrome.runtime.lastError.message);
             });
         }
-        void evalOnPage(
+        void runCanvasOverlay(
             { tabId },
-            `(${showPillCaption.toString()})(${JSON.stringify(SWITCH_TAB_ICON_SVG)}, ${JSON.stringify(`Switched to tab: ${tab?.title ?? tabId}`)}, ${JSON.stringify("#c4b5fd")}, ${JSON.stringify("#8b5cf6")}, false)`,
+            `(${showActionHud.toString()})("switch_tab",${JSON.stringify(tab?.title ?? `Tab ${tabId}`)},"Tab focused",false)`,
         );
         return {
             success: true,

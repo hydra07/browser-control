@@ -61,7 +61,7 @@ export async function saveFlow(input: {
   description?: string;
   domain?: string;
   steps: FlowStep[];
-}): Promise<FlowFull> {
+}): Promise<FlowMeta> {
   const res = await daemonFetch("/flows", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -71,7 +71,7 @@ export async function saveFlow(input: {
     const data = (await res.json().catch(() => null)) as { error?: string } | null;
     throw new Error(data?.error ?? `Failed to save flow (HTTP ${res.status})`);
   }
-  const data = (await res.json()) as { flow: FlowFull };
+  const data = (await res.json()) as { flow: FlowMeta };
   return data.flow;
 }
 

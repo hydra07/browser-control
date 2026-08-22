@@ -111,9 +111,9 @@ export class OffscreenDaemonBridge {
             try {
                 const result =
                     data.cmd === "start_capture"
-                        ? await startCapture((chunkBytes) => {
+                        ? await startCapture(data.tabId, (chunkBytes) => {
                               const packet = encodeBinaryPacket(BinaryOpcode.VIDEO_CHUNK, chunkBytes);
-                              this.sendBinary(packet);
+                              return this.sendBinary(packet);
                           })
                         : await stopCapture();
                 this.sendJson({ id: data.id, type: "result", data: result });

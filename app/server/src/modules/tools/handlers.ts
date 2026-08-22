@@ -400,10 +400,30 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
             result = { success: true, message: `Session ${SESSION_ID} renamed to "${args?.name}".` };
             break;
           case SessionAction.StartRecording: {
+            if (streamSink.isRecordingActive()) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: "Error: A recording stream is already active. Stop it before starting another.",
+                  },
+                ],
+                isError: true,
+              };
+            }
             streamSink.startRecordingStream(SESSION_ID);
-            const ack = await executeCommand("start_capture");
+            let ack: Awaited<ReturnType<typeof executeCommand>>;
+            try {
+              ack = await executeCommand("start_capture", { tabId: args?.tabId });
+            } catch (e) {
+              await streamSink.abortRecordingStream();
+              return {
+                content: [{ type: "text", text: `Error: Failed to start recording (${errorMessage(e)})` }],
+                isError: true,
+              };
+            }
             if (!ack?.success) {
-              streamSink.stopRecordingStream();
+              await streamSink.abortRecordingStream();
               return {
                 content: [
                   {
@@ -421,8 +441,41 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
             };
           }
           case SessionAction.StopRecording: {
-            const rec = await executeCommand("stop_capture", {}, 60000);
-            const streamResult = streamSink.stopRecordingStream();
+            let rec: Awaited<ReturnType<typeof executeCommand>>;
+            try {
+              rec = await executeCommand("stop_capture", {}, 60000);
+            } catch (e) {
+              await streamSink.stopRecordingStream({ commit: false });
+              return {
+                content: [{ type: "text", text: `Error: Failed to stop recording (${errorMessage(e)})` }],
+                isError: true,
+              };
+            }
+            const frameCount = typeof rec?.frameCount === "number" ? rec.frameCount : 0;
+            const captureSucceeded = rec?.success === true && frameCount > 0;
+            const streamResult = await streamSink.stopRecordingStream({ commit: captureSucceeded });
+            if (!captureSucceeded) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Error: ${rec?.error ?? "Recording produced no real frames"}${rec?.hint ? ` (${rec.hint})` : ""}`,
+                  },
+                ],
+                isError: true,
+              };
+            }
+            if (streamResult && !streamResult.success) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Error: Failed to finalize recording: ${streamResult.error ?? "unknown write error"}`,
+                  },
+                ],
+                isError: true,
+              };
+            }
             let recFilePath = streamResult?.filePath;
             if (!recFilePath && rec?.dataBase64) {
               recFilePath = saveVideoToFile(rec.dataBase64 as string, (rec.format as string) || "webm");
@@ -440,10 +493,7 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
             }
             const durationMs = streamResult?.durationMs ?? (rec?.durationMs as number) ?? 0;
             const seconds = (durationMs / 1000).toFixed(1);
-            const frameNote =
-              rec?.frameCount === 0
-                ? " Warning: 0 frames captured — the page may not have repainted during the recording; check the daemon log."
-                : ` (${rec?.frameCount ?? streamResult?.chunkCount ?? 0} frames)`;
+            const frameNote = ` (${frameCount} frames)`;
             return {
               content: [
                 {

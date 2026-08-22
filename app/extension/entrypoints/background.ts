@@ -8,6 +8,7 @@ import { forgetTab, installInterceptor, isSandboxed } from "../modules/intercept
 import { installNetworkCollector } from "../modules/network/index.js";
 import { flowRecorder } from "../modules/recorder/index.js";
 import {
+    getRecordingTabId,
     installScreencastFrameRelay,
     isRecording,
     startScreencastRelay,
@@ -39,9 +40,10 @@ export default defineBackground(() => {
     chrome.alarms.onAlarm.addListener((alarm) => {
         if (alarm.name !== "idle-debugger-detach") return;
         const cutoff = Date.now() - IDLE_DETACH_MINUTES * 60_000;
+        const recordingTabId = getRecordingTabId();
         for (const tabId of attachedTabIds) {
             // Avoid detaching during an active screen recording session
-            if (isRecording() && tabId === lastActiveTabId) continue;
+            if (isRecording() && tabId === recordingTabId) continue;
             if ((lastActivityAt.get(tabId) ?? 0) > cutoff) continue;
             chrome.debugger.detach({ tabId }, () => void chrome.runtime.lastError);
         }
@@ -143,29 +145,41 @@ export default defineBackground(() => {
 
     // Offscreen document streams screencast frames for recording over a Port
     chrome.runtime.onConnect.addListener((port) => {
-        if (port.name !== "capture-frames") return;
-        void handleCaptureConnection(port);
+        if (!port.name.startsWith("capture-frames")) return;
+        const requestedTabIdText = port.name.slice("capture-frames:".length);
+        const requestedTabId = requestedTabIdText ? Number(requestedTabIdText) : undefined;
+        void handleCaptureConnection(
+            port,
+            requestedTabId != null && Number.isSafeInteger(requestedTabId) ? requestedTabId : undefined,
+        );
     });
 
-    async function handleCaptureConnection(port: chrome.runtime.Port): Promise<void> {
-        if (!lastActiveTabId) {
+    async function handleCaptureConnection(port: chrome.runtime.Port, requestedTabId?: number): Promise<void> {
+        const activeTabs =
+            requestedTabId == null ? await chrome.tabs.query({ active: true, lastFocusedWindow: true }) : [];
+        const tabId = requestedTabId ?? lastActiveTabId ?? activeTabs[0]?.id;
+        if (tabId == null) {
             port.postMessage({
                 error: "No active tab",
-                hint: 'Call browser_session({action:"navigate"}) or browser_session({action:"switch_tab"}) first to establish which tab to record.',
+                hint: "Open or select a normal web tab before starting a recording.",
             });
             port.disconnect();
             return;
         }
         try {
-            await attachDebuggerIfNeeded(lastActiveTabId);
+            const tab = await chrome.tabs.get(tabId);
+            await chrome.tabs.update(tabId, { active: true });
+            if (tab.windowId != null) await chrome.windows.update(tab.windowId, { focused: true });
+            lastActiveTabId = tabId;
+            await attachDebuggerIfNeeded(tabId);
         } catch (e) {
             port.postMessage({ error: errorMessage(e) });
             port.disconnect();
             return;
         }
-        const target = { tabId: lastActiveTabId };
+        const target = { tabId };
         const result = await startScreencastRelay(target, port);
-        port.postMessage(result);
+        port.postMessage("error" in result ? result : { ...result, tabId });
         if ("error" in result) {
             port.disconnect();
             return;
@@ -178,7 +192,7 @@ export default defineBackground(() => {
     installDialogAutoHandler();
     installNetworkCollector(() => lastActiveTabId);
     installInterceptor();
-    installScreencastFrameRelay(() => lastActiveTabId);
+    installScreencastFrameRelay();
     ensureOffscreenDocument();
     chrome.runtime.onStartup.addListener(ensureOffscreenDocument);
 });

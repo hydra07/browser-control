@@ -92,7 +92,7 @@ export function BenchmarkTab({ onRefresh }: BenchmarkTabProps) {
     return (
       <div className="flex flex-1 items-center justify-center p-6 text-zinc-500 font-mono text-[11px]">
         <div className="flex items-center gap-2">
-          <div className="h-3 w-3 animate-spin rounded-full border border-indigo-400 border-t-transparent" />
+          <div className="h-3 w-3 animate-spin rounded-full border border-sky-400 border-t-transparent" />
           <span>Loading benchmark metrics...</span>
         </div>
       </div>
@@ -108,12 +108,12 @@ export function BenchmarkTab({ onRefresh }: BenchmarkTabProps) {
   const totalOutPct = summary.totalTokens > 0 ? 100 - totalInPct : 0;
 
   return (
-    <div className="flex flex-1 flex-col overflow-y-auto bg-[#0d0e12] p-3 text-zinc-200 font-sans select-text">
+    <div className="flex flex-1 flex-col overflow-y-auto bg-transparent p-3 text-zinc-200 font-sans select-text">
       {/* Top Session & Action Bar */}
       <div className="mb-3 flex items-center justify-between border-b border-zinc-800/80 pb-2.5">
         <div className="flex flex-col">
           <div className="flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.5)]" />
+            <span className="h-2 w-2 rounded-full bg-emerald-400" />
             <span className="font-mono text-[11px] font-semibold text-zinc-100">
               Session #{summary.sessionId.slice(-6)}
             </span>
@@ -129,7 +129,7 @@ export function BenchmarkTab({ onRefresh }: BenchmarkTabProps) {
               type="checkbox"
               checked={autoRefresh}
               onChange={(e) => setAutoRefresh(e.target.checked)}
-              className="rounded bg-zinc-800 border-zinc-700 text-indigo-500 focus:ring-0 focus:ring-offset-0 h-3 w-3"
+              className="rounded bg-zinc-800 border-zinc-700 text-sky-500 focus:ring-0 focus:ring-offset-0 h-3 w-3"
             />
             <span>Auto (3s)</span>
           </label>
@@ -140,16 +140,16 @@ export function BenchmarkTab({ onRefresh }: BenchmarkTabProps) {
             title="Refresh Metrics"
             className="flex h-6 w-6 items-center justify-center rounded border border-zinc-700/50 bg-zinc-800/80 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700 transition active:scale-95"
           >
-            <RefreshIcon className={`h-3 w-3 ${isRefreshing ? "animate-spin text-indigo-300" : ""}`} />
+            <RefreshIcon className={`h-3 w-3 ${isRefreshing ? "animate-spin text-sky-300" : ""}`} />
           </button>
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-2 mb-3">
-        <div className="rounded-lg border border-zinc-800/90 bg-[#121318] p-2.5 shadow-sm">
+        <div className="bc-card rounded-lg p-2.5">
           <div className="flex items-center justify-between text-zinc-400">
             <span className="text-[10px] font-medium uppercase tracking-wider">Total Tokens</span>
-            <CpuIcon className="h-3.5 w-3.5 text-indigo-400" />
+            <CpuIcon className="h-3.5 w-3.5 text-sky-300" />
           </div>
           <div className="mt-1 flex items-baseline gap-1.5">
             <span className="font-mono text-base font-bold text-zinc-100">{formatTokens(summary.totalTokens)}</span>
@@ -157,7 +157,7 @@ export function BenchmarkTab({ onRefresh }: BenchmarkTabProps) {
           </div>
         </div>
 
-        <div className="rounded-lg border border-zinc-800/90 bg-[#121318] p-2.5 shadow-sm">
+        <div className="bc-card rounded-lg p-2.5">
           <div className="flex items-center justify-between text-zinc-400">
             <span className="text-[10px] font-medium uppercase tracking-wider">Tool Calls</span>
             <LayersIcon className="h-3.5 w-3.5 text-sky-400" />
@@ -170,7 +170,7 @@ export function BenchmarkTab({ onRefresh }: BenchmarkTabProps) {
           </div>
         </div>
 
-        <div className="rounded-lg border border-zinc-800/90 bg-[#121318] p-2.5 shadow-sm">
+        <div className="bc-card rounded-lg p-2.5">
           <div className="flex items-center justify-between text-zinc-400">
             <span className="text-[10px] font-medium uppercase tracking-wider">Avg Latency</span>
             <ChartBarIcon className="h-3.5 w-3.5 text-amber-400" />
@@ -186,7 +186,7 @@ export function BenchmarkTab({ onRefresh }: BenchmarkTabProps) {
           </div>
         </div>
 
-        <div className="rounded-lg border border-emerald-900/30 bg-emerald-950/10 p-2.5 shadow-sm">
+        <div className="bc-card rounded-lg p-2.5">
           <div className="flex items-center justify-between text-emerald-400">
             <span className="text-[10px] font-medium uppercase tracking-wider">Tokens Saved</span>
             <ZapIcon className="h-3.5 w-3.5 text-emerald-400" />
@@ -200,7 +200,7 @@ export function BenchmarkTab({ onRefresh }: BenchmarkTabProps) {
         </div>
       </div>
 
-      <div className="mb-3 rounded-lg border border-zinc-800/80 bg-[#121318] p-2.5 text-[11px] shadow-sm">
+      <div className="bc-card mb-3 rounded-lg p-2.5 text-[11px]">
         <div className="flex items-center justify-between pb-2 border-b border-zinc-800/70">
           <span className="font-semibold text-zinc-200">Content In / Out Breakdown</span>
           <span className="font-mono text-[10px] text-zinc-500">
@@ -224,7 +224,7 @@ export function BenchmarkTab({ onRefresh }: BenchmarkTabProps) {
 
           <div className="rounded bg-zinc-900/80 p-2 border border-zinc-800/60">
             <div className="flex items-center justify-between text-zinc-400 mb-1">
-              <span className="text-[10px] text-indigo-400 font-medium">Output (Tool Result)</span>
+              <span className="text-[10px] text-cyan-300 font-medium">Output (Tool Result)</span>
               <span className="font-mono text-[10px] text-zinc-400">{totalOutPct}%</span>
             </div>
             <div className="font-mono text-sm font-bold text-zinc-100">
@@ -243,7 +243,7 @@ export function BenchmarkTab({ onRefresh }: BenchmarkTabProps) {
             title={`Input: ${totalInPct}%`}
           />
           <div
-            className="h-full bg-indigo-500 transition-all duration-300"
+            className="h-full bg-cyan-500 transition-all duration-300"
             style={{ width: `${Math.max(3, totalOutPct)}%` }}
             title={`Output: ${totalOutPct}%`}
           />
@@ -355,7 +355,7 @@ export function BenchmarkTab({ onRefresh }: BenchmarkTabProps) {
               >
                 <div className="flex items-center justify-between text-[11px] mb-1">
                   <div className="flex items-center gap-1.5 font-mono font-medium text-zinc-200">
-                    <span className="text-indigo-400">{cmd.cmd}</span>
+                    <span className="text-cyan-300">{cmd.cmd}</span>
                     <span className="text-[10px] text-zinc-500">x{cmd.count}</span>
                   </div>
                   <div className="flex items-center gap-2 font-mono text-[10px]">
@@ -366,7 +366,7 @@ export function BenchmarkTab({ onRefresh }: BenchmarkTabProps) {
 
                 <div className="h-1.5 w-full rounded-full bg-zinc-800 overflow-hidden">
                   <div
-                    className="h-full rounded-full bg-gradient-to-r from-sky-400 to-indigo-500 transition-all duration-300"
+                    className="h-full rounded-full bg-blue-500 transition-all duration-300"
                     style={{ width: `${Math.max(4, cmd.pctOfTokens)}%` }}
                   />
                 </div>
@@ -374,7 +374,7 @@ export function BenchmarkTab({ onRefresh }: BenchmarkTabProps) {
                 <div className="mt-1.5 flex items-center justify-between text-[9px] font-mono text-zinc-500">
                   <div className="flex items-center gap-2">
                     <span className="text-sky-400/80">{formatTokens(cmd.inTokens)} in</span>
-                    <span className="text-indigo-400/80">{formatTokens(cmd.outTokens)} out</span>
+                    <span className="text-cyan-300/80">{formatTokens(cmd.outTokens)} out</span>
                   </div>
                   <span>
                     avg: ~{cmd.avgTokens} tok · {cmd.avgDurationMs}ms
@@ -423,7 +423,7 @@ export function BenchmarkTab({ onRefresh }: BenchmarkTabProps) {
                       )}
                       <span className="font-semibold text-zinc-200 truncate">{call.cmd}</span>
                       {call.stepCount && call.stepCount > 0 && (
-                        <span className="text-[9px] text-indigo-300 bg-indigo-950/60 px-1 rounded border border-indigo-900/50 flex-none">
+                        <span className="text-[9px] text-cyan-300 bg-cyan-950/40 px-1 rounded border border-cyan-800/35 flex-none">
                           {call.stepCount} steps
                         </span>
                       )}
@@ -438,7 +438,7 @@ export function BenchmarkTab({ onRefresh }: BenchmarkTabProps) {
                         <span className="text-[9px] text-sky-400/80 bg-sky-950/40 px-1 rounded border border-sky-900/40">
                           +{call.inTokens} in
                         </span>
-                        <span className="text-[9px] text-indigo-400/80 bg-indigo-950/40 px-1 rounded border border-indigo-900/40">
+                        <span className="text-[9px] text-cyan-300/80 bg-cyan-950/30 px-1 rounded border border-cyan-800/30">
                           +{call.outTokens} out
                         </span>
                       </div>

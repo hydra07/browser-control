@@ -8,6 +8,8 @@ import type { CaptureAck, CaptureError, CaptureResult, FrameMessage, PortAck } f
 
 export type { CaptureAck, CaptureError, CaptureResult } from "./types.js";
 
+const FIRST_FRAME_TIMEOUT_MS = 3000;
+
 function pickSupportedMimeType(): string | undefined {
     for (const type of ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"]) {
         if (MediaRecorder.isTypeSupported(type)) return type;
@@ -49,11 +51,15 @@ export class ScreenCaptureManager {
     private track: CanvasCaptureMediaStreamTrack | null;
     private recorder: MediaRecorder | null;
     private chunks: Blob[];
-    private onChunk: ((bytes: Uint8Array) => void) | null;
+    private onChunk: ((bytes: Uint8Array) => boolean) | null;
     private recordingStartedAt: number;
     private frameCount: number;
     private frameQueue: Promise<void>;
+    private chunkQueue: Promise<void>;
     private pendingDrawCount: number;
+    private firstFrameReady: Promise<void>;
+    private resolveFirstFrame: (() => void) | null;
+    private streamError: string | null;
 
     constructor() {
         this.port = null;
@@ -66,21 +72,47 @@ export class ScreenCaptureManager {
         this.recordingStartedAt = 0;
         this.frameCount = 0;
         this.frameQueue = Promise.resolve();
+        this.chunkQueue = Promise.resolve();
         this.pendingDrawCount = 0;
+        this.firstFrameReady = Promise.resolve();
+        this.resolveFirstFrame = null;
+        this.streamError = null;
     }
 
     private async drawFrame(frame: FrameMessage): Promise<void> {
-        if (!this.canvas || !this.ctx || !this.track) return;
+        const canvas = this.canvas;
+        const ctx = this.ctx;
+        if (!canvas || !ctx) return;
         // Drop intermediate frame under heavy load to prevent memory accumulation
         if (this.pendingDrawCount > 3) return;
 
         this.pendingDrawCount++;
         try {
             const bitmap = await createImageBitmap(base64ToBlob(frame.data, "image/jpeg"));
-            this.ctx.drawImage(bitmap, 0, 0, this.canvas.width, this.canvas.height);
-            bitmap.close();
-            this.track.requestFrame();
-            this.frameCount++;
+            try {
+                /** Decoding yields; teardown may have disposed this capture while the JPEG was in flight. */
+                if (this.canvas !== canvas || this.ctx !== ctx) return;
+                if (this.frameCount === 0) {
+                    /** Matching the encoded track to the first real frame avoids stretching a 16:9 page into a 1280x900 canvas. */
+                    canvas.width = bitmap.width;
+                    canvas.height = bitmap.height;
+                }
+                const scale = Math.min(canvas.width / bitmap.width, canvas.height / bitmap.height);
+                const width = Math.round(bitmap.width * scale);
+                const height = Math.round(bitmap.height * scale);
+                const x = Math.round((canvas.width - width) / 2);
+                const y = Math.round((canvas.height - height) / 2);
+                ctx.fillStyle = "#000";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(bitmap, x, y, width, height);
+                const activeTrack = this.track;
+                if (activeTrack !== null) activeTrack.requestFrame();
+                this.frameCount++;
+                this.resolveFirstFrame?.();
+                this.resolveFirstFrame = null;
+            } finally {
+                bitmap.close();
+            }
         } finally {
             this.pendingDrawCount--;
         }
@@ -90,7 +122,29 @@ export class ScreenCaptureManager {
         return this.recorder !== null;
     }
 
-    public async start(onChunk?: (bytes: Uint8Array) => void): Promise<CaptureAck | CaptureError> {
+    private queueChunk(blob: Blob, onChunk: (bytes: Uint8Array) => boolean): void {
+        this.chunkQueue = this.chunkQueue
+            .then(async () => {
+                const buffer = await blob.arrayBuffer();
+                if (!onChunk(new Uint8Array(buffer))) {
+                    throw new Error("Daemon WebSocket disconnected while streaming video");
+                }
+            })
+            .catch((e: unknown) => {
+                this.streamError ??= errorMessage(e);
+                console.error("[browsercontrol] Failed to stream video chunk:", this.streamError);
+            });
+    }
+
+    private async stopRecorder(recorder: MediaRecorder): Promise<void> {
+        if (recorder.state === "inactive") return;
+        await new Promise<void>((resolve) => {
+            recorder.addEventListener("stop", () => resolve(), { once: true });
+            recorder.stop();
+        });
+    }
+
+    public async start(tabId?: number, onChunk?: (bytes: Uint8Array) => boolean): Promise<CaptureAck | CaptureError> {
         if (this.recorder) {
             return {
                 error: "Already recording",
@@ -115,34 +169,22 @@ export class ScreenCaptureManager {
         ctx.fillStyle = "#000";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        const stream = canvas.captureStream(0);
-        const track = stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack;
-
         this.canvas = canvas;
         this.ctx = ctx;
-        this.track = track;
+        this.track = null;
         this.chunks = [];
         this.onChunk = onChunk ?? null;
         this.frameCount = 0;
         this.pendingDrawCount = 0;
         this.frameQueue = Promise.resolve();
-
-        const mimeType = pickSupportedMimeType();
-        const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-        recorder.ondataavailable = async (e) => {
-            if (e.data.size > 0) {
-                if (this.onChunk) {
-                    const buf = await e.data.arrayBuffer();
-                    this.onChunk(new Uint8Array(buf));
-                } else {
-                    this.chunks.push(e.data);
-                }
-            }
-        };
-        this.recorder = recorder;
+        this.chunkQueue = Promise.resolve();
+        this.firstFrameReady = new Promise((resolve) => {
+            this.resolveFirstFrame = resolve;
+        });
+        this.streamError = null;
 
         const ack = await new Promise<PortAck>((resolve) => {
-            const p = chrome.runtime.connect({ name: "capture-frames" });
+            const p = chrome.runtime.connect({ name: `capture-frames:${tabId ?? ""}` });
             this.port = p;
             let settled = false;
             p.onMessage.addListener((msg: FrameMessage | PortAck) => {
@@ -175,6 +217,43 @@ export class ScreenCaptureManager {
             return ack;
         }
 
+        await Promise.race([
+            this.firstFrameReady,
+            new Promise<void>((resolve) => setTimeout(resolve, FIRST_FRAME_TIMEOUT_MS)),
+        ]);
+        await this.frameQueue;
+        if (this.frameCount === 0 || !this.canvas) {
+            this.dispose();
+            return {
+                error: "No screencast frames received",
+                hint: "The selected tab did not produce an initial CDP frame. Focus a normal web tab, wait for it to finish loading, then retry.",
+            };
+        }
+
+        const stream = this.canvas.captureStream(0);
+        const track = stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack | undefined;
+        if (!track) {
+            this.dispose();
+            return {
+                error: "Failed to create capture track",
+                hint: "Canvas captureStream returned no video track.",
+            };
+        }
+        this.track = track;
+
+        const mimeType = pickSupportedMimeType();
+        const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+        const streamChunk = onChunk ?? null;
+        recorder.ondataavailable = (e) => {
+            if (e.data.size <= 0) return;
+            if (streamChunk) this.queueChunk(e.data, streamChunk);
+            else this.chunks.push(e.data);
+        };
+        recorder.onerror = (event) => {
+            this.streamError ??= event.error.message;
+        };
+        this.recorder = recorder;
+
         try {
             this.recorder.start(500); // 500ms chunks for smooth real-time streaming
         } catch (e) {
@@ -185,9 +264,15 @@ export class ScreenCaptureManager {
             };
         }
         track.requestFrame();
-        this.frameCount++;
         this.recordingStartedAt = Date.now();
-        return { success: true, message: "Recording started." };
+        return {
+            success: true,
+            message: `Recording started on tab ${ack.tabId}.`,
+            tabId: ack.tabId,
+            width: this.canvas.width,
+            height: this.canvas.height,
+            mimeType: recorder.mimeType || mimeType || "video/webm",
+        };
     }
 
     public async stop(): Promise<CaptureResult | CaptureError> {
@@ -202,40 +287,43 @@ export class ScreenCaptureManager {
         const finishedTrack = this.track;
         const wasStreamed = this.onChunk !== null;
         const durationMs = Date.now() - this.recordingStartedAt;
-        const frames = this.frameCount;
+        const width = this.canvas?.width ?? 0;
+        const height = this.canvas?.height ?? 0;
+        const mimeType = finishedRecorder.mimeType || "video/webm";
 
         this.recorder = null;
         this.port = null;
-        this.track = null;
-        this.onChunk = null;
 
         finishedPort.disconnect();
         await this.frameQueue;
+        const frames = this.frameCount;
 
         if (wasStreamed) {
-            if (finishedRecorder.state !== "inactive") {
-                finishedRecorder.stop();
-            }
+            await this.stopRecorder(finishedRecorder);
+            await this.chunkQueue;
             finishedTrack?.stop();
+            const streamError = this.streamError;
             this.dispose();
+            if (streamError) {
+                return {
+                    error: "Recording stream failed",
+                    hint: streamError,
+                };
+            }
             return {
                 success: true,
                 format: "webm",
                 isStreamed: true,
                 durationMs,
                 frameCount: frames,
+                width,
+                height,
+                mimeType,
             };
         }
 
-        const mimeType = finishedRecorder.mimeType || "video/webm";
-        const blob = await new Promise<Blob>((resolve) => {
-            if (finishedRecorder.state === "inactive") {
-                resolve(new Blob(this.chunks, { type: mimeType }));
-                return;
-            }
-            finishedRecorder.onstop = () => resolve(new Blob(this.chunks, { type: mimeType }));
-            finishedRecorder.stop();
-        });
+        await this.stopRecorder(finishedRecorder);
+        const blob = new Blob(this.chunks, { type: mimeType });
         finishedTrack?.stop();
 
         this.dispose();
@@ -247,6 +335,9 @@ export class ScreenCaptureManager {
             dataBase64,
             durationMs,
             frameCount: frames,
+            width,
+            height,
+            mimeType,
         };
     }
 
@@ -262,14 +353,21 @@ export class ScreenCaptureManager {
         this.chunks.length = 0;
         this.onChunk = null;
         this.frameCount = 0;
+        this.chunkQueue = Promise.resolve();
         this.pendingDrawCount = 0;
+        this.firstFrameReady = Promise.resolve();
+        this.resolveFirstFrame = null;
+        this.streamError = null;
     }
 }
 
 export const captureManager = new ScreenCaptureManager();
 
-export function startCapture(onChunk?: (bytes: Uint8Array) => void): Promise<CaptureAck | CaptureError> {
-    return captureManager.start(onChunk);
+export function startCapture(
+    tabId?: number,
+    onChunk?: (bytes: Uint8Array) => boolean,
+): Promise<CaptureAck | CaptureError> {
+    return captureManager.start(tabId, onChunk);
 }
 
 export function stopCapture(): Promise<CaptureResult | CaptureError> {

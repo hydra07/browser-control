@@ -11,6 +11,8 @@ export interface FlowStep {
     role?: string;
     name?: string;
     selector?: string;
+    x?: number;
+    y?: number;
     text?: string;
     key?: string;
     contains?: string;

@@ -321,8 +321,15 @@ export function TerminalIcon({ className = "w-3.5 h-3.5" }: { className?: string
 export function AppLogo({ className = "w-5 h-5" }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none">
-      <rect width="24" height="24" rx="6" fill="#18181b" stroke="#27272a" strokeWidth="1.5" />
-      <path d="M7 8l5 4-5 4M13 16h4" stroke="#fafafa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M5.5 7.5 12 3.75l6.5 3.75v7.25L12 18.5l-6.5-3.75V7.5Z" stroke="#5794f2" strokeWidth="1.7" />
+      <path
+        d="m8.5 9 3.5 2-3.5 2M13 14h3"
+        stroke="#e2e8f0"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M12 18.5V21" stroke="#8b98a7" strokeWidth="1.7" strokeLinecap="round" />
     </svg>
   );
 }
