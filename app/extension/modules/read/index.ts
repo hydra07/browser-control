@@ -245,7 +245,7 @@ export async function handleReadingModeCommand(
           }
         | undefined;
 
-    if (!result || !result.text || !result.isArticle) {
+    if (!result?.text || !result.isArticle) {
         return {
             message:
                 'This page does not appear to be article-shaped (e.g. an app UI, form, dashboard, or listing). Use browser_inspect({action:"snapshot"}) instead.',

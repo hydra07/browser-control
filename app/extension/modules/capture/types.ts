@@ -14,7 +14,8 @@ export interface CaptureResult {
     [key: string]: unknown;
     success: true;
     format: "webm";
-    dataBase64: string;
+    dataBase64?: string;
+    isStreamed?: boolean;
     durationMs: number;
     frameCount: number;
 }

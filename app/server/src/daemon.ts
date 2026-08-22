@@ -12,7 +12,7 @@
 
 import { existsSync, mkdirSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ExtensionResponse } from "@browsercontrol/shared";
+import { BinaryOpcode, decodeBinaryPacket, type ExtensionResponse, type FlowStep } from "@browsercontrol/shared";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
@@ -34,6 +34,7 @@ import {
 } from "./modules/cliAgent/index.js";
 import * as dataStore from "./modules/dataStore/index.js";
 import { recordAndCheckFlow } from "./modules/sessionFlow/index.js";
+import * as streamSink from "./modules/streamSink/index.js";
 import { handleToolCall } from "./modules/tools/handlers.js";
 import { INSTRUCTIONS, TOOLS } from "./modules/tools/schemas.js";
 
@@ -144,6 +145,7 @@ const httpServer = serve({
       }
 
       const start = Date.now();
+      const timeoutBudget = typeof body?.timeoutMs === "number" ? body.timeoutMs : 30000;
       return new Promise<Response>((resolve) => {
         const reqId = crypto.randomUUID();
         const timeout = setTimeout(() => {
@@ -156,7 +158,7 @@ const httpServer = serve({
             logDirectCall(LOG_FILE, body?.cmd, body, timeoutBody, Date.now() - start);
             resolve(new Response(JSON.stringify(timeoutBody), { status: 504 }));
           }
-        }, 15000);
+        }, timeoutBudget);
 
         pendingRequests.set(reqId, (extResponse) => {
           clearTimeout(timeout);
@@ -206,6 +208,56 @@ const httpServer = serve({
         return new Response(JSON.stringify({ flows: dataStore.listFlows() }), { headers: JSON_CORS_HEADERS });
       } catch (e) {
         return new Response(JSON.stringify({ error: errorMessage(e) }), { status: 500, headers: JSON_CORS_HEADERS });
+      }
+    }
+
+    if (req.method === "POST" && url.pathname === "/flows") {
+      try {
+        const body = (await req.json()) as {
+          id?: string;
+          name: string;
+          description?: string;
+          domain?: string;
+          steps: FlowStep[];
+        };
+        if (!body.name || !Array.isArray(body.steps) || body.steps.length === 0) {
+          return new Response(JSON.stringify({ error: "Missing name or steps array" }), {
+            status: 400,
+            headers: JSON_CORS_HEADERS,
+          });
+        }
+        const saved = dataStore.saveFlow(body);
+        return new Response(JSON.stringify({ success: true, flow: saved }), {
+          status: 201,
+          headers: JSON_CORS_HEADERS,
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: errorMessage(e) }), {
+          status: 500,
+          headers: JSON_CORS_HEADERS,
+        });
+      }
+    }
+
+    if (req.method === "POST" && url.pathname === "/execute") {
+      try {
+        const body = (await req.json()) as { cmd: string; [key: string]: unknown };
+        if (!body.cmd) {
+          return new Response(JSON.stringify({ error: "Missing cmd" }), {
+            status: 400,
+            headers: JSON_CORS_HEADERS,
+          });
+        }
+        const { cmd, ...args } = body;
+        const res = await executeCommand(cmd, args);
+        return new Response(JSON.stringify({ success: true, result: res }), {
+          headers: JSON_CORS_HEADERS,
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: errorMessage(e) }), {
+          status: 500,
+          headers: JSON_CORS_HEADERS,
+        });
       }
     }
 
@@ -389,8 +441,20 @@ const httpServer = serve({
       extensionSocket = ws;
     },
     message(_ws, message) {
+      if (typeof message !== "string") {
+        const rawBytes = new Uint8Array(message.buffer, message.byteOffset, message.byteLength);
+        const packet = decodeBinaryPacket(rawBytes);
+        if (packet) {
+          if (packet.opcode === BinaryOpcode.VIDEO_CHUNK) {
+            streamSink.appendVideoChunk(packet.payload);
+            return;
+          }
+        }
+        return;
+      }
+
       try {
-        const data = JSON.parse(message as string) as ExtensionResponse;
+        const data = JSON.parse(message) as ExtensionResponse;
         if (data.id && pendingRequests.has(data.id)) {
           const resolve = pendingRequests.get(data.id)!;
           resolve(data);

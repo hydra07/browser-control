@@ -1,4 +1,4 @@
-import type { Point, TrajectoryConfig } from "../geometry/types.js";
+import type { Point, TrajectoryConfig } from "@browsercontrol/shared";
 
 export type AxInfo = { role?: string; name?: string };
 export type ActionResult =
@@ -13,6 +13,7 @@ export type ActionResult =
 
 export interface DragOptions {
     fast: boolean;
+    points?: Point[];
     shape?: TrajectoryConfig["shape"];
     shapeParams?: Record<string, unknown>;
     path?: Array<Point | [number, number]>;

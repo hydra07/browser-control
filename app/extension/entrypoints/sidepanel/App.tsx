@@ -60,6 +60,12 @@ export default function App() {
     }
   }, [isChatEnabled, activeTab]);
 
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    await load();
+    setTimeout(() => setIsRefreshing(false), 300);
+  }, [load]);
+
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       const target = e.target as HTMLElement | null;
@@ -83,13 +89,7 @@ export default function App() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isChatEnabled]);
-
-  async function handleRefresh() {
-    setIsRefreshing(true);
-    await load();
-    setTimeout(() => setIsRefreshing(false), 300);
-  }
+  }, [isChatEnabled, handleRefresh]);
 
   const isConnected = daemonStatus?.extensionConnected ?? false;
   const flowCount = state.status === "loaded" ? state.flows.length : 0;

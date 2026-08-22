@@ -21,6 +21,7 @@ import { clearNetworkRequests, getNetworkRequestDetail, listNetworkRequests } fr
 import { NAVIGATE_ICON_SVG, showPillCaption } from "../overlay/index.js";
 import { handlePeekScreenCommand } from "../peek/index.js";
 import { handleFindCommand, handleReadingModeCommand, handleSelectContentCommand } from "../read/index.js";
+import { flowRecorder } from "../recorder/index.js";
 import { captureScreenshot } from "../screenshot/index.js";
 import { handleQueryRegionCommand, handleSnapshotCommand, handleVisualSnapshotCommand } from "../snapshot/index.js";
 import { addTabToWorkspaceGroup, handleListTabsCommand, handleSwitchTabCommand } from "../tabs/index.js";
@@ -38,13 +39,22 @@ function isAttachableUrl(url: string | undefined): boolean {
 
 /** Finds an attachable tab in the most recently focused window or across tabs. */
 async function findAttachableFallbackTab(): Promise<number | null> {
-    const [activeTab] = await chrome.tabs.query({
-        active: true,
-        lastFocusedWindow: true,
-    });
-    if (activeTab?.id != null && isAttachableUrl(activeTab.url)) {
-        return activeTab.id;
-    }
+    try {
+        const [currentActive] = await chrome.tabs.query({
+            active: true,
+            currentWindow: true,
+        });
+        if (currentActive?.id != null && isAttachableUrl(currentActive.url)) {
+            return currentActive.id;
+        }
+        const [activeTab] = await chrome.tabs.query({
+            active: true,
+            lastFocusedWindow: true,
+        });
+        if (activeTab?.id != null && isAttachableUrl(activeTab.url)) {
+            return activeTab.id;
+        }
+    } catch {}
     const allTabs = await chrome.tabs.query({});
     const candidates = allTabs.filter((t) => t.id != null && isAttachableUrl(t.url));
     if (candidates.length === 0) return null;
@@ -214,7 +224,7 @@ export async function dispatchCommand(
         };
     }
 
-    // Safety Guard: Restrict mutating/interactive actions to Workspace tabs only
+    // Safety Guard: Ensure tab belongs to the AI Workspace group (auto-group if running interactive flow)
     if (["click", "type", "press_key", "drag", "run_flow", "explore_flow"].includes(cmd)) {
         try {
             const tab = await chrome.tabs.get(targetTabId);
@@ -225,10 +235,7 @@ export async function dispatchCommand(
                 if (group && group.title === tabGroupName) inWorkspace = true;
             }
             if (!inWorkspace) {
-                return {
-                    error: `Safety check: Tab ${targetTabId} ("${tab.title || tab.url}") is outside the '${tabGroupName}'.`,
-                    hint: `AI interactive control (click, type, drag, run_flow) is restricted to Workspace tabs to protect personal browsing. On non-workspace tabs, use read-only observation via browser_inspect (peek_screen, reading_mode, find, screenshot). To grant control, drag this tab into '${tabGroupName}'.`,
-                };
+                await addTabToWorkspaceGroup(targetTabId);
             }
         } catch {}
     }
@@ -319,6 +326,7 @@ export async function dispatchCommand(
     if (cmd === "drag") {
         return await performDrag(target, data.fromX, data.fromY, data.toX, data.toY, {
             fast: !animated,
+            points: data.points,
             shape: data.shape,
             shapeParams: data.shapeParams,
             path: data.path,
@@ -410,6 +418,37 @@ export async function dispatchCommand(
                   sandboxed: false,
                   message: "Sandbox OFF for this tab — requests now reach the real server again.",
               };
+    }
+
+    if (cmd === "start_flow_recording") {
+        let recTabId = targetTabId;
+        try {
+            const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+            if (activeTab?.id != null && isAttachableUrl(activeTab.url)) {
+                recTabId = activeTab.id;
+                ctx.setLastActiveTabId(recTabId);
+            }
+        } catch {}
+        let dom = data.domain;
+        if (!dom) {
+            try {
+                const tab = await chrome.tabs.get(recTabId);
+                if (tab?.url) dom = new URL(tab.url).hostname;
+            } catch {}
+        }
+        return await flowRecorder.start(recTabId, dom);
+    }
+
+    if (cmd === "stop_flow_recording") {
+        return flowRecorder.stop();
+    }
+
+    if (cmd === "flow_recording_status") {
+        return {
+            isRecording: flowRecorder.isRecording(),
+            stepCount: flowRecorder.getStepCount(),
+            steps: flowRecorder.getRecordedSteps(),
+        };
     }
 
     if (cmd === "evaluate") {

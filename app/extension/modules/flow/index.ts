@@ -17,46 +17,121 @@ import {
 import { pageDelay } from "../overlay/index.js";
 import type { SnapshotEntry } from "../snapshot/index.js";
 import { getFullSnapshot } from "../snapshot/index.js";
-import { MAX_DELTA_ENTRIES, MAX_FLOW_STEPS, WAIT_FOR_DEFAULT_TIMEOUT_MS, WAIT_FOR_POLL_MS } from "./constants.js";
+import { waitForStableDom } from "../wait/index.js";
+import {
+    DEFAULT_STEP_TIMEOUT_MS,
+    MAX_DELTA_ENTRIES,
+    MAX_FLOW_STEPS,
+    WAIT_FOR_DEFAULT_TIMEOUT_MS,
+    WAIT_FOR_POLL_MS,
+} from "./constants.js";
 import type { FlowReport, ResolvedStepTarget, SnapshotDelta } from "./types.js";
 
 export type { FlowReport } from "./types.js";
 
+function normalizeRole(role?: string): string[] {
+    if (!role) return [];
+    const r = role.toLowerCase().trim();
+    if (r === "a" || r === "link") return ["link", "a", "button"];
+    if (r === "input" || r === "textbox" || r === "searchbox") return ["textbox", "searchbox", "combobox", "input"];
+    if (r === "button") return ["button", "link"];
+    if (r === "heading") return ["heading"];
+    return [r];
+}
+
 /** Resolves step target against live page accessibility tree or CSS selector. */
 async function resolveStepTarget(target: chrome.debugger.Debuggee, step: FlowStep): Promise<ResolvedStepTarget | null> {
-    if (step.selector) {
-        const docResult = await sendCommand(target, "DOM.getDocument", {
-            depth: 0,
-        });
-        const rootNodeId = docResult?.root?.nodeId;
-        if (!rootNodeId) return null;
-        const queryResult = await sendCommand(target, "DOM.querySelector", {
-            nodeId: rootNodeId,
-            selector: step.selector,
-        });
-        if (!queryResult?.nodeId) return null;
-        const describeResult = await sendCommand(target, "DOM.describeNode", {
-            nodeId: queryResult.nodeId,
-        });
-        const backendNodeId = describeResult?.node?.backendNodeId;
-        if (!backendNodeId) return null;
-        const axInfo = await getAxInfoForNode(target, backendNodeId);
-        return { backendNodeId, matched: { selector: step.selector }, axInfo };
+    const hasSpecificSelector = Boolean(step.selector && (step.selector.includes("#") || step.selector.includes("[")));
+
+    // 1. If selector has specific ID or attribute, try DOM query first
+    if (hasSpecificSelector && step.selector) {
+        try {
+            const docResult = await sendCommand(target, "DOM.getDocument", { depth: 0 });
+            const rootNodeId = docResult?.root?.nodeId;
+            if (rootNodeId) {
+                const queryResult = await sendCommand(target, "DOM.querySelector", {
+                    nodeId: rootNodeId,
+                    selector: step.selector,
+                });
+                if (queryResult?.nodeId) {
+                    const describeResult = await sendCommand(target, "DOM.describeNode", {
+                        nodeId: queryResult.nodeId,
+                    });
+                    const backendNodeId = describeResult?.node?.backendNodeId;
+                    if (backendNodeId) {
+                        const axInfo = await getAxInfoForNode(target, backendNodeId);
+                        return { backendNodeId, matched: { selector: step.selector }, axInfo };
+                    }
+                }
+            }
+        } catch {}
     }
-    if (step.role && step.name) {
-        const axTreeResult = await sendCommand(target, "Accessibility.getFullAXTree", {});
-        const nodes = axTreeResult?.nodes || [];
-        const candidates = nodes.filter(
-            (n) => n.role?.value === step.role && n.name?.value === step.name && n.backendDOMNodeId != null,
-        );
-        if (candidates.length === 0) return null;
-        return {
-            backendNodeId: candidates[0].backendDOMNodeId!,
-            matched: { role: step.role, name: step.name },
-            axInfo: { role: step.role, name: step.name },
-            ambiguous: candidates.length > 1,
-        };
+
+    // 2. Try matching via Accessibility Tree (role + accessible name)
+    if (step.name) {
+        try {
+            const axTreeResult = await sendCommand(target, "Accessibility.getFullAXTree", {});
+            const nodes = axTreeResult?.nodes || [];
+            const allowedRoles = normalizeRole(step.role);
+            const targetNameLower = step.name.toLowerCase().trim();
+
+            let candidates = nodes.filter((n) => {
+                if (n.backendDOMNodeId == null || !n.name?.value) return false;
+                const nodeRole = n.role?.value?.toLowerCase();
+                const roleMatches = allowedRoles.length === 0 || (nodeRole && allowedRoles.includes(nodeRole));
+                const nameMatches = n.name.value.trim() === step.name?.trim();
+                return roleMatches && nameMatches;
+            });
+
+            if (candidates.length === 0) {
+                // Substring / fuzzy match
+                candidates = nodes.filter((n) => {
+                    if (n.backendDOMNodeId == null || !n.name?.value) return false;
+                    const nodeRole = n.role?.value?.toLowerCase();
+                    const roleMatches = allowedRoles.length === 0 || (nodeRole && allowedRoles.includes(nodeRole));
+                    const nodeNameLower = n.name.value.toLowerCase().trim();
+                    return (
+                        roleMatches &&
+                        (nodeNameLower.includes(targetNameLower) || targetNameLower.includes(nodeNameLower))
+                    );
+                });
+            }
+
+            if (candidates.length > 0) {
+                return {
+                    backendNodeId: candidates[0].backendDOMNodeId!,
+                    matched: { role: step.role, name: step.name },
+                    axInfo: { role: step.role, name: step.name },
+                    ambiguous: candidates.length > 1,
+                };
+            }
+        } catch {}
     }
+
+    // 3. Fallback to generic selector if not already matched
+    if (!hasSpecificSelector && step.selector) {
+        try {
+            const docResult = await sendCommand(target, "DOM.getDocument", { depth: 0 });
+            const rootNodeId = docResult?.root?.nodeId;
+            if (rootNodeId) {
+                const queryResult = await sendCommand(target, "DOM.querySelector", {
+                    nodeId: rootNodeId,
+                    selector: step.selector,
+                });
+                if (queryResult?.nodeId) {
+                    const describeResult = await sendCommand(target, "DOM.describeNode", {
+                        nodeId: queryResult.nodeId,
+                    });
+                    const backendNodeId = describeResult?.node?.backendNodeId;
+                    if (backendNodeId) {
+                        const axInfo = await getAxInfoForNode(target, backendNodeId);
+                        return { backendNodeId, matched: { selector: step.selector }, axInfo };
+                    }
+                }
+            }
+        } catch {}
+    }
+
     return null;
 }
 
@@ -136,42 +211,27 @@ export async function runFlowSteps(
         let resolved: ResolvedStepTarget | null = null;
 
         if (needsTarget) {
-            if (step.action === "wait_for") {
-                const timeoutMs = step.timeoutMs ?? WAIT_FOR_DEFAULT_TIMEOUT_MS;
-                const deadline = Date.now() + timeoutMs;
-                do {
-                    resolved = await resolveStepTarget(target, step);
-                    if (resolved || Date.now() >= deadline) break;
-                    await pageDelay(target, WAIT_FOR_POLL_MS);
-                } while (true);
-                if (!resolved) {
-                    results.push({
-                        index: i,
-                        action: step.action,
-                        success: false,
-                        error: `Timed out after ${timeoutMs}ms`,
-                    });
-                    return stop(
-                        i,
-                        "timeout",
-                        `Step ${i} (wait_for) timed out after ${timeoutMs}ms waiting for ${describeStepTarget(step)}.`,
-                    );
-                }
-            } else {
+            const timeoutMs =
+                step.timeoutMs ?? (step.action === "wait_for" ? WAIT_FOR_DEFAULT_TIMEOUT_MS : DEFAULT_STEP_TIMEOUT_MS);
+            const deadline = Date.now() + timeoutMs;
+            do {
                 resolved = await resolveStepTarget(target, step);
-                if (!resolved) {
-                    results.push({
-                        index: i,
-                        action: step.action,
-                        success: false,
-                        error: "not_found",
-                    });
-                    return stop(
-                        i,
-                        "not_found",
-                        `Step ${i} (${step.action}) found no element matching ${describeStepTarget(step)}. Stopped before continuing — take a fresh browser_inspect({action:"snapshot"}) and correct this step.`,
-                    );
-                }
+                if (resolved || Date.now() >= deadline) break;
+                await pageDelay(target, WAIT_FOR_POLL_MS);
+            } while (true);
+
+            if (!resolved) {
+                results.push({
+                    index: i,
+                    action: step.action,
+                    success: false,
+                    error: "not_found",
+                });
+                return stop(
+                    i,
+                    "not_found",
+                    `Step ${i} (${step.action}) found no element matching ${describeStepTarget(step)} after ${timeoutMs}ms. Stopped before continuing — take a fresh browser_inspect({action:"snapshot"}) and correct this step.`,
+                );
             }
 
             if (isRiskyTarget(resolved.axInfo) && !step.confirmRisky) {
@@ -235,6 +295,10 @@ export async function runFlowSteps(
                           };
                 break;
             }
+        }
+
+        if (step.action === "click" || step.action === "type" || step.action === "press_key") {
+            await waitForStableDom(target, { quietMs: 150, timeoutMs: 1500 });
         }
 
         const success = "success" in actionResult;

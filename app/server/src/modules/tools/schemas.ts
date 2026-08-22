@@ -471,6 +471,7 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
 - list_flows: metadata only (id, name, description, domain, step count) for saved flows. Use before save_flow to check whether a similar flow already exists, or to find a flow's id.
 - save_flow: persist a step sequence (same shape as browser_act's run_flow \`steps\`) as a named, reusable flow — shows up with a Run button in the extension's side panel. Validate the sequence first (this does not run the steps, only stores them). Pass an existing flow's \`id\` to overwrite it instead of creating a near-duplicate; omit to create a new one. Rejected if any step needs a target (everything except scroll/drag/a target-less press_key) but has neither a selector nor a complete role+name pair — that step would never resolve at run time, so this is caught at save time instead of failing confusingly whenever the flow is finally run.
 - delete_flow: remove a saved flow by \`id\` (from list_flows) — cleans it out of storage and the side panel. Use for a flow that turned out broken instead of leaving it cluttering the panel; a human can also delete it directly from the panel.
+- record_flow: record human user interactions on the active tab and convert them into automated FlowSteps. \`mode\`: 'start' (begins recording clicks/typing/keys on active tab), 'stop' (stops recording and synthesizes optimized steps array; pass \`name\` to auto-save to storage), or 'status' (checks current recording status and step count).
 - query_docs: query content saved by select_content/batch_crawl/deep_crawl/start_job. Its own sub-action goes in \`docsAction\` (list/search/read — a separate field from this gateway's own \`action\`, which is always "query_docs" here): 'list' — cheap metadata only (id, source, title, char count); 'read' — full content of ONE block by \`blockId\`; 'search' — full-text search across blocks, returning a highlighted snippet per match, not full content. Defaults to the CURRENT session's blocks only; pass \`allSessions:true\` to search/list across every session ever recorded.`,
     inputSchema: {
       type: "object",
@@ -502,6 +503,11 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
           type: "array",
           items: FLOW_STEP_ITEM_SCHEMA,
           description: "(action: 'save_flow') Same shape as browser_act's run_flow steps.",
+        },
+        mode: {
+          type: "string",
+          enum: ["start", "stop", "status"],
+          description: "(action: 'record_flow') Recording mode: 'start', 'stop', or 'status'.",
         },
         docsAction: {
           type: "string",

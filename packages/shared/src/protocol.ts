@@ -52,6 +52,76 @@ export interface FlowStep {
     confirmRisky?: boolean;
 }
 
+export interface Point {
+    x: number;
+    y: number;
+}
+
+export type TrajectoryShape =
+    | "straight"
+    | "circle"
+    | "arc"
+    | "ellipse"
+    | "bezier"
+    | "sine"
+    | "zigzag"
+    | "spiral"
+    | "waypoints"
+    | "polygon"
+    | "star"
+    | "heart"
+    | "flower"
+    | "rectangle"
+    | "box"
+    | "parametric"
+    | "polar"
+    | "function";
+
+export type EasingType = "linear" | "easeIn" | "easeOut" | "easeInOut";
+
+export interface TrajectoryConfig {
+    shape?: TrajectoryShape;
+    fromX?: number;
+    fromY?: number;
+    toX?: number;
+    toY?: number;
+    start?: Point | [number, number];
+    end?: Point | [number, number];
+    fnX?: string;
+    fnY?: string;
+    fnR?: string;
+    tMin?: number;
+    tMax?: number;
+    tRange?: [number, number];
+    cx?: number;
+    cy?: number;
+    radius?: number;
+    radiusX?: number;
+    radiusY?: number;
+    startAngle?: number;
+    endAngle?: number;
+    clockwise?: boolean;
+    control1?: Point | [number, number] | { dx: number; dy: number };
+    control2?: Point | [number, number] | { dx: number; dy: number };
+    amplitude?: number;
+    frequency?: number;
+    startRadius?: number;
+    endRadius?: number;
+    rotations?: number;
+    petals?: number;
+    numPoints?: number;
+    outerRadius?: number;
+    innerRadius?: number;
+    size?: number;
+    width?: number;
+    height?: number;
+    points?: Array<Point | [number, number]>;
+    closed?: boolean;
+    steps?: number;
+    easing?: EasingType;
+    smoothing?: boolean;
+}
+
 // `tabId` on every variant: omit it and a command targets whichever tab was
 // last navigated/switched to (single-tab behavior); pass it to target a
 // specific tab regardless of which one is "current" (background.ts tracks
@@ -69,6 +139,7 @@ export type BrowserCommand = WithTabId<
     | { cmd: "scroll"; deltaX?: number; deltaY?: number }
     | {
           cmd: "drag";
+          points?: Point[];
           fromX?: number;
           fromY?: number;
           toX?: number;
@@ -134,6 +205,9 @@ export type BrowserCommand = WithTabId<
           touch?: boolean;
       }
     | { cmd: "dev_sandbox"; mode: "block_mutations" | "off" }
+    | { cmd: "start_flow_recording"; tabId?: number; domain?: string }
+    | { cmd: "stop_flow_recording" }
+    | { cmd: "flow_recording_status" }
 >;
 
 // Optional lightweight runtime telemetry piggybacked onto responses when benchmark mode is active.
@@ -154,4 +228,63 @@ export interface ExtensionResponse {
     data?: unknown;
     error?: string;
     telemetry?: ExtensionTelemetry;
+}
+
+// ============================================================================
+// Binary Framing Protocol (8-Byte Header + Zero-Copy ArrayBuffer Stream)
+// Packet: [MAGIC (2B)] [OPCODE (1B)] [FLAGS (1B)] [LENGTH (4B LE)] [RAW BODY]
+// ============================================================================
+
+export const BINARY_MAGIC_0 = 0xbc;
+export const BINARY_MAGIC_1 = 0x01;
+export const BINARY_HEADER_SIZE = 8;
+
+export const BinaryOpcode = {
+    SCREENSHOT: 0x01,
+    VIDEO_CHUNK: 0x02,
+    AXTREE: 0x03,
+    HEARTBEAT: 0x04,
+} as const;
+export type BinaryOpcode = (typeof BinaryOpcode)[keyof typeof BinaryOpcode];
+
+export interface DecodedBinaryPacket {
+    opcode: BinaryOpcode;
+    flags: number;
+    length: number;
+    payload: Uint8Array;
+}
+
+/** Packs raw payload with an 8-byte Binary Frame Header in zero-copy memory */
+export function encodeBinaryPacket(opcode: BinaryOpcode, payload: Uint8Array, flags = 0): Uint8Array {
+    const totalSize = BINARY_HEADER_SIZE + payload.byteLength;
+    const packet = new Uint8Array(totalSize);
+    const view = new DataView(packet.buffer, packet.byteOffset, totalSize);
+
+    // 0..1: Magic bytes 0xBC 0x01
+    packet[0] = BINARY_MAGIC_0;
+    packet[1] = BINARY_MAGIC_1;
+    // 2: Opcode
+    packet[2] = opcode;
+    // 3: Flags
+    packet[3] = flags;
+    // 4..7: Length Uint32 LE
+    view.setUint32(4, payload.byteLength, true);
+
+    // 8..end: Raw Payload
+    packet.set(payload, BINARY_HEADER_SIZE);
+    return packet;
+}
+
+/** Decodes and validates an incoming Binary Frame Header */
+export function decodeBinaryPacket(data: Uint8Array): DecodedBinaryPacket | null {
+    if (data.byteLength < BINARY_HEADER_SIZE) return null;
+    if (data[0] !== BINARY_MAGIC_0 || data[1] !== BINARY_MAGIC_1) return null;
+
+    const opcode = data[2] as BinaryOpcode;
+    const flags = data[3] ?? 0;
+    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    const length = view.getUint32(4, true);
+
+    const payload = data.subarray(BINARY_HEADER_SIZE, BINARY_HEADER_SIZE + length);
+    return { opcode, flags, length, payload };
 }

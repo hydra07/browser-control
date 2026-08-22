@@ -142,7 +142,7 @@ export function ChatTab() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isProcessing]);
+  }, []);
 
   async function handleManualPing() {
     setPinging(true);
