@@ -94,7 +94,7 @@ export default function App() {
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     await load();
-    setTimeout(() => setIsRefreshing(false), 300);
+    setTimeout(() => setIsRefreshing(false), 250);
   }, [load]);
 
   useEffect(() => {
@@ -247,56 +247,66 @@ export default function App() {
         ))}
       </nav>
 
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-2 pb-2">
-        <div key={activeTab} className="flex-1 flex flex-col min-h-0 overflow-hidden animate-fade-in">
-          {activeTab === "flows" ? (
-            <>
-              {state.status === "loading" && (
-                <div className="flex flex-1 items-center justify-center p-6 text-slate-400 font-mono text-[11px]">
-                  <div className="flex items-center gap-2">
-                    <div className="bc-spinner" />
-                    <span>Connecting to daemon...</span>
-                  </div>
-                </div>
-              )}
-
-              {state.status === "unreachable" && (
-                <div className="flex flex-1 flex-col items-center justify-center p-6 text-center animate-fade-in">
-                  <div className="font-semibold text-slate-200 text-xs">Daemon Unreachable</div>
-                  <p className="mt-1 text-[11px] text-slate-400 max-w-[220px] leading-relaxed">{state.message}</p>
-                  <button
-                    type="button"
-                    onClick={() => void handleRefresh()}
-                    className="bc-primary-button mt-3.5 px-3.5 py-1.5 text-[11px]"
-                  >
-                    Retry Connection
-                  </button>
-                </div>
-              )}
-
-              {state.status === "loaded" && (
-                <FlowList
-                  flows={state.flows}
-                  onFlowDeleted={(id) =>
-                    setState((s) => (s.status === "loaded" ? { ...s, flows: s.flows.filter((f) => f.id !== id) } : s))
-                  }
-                  onFlowSaved={(flow) =>
-                    setState((s) =>
-                      s.status === "loaded"
-                        ? { ...s, flows: [flow, ...s.flows.filter((existing) => existing.id !== flow.id)] }
-                        : s,
-                    )
-                  }
-                />
-              )}
-            </>
-          ) : activeTab === "benchmark" ? (
-            <BenchmarkTab onRefresh={() => void handleRefresh()} />
-          ) : activeTab === "chat" && isChatEnabled ? (
-            <ChatTab />
-          ) : (
-            <SettingsTab daemonStatus={daemonStatus} onRefresh={() => void handleRefresh()} />
+      <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-2 pb-2">
+        {/* Tab 1: Flows */}
+        <div className={`flex-1 flex flex-col min-h-0 overflow-hidden ${activeTab === "flows" ? "flex" : "hidden"}`}>
+          {state.status === "loading" && (
+            <div className="flex flex-1 items-center justify-center p-6 text-slate-400 font-mono text-[11px]">
+              <div className="flex items-center gap-2">
+                <div className="bc-spinner" />
+                <span>Connecting to daemon...</span>
+              </div>
+            </div>
           )}
+
+          {state.status === "unreachable" && (
+            <div className="flex flex-1 flex-col items-center justify-center p-6 text-center animate-fade-in">
+              <div className="font-semibold text-slate-200 text-xs">Daemon Unreachable</div>
+              <p className="mt-1 text-[11px] text-slate-400 max-w-[220px] leading-relaxed">{state.message}</p>
+              <button
+                type="button"
+                onClick={() => void handleRefresh()}
+                className="bc-primary-button mt-3.5 px-3.5 py-1.5 text-[11px]"
+              >
+                Retry Connection
+              </button>
+            </div>
+          )}
+
+          {state.status === "loaded" && (
+            <FlowList
+              flows={state.flows}
+              onFlowDeleted={(id) =>
+                setState((s) => (s.status === "loaded" ? { ...s, flows: s.flows.filter((f) => f.id !== id) } : s))
+              }
+              onFlowSaved={(flow) =>
+                setState((s) =>
+                  s.status === "loaded"
+                    ? { ...s, flows: [flow, ...s.flows.filter((existing) => existing.id !== flow.id)] }
+                    : s,
+                )
+              }
+            />
+          )}
+        </div>
+
+        {/* Tab 2: Benchmark */}
+        <div
+          className={`flex-1 flex flex-col min-h-0 overflow-hidden ${activeTab === "benchmark" ? "flex" : "hidden"}`}
+        >
+          <BenchmarkTab onRefresh={() => void handleRefresh()} />
+        </div>
+
+        {/* Tab 3: Agent Chat (if enabled) */}
+        {isChatEnabled && (
+          <div className={`flex-1 flex flex-col min-h-0 overflow-hidden ${activeTab === "chat" ? "flex" : "hidden"}`}>
+            <ChatTab />
+          </div>
+        )}
+
+        {/* Tab 4: Settings */}
+        <div className={`flex-1 flex flex-col min-h-0 overflow-hidden ${activeTab === "settings" ? "flex" : "hidden"}`}>
+          <SettingsTab daemonStatus={daemonStatus} onRefresh={() => void handleRefresh()} />
         </div>
       </main>
     </div>
