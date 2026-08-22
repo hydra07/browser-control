@@ -18,6 +18,8 @@ export const FLOW_STEP_ITEM_SCHEMA = {
     },
     name: { type: "string", description: "Accessible name of the target, paired with role." },
     selector: { type: "string", description: "CSS selector, as an alternative to role+name." },
+    x: { type: "number", description: "Direct click coordinate x, viewport pixels (action: 'click')." },
+    y: { type: "number", description: "Direct click coordinate y, viewport pixels (action: 'click')." },
     text: { type: "string", description: "Text to type (action: 'type')." },
     key: {
       type: "string",
@@ -32,6 +34,7 @@ export const FLOW_STEP_ITEM_SCHEMA = {
     fromX: { type: "number", description: "Drag start x, viewport pixels (action: 'drag')." },
     fromY: { type: "number", description: "Drag start y, viewport pixels (action: 'drag')." },
     toX: { type: "number", description: "Drag end x, viewport pixels (action: 'drag')." },
+    toY: { type: "number", description: "Drag end y, viewport pixels (action: 'drag')." },
     shape: {
       type: "string",
       enum: [

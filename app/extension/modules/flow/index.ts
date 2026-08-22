@@ -9,12 +9,12 @@ import {
     getAxInfoForNode,
     isRiskyTarget,
     performClick,
+    performClickAt,
     performDrag,
     performPressKey,
     performScroll,
     performType,
 } from "../actions/index.js";
-import { pageDelay } from "../overlay/index.js";
 import type { SnapshotEntry } from "../snapshot/index.js";
 import { getFullSnapshot } from "../snapshot/index.js";
 import { waitForStableDom } from "../wait/index.js";
@@ -203,10 +203,13 @@ export async function runFlowSteps(
 
     for (let i = 0; i < steps.length; i++) {
         const step = steps[i];
+        const hasDirectCoords = step.action === "click" && step.x != null && step.y != null;
         const needsTarget =
             step.action !== "scroll" &&
             step.action !== "drag" &&
-            !(step.action === "press_key" && !step.role && !step.selector);
+            !hasDirectCoords &&
+            !(step.action === "press_key" && !step.role && !step.selector && !step.name) &&
+            !(step.action === "type" && !step.role && !step.selector && !step.name);
 
         let resolved: ResolvedStepTarget | null = null;
 
@@ -217,7 +220,7 @@ export async function runFlowSteps(
             do {
                 resolved = await resolveStepTarget(target, step);
                 if (resolved || Date.now() >= deadline) break;
-                await pageDelay(target, WAIT_FOR_POLL_MS);
+                await new Promise((resolve) => setTimeout(resolve, WAIT_FOR_POLL_MS));
             } while (true);
 
             if (!resolved) {
@@ -254,7 +257,9 @@ export async function runFlowSteps(
         let actionResult: ActionResult;
         switch (step.action) {
             case "click":
-                actionResult = await performClick(target, resolved!.backendNodeId, { fast: true });
+                actionResult = hasDirectCoords
+                    ? await performClickAt(target, step.x!, step.y!, { fast: true })
+                    : await performClick(target, resolved!.backendNodeId, { fast: true });
                 break;
             case "type":
                 actionResult = await performType(target, resolved?.backendNodeId, step.text ?? "", { fast: true });

@@ -10,7 +10,6 @@ import {
     hideNativeHighlight,
     KIND_COLORS,
     moveCursorTo,
-    pageDelay,
     pulseCursorPress,
     runCanvasOverlay,
     showActionHud,
@@ -25,6 +24,10 @@ import { KEY_DEFS, RISKY_NAME_PATTERN, SINGLE_CHAR_SYMBOL_CODES, SUPPORTED_KEYS 
 import type { ActionResult, AxInfo, DragOptions } from "./types.js";
 
 export type { ActionResult, AxInfo, DragOptions } from "./types.js";
+
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function classifyHudAction(kind: "click" | "type", axInfo: AxInfo): string {
     const target = `${axInfo.role ?? ""} ${axInfo.name ?? ""}`.toLowerCase();
@@ -41,13 +44,16 @@ function showHud(target: chrome.debugger.Debuggee, action: string, title: string
     );
 }
 
-/** role+name (not backendDOMNodeId, meaningless after a reload) so replay.ts can re-resolve "the button named X" against a fresh snapshot. */
 export async function getAxInfoForNode(target: chrome.debugger.Debuggee, backendNodeId: number): Promise<AxInfo> {
-    const result = await sendCommand(target, "Accessibility.queryAXTree", {
-        backendNodeId,
-    });
-    const node = result?.nodes?.[0];
-    return { role: node?.role?.value, name: node?.name?.value };
+    try {
+        const result = await sendCommand(target, "Accessibility.queryAXTree", {
+            backendNodeId,
+        });
+        const node = result?.nodes?.[0];
+        return { role: node?.role?.value, name: node?.name?.value };
+    } catch {
+        return {};
+    }
 }
 
 /**
@@ -65,7 +71,8 @@ async function readElementText(target: chrome.debugger.Debuggee, backendNodeId: 
         if (!objectId) return null;
         const result = await sendCommand(target, "Runtime.callFunctionOn", {
             objectId,
-            functionDeclaration: "function () { return this.value ?? this.textContent ?? ''; }",
+            functionDeclaration:
+                "function () { return this.value || this.textContent || this.parentElement?.innerText || this.closest('.oo-ui-widget, .tag-input, .multiselect, .chips, .tokenfield, form')?.innerText || ''; }",
             returnByValue: true,
         });
         return typeof result?.result?.value === "string" ? result.result.value : null;
@@ -84,10 +91,14 @@ async function scrollIntoViewWithRetry(target: chrome.debugger.Debuggee, backend
         if (!errorMessage(e).includes("does not have a layout object")) {
             throw e;
         }
-        await pageDelay(target, 300);
-        await sendCommand(target, "DOM.scrollIntoViewIfNeeded", {
-            backendNodeId,
-        });
+        await sleep(200);
+        try {
+            await sendCommand(target, "DOM.scrollIntoViewIfNeeded", {
+                backendNodeId,
+            });
+        } catch {
+            // Virtual accessibility node, SVG path, or canvas child with no CSS box
+        }
     }
 }
 
@@ -102,6 +113,53 @@ export function withRiskWarning(result: ActionResult, axInfo: AxInfo, verb: stri
     return result;
 }
 
+async function getBoxModelWithRetry(
+    target: chrome.debugger.Debuggee,
+    backendNodeId: number,
+): Promise<{ model?: { content: number[] } } | null> {
+    try {
+        return await sendCommand(target, "DOM.getBoxModel", { backendNodeId });
+    } catch {
+        await sleep(150);
+        return await sendCommand(target, "DOM.getBoxModel", { backendNodeId }).catch(() => null);
+    }
+}
+
+export async function resolveNodeBounds(
+    target: chrome.debugger.Debuggee,
+    backendNodeId: number,
+): Promise<{ x: number; y: number; w: number; h: number } | null> {
+    const boxModel = await getBoxModelWithRetry(target, backendNodeId);
+    if (boxModel?.model?.content) {
+        const box = quadToBox(
+            boxModel.model.content as [number, number, number, number, number, number, number, number],
+        );
+        if (box.w > 0 || box.h > 0) return box;
+    }
+    try {
+        const quads = await sendCommand(target, "DOM.getContentQuads", { backendNodeId });
+        if (quads?.quads?.[0]) {
+            const box = quadToBox(quads.quads[0] as [number, number, number, number, number, number, number, number]);
+            if (box.w > 0 || box.h > 0) return box;
+        }
+    } catch {}
+    try {
+        const resolved = await sendCommand(target, "DOM.resolveNode", { backendNodeId });
+        const objectId = resolved?.object?.objectId;
+        if (objectId) {
+            const rectResult = await sendCommand(target, "Runtime.callFunctionOn", {
+                objectId,
+                functionDeclaration:
+                    "function () { const r = this.getBoundingClientRect ? this.getBoundingClientRect() : null; return r ? { x: r.left, y: r.top, w: r.width, h: r.height } : null; }",
+                returnByValue: true,
+            });
+            const r = rectResult?.result?.value;
+            if (r && (r.w > 0 || r.h > 0 || r.x > 0 || r.y > 0)) return r;
+        }
+    } catch {}
+    return null;
+}
+
 /** Performs a left click with cursor glide, ripple, and risk inspection. */
 export async function performClick(
     target: chrome.debugger.Debuggee,
@@ -109,16 +167,13 @@ export async function performClick(
     opts: { fast: boolean },
 ): Promise<ActionResult> {
     await scrollIntoViewWithRetry(target, backendNodeId);
-    const boxModel = await sendCommand(target, "DOM.getBoxModel", {
-        backendNodeId,
-    });
-    if (!boxModel?.model) {
+    const box = await resolveNodeBounds(target, backendNodeId);
+    if (!box) {
         return {
             error: "Failed to resolve node bounds",
             hint: "The node id may be stale (page navigated/re-rendered since the last snapshot). Take a fresh snapshot and retry.",
         };
     }
-    const box = quadToBox(boxModel.model.content);
     const x = box.x + box.w / 2;
     const y = box.y + box.h / 2;
 
@@ -129,7 +184,7 @@ export async function performClick(
     const targetLabel = axInfo.name ?? axInfo.role ?? "Page element";
     showHud(target, classifyHudAction("click", axInfo), targetLabel, `Clicking ${axInfo.role ?? "element"}`, opts.fast);
     await showNativeHighlight(target, box, KIND_COLORS.click.rgb);
-    if (!opts.fast) await pageDelay(target, 350);
+    if (!opts.fast) await sleep(350);
 
     void runCanvasOverlay(target, `(${pulseCursorPress.toString()})(true)`);
     await sendCommand(target, "Input.dispatchMouseEvent", {
@@ -140,7 +195,7 @@ export async function performClick(
         clickCount: 1,
     });
     void runCanvasOverlay(target, `(${showClickRipple.toString()})(${x}, ${y}, 'click', ${opts.fast})`);
-    if (!opts.fast) await pageDelay(target, 130);
+    if (!opts.fast) await sleep(130);
     void runCanvasOverlay(target, `(${pulseCursorPress.toString()})(false)`);
     await sendCommand(target, "Input.dispatchMouseEvent", {
         type: "mouseReleased",
@@ -164,6 +219,43 @@ export async function performClick(
     );
 }
 
+/** Performs a left click at direct viewport coordinates. */
+export async function performClickAt(
+    target: chrome.debugger.Debuggee,
+    x: number,
+    y: number,
+    opts: { fast: boolean },
+): Promise<ActionResult> {
+    await runCanvasOverlay(target, `(${moveCursorTo.toString()})(${x}, ${y}, ${opts.fast})`, true);
+    showHud(target, "click", "Canvas point", `Clicking at (${Math.round(x)}, ${Math.round(y)})`, opts.fast);
+    if (!opts.fast) await sleep(200);
+
+    void runCanvasOverlay(target, `(${pulseCursorPress.toString()})(true)`);
+    await sendCommand(target, "Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        x,
+        y,
+        button: "left",
+        clickCount: 1,
+    });
+    void runCanvasOverlay(target, `(${showClickRipple.toString()})(${x}, ${y}, 'click', ${opts.fast})`);
+    if (!opts.fast) await sleep(130);
+    void runCanvasOverlay(target, `(${pulseCursorPress.toString()})(false)`);
+    await sendCommand(target, "Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        x,
+        y,
+        button: "left",
+        clickCount: 1,
+    });
+    await waitForStableDom(target);
+
+    return {
+        success: true,
+        message: `Clicked at (${x}, ${y})`,
+    };
+}
+
 /** Types text into a targeted element (or currently focused input) with cursor glide and highlight. */
 export async function performType(
     target: chrome.debugger.Debuggee,
@@ -174,28 +266,38 @@ export async function performType(
     let axInfo: AxInfo = {};
     if (backendNodeId != null) {
         await scrollIntoViewWithRetry(target, backendNodeId);
-
-        try {
-            await sendCommand(target, "DOM.focus", { backendNodeId });
-        } catch (e) {
-            return {
-                error: `Failed to focus node: ${errorMessage(e)}`,
-                hint: "The node id may be stale, or the element isn't focusable (e.g. a div, not an input). Take a fresh snapshot and confirm it's an input/textbox node.",
-            };
-        }
-
-        const [boxModel, resolvedAxInfo] = await Promise.all([
-            sendCommand(target, "DOM.getBoxModel", { backendNodeId }),
+        const box = await resolveNodeBounds(target, backendNodeId);
+        const [, resolvedAxInfo] = await Promise.all([
+            (async () => {
+                try {
+                    await sendCommand(target, "DOM.focus", { backendNodeId });
+                } catch {}
+                if (box) {
+                    await sendCommand(target, "Input.dispatchMouseEvent", {
+                        type: "mousePressed",
+                        x: box.x + box.w / 2,
+                        y: box.y + box.h / 2,
+                        button: "left",
+                        clickCount: 1,
+                    });
+                    await sendCommand(target, "Input.dispatchMouseEvent", {
+                        type: "mouseReleased",
+                        x: box.x + box.w / 2,
+                        y: box.y + box.h / 2,
+                        button: "left",
+                        clickCount: 1,
+                    });
+                }
+            })(),
             getAxInfoForNode(target, backendNodeId),
         ]);
         axInfo = resolvedAxInfo;
-        if (boxModel?.model?.content) {
-            const box = quadToBox(boxModel.model.content);
+        if (box) {
             const cx = box.x + box.w / 2;
             const cy = box.y + box.h / 2;
             await runCanvasOverlay(target, `(${moveCursorTo.toString()})(${cx}, ${cy}, ${opts.fast})`, true);
             await showNativeHighlight(target, box, KIND_COLORS.type.rgb);
-            if (!opts.fast) await pageDelay(target, 350);
+            if (!opts.fast) await sleep(350);
             void runCanvasOverlay(target, `(${showClickRipple.toString()})(${cx}, ${cy}, 'type', ${opts.fast})`);
             setTimeout(() => hideNativeHighlight(target), opts.fast ? 350 : 1200);
         }
@@ -217,29 +319,43 @@ export async function performType(
         const perCharDelayMs = chars.length > 40 ? 15 : 35;
         for (const ch of chars) {
             await sendCommand(target, "Input.insertText", { text: ch });
-            if (perCharDelayMs > 0) await pageDelay(target, perCharDelayMs);
+            if (perCharDelayMs > 0) await sleep(perCharDelayMs);
         }
     }
     await waitForStableDom(target);
 
     if (backendNodeId != null && text.length > 0) {
-        let landed = await readElementText(target, backendNodeId);
-        if (landed == null || !landed.includes(text)) {
-            // One recovery attempt: the node may still be attached, just
-            // knocked out of focus by a re-render — re-focus and re-insert
-            // before giving up on it.
-            try {
-                await sendCommand(target, "DOM.focus", { backendNodeId });
-                await sendCommand(target, "Input.insertText", { text });
-                await waitForStableDom(target);
-                landed = await readElementText(target, backendNodeId);
-            } catch {}
+        let isNativeInput = false;
+        try {
+            const resolved = await sendCommand(target, "DOM.resolveNode", { backendNodeId });
+            const objectId = resolved?.object?.objectId;
+            if (objectId) {
+                const tagRes = await sendCommand(target, "Runtime.callFunctionOn", {
+                    objectId,
+                    functionDeclaration: "function () { return this.tagName; }",
+                    returnByValue: true,
+                });
+                const tag = tagRes?.result?.value;
+                isNativeInput = tag === "INPUT" || tag === "TEXTAREA";
+            }
+        } catch {}
 
+        if (isNativeInput) {
+            let landed = await readElementText(target, backendNodeId);
             if (landed == null || !landed.includes(text)) {
-                return {
-                    error: `Typed "${text}" but it didn't land in the target element`,
-                    hint: "The element likely lost focus mid-type (a re-render replaced it, or something else grabbed focus). Take a fresh snapshot and retry, ideally right after the element becomes visible/interactive rather than immediately after the action that revealed it.",
-                };
+                try {
+                    await sendCommand(target, "DOM.focus", { backendNodeId });
+                    await sendCommand(target, "Input.insertText", { text });
+                    await waitForStableDom(target);
+                    landed = await readElementText(target, backendNodeId);
+                } catch {}
+
+                if (landed == null || !landed.includes(text)) {
+                    return {
+                        error: `Typed "${text}" but it didn't land in the target element`,
+                        hint: "The element likely lost focus mid-type. Take a fresh snapshot and retry.",
+                    };
+                }
             }
         }
     }
@@ -293,26 +409,39 @@ export async function performPressKey(
     let axInfo: AxInfo = {};
     if (backendNodeId != null) {
         await scrollIntoViewWithRetry(target, backendNodeId);
-        try {
-            await sendCommand(target, "DOM.focus", { backendNodeId });
-        } catch (e) {
-            return {
-                error: `Failed to focus node: ${errorMessage(e)}`,
-                hint: "The node id may be stale, or the element isn't focusable. Take a fresh snapshot and retry.",
-            };
-        }
-        const [boxModel, resolvedAxInfo] = await Promise.all([
-            sendCommand(target, "DOM.getBoxModel", { backendNodeId }),
+        const box = await resolveNodeBounds(target, backendNodeId);
+        const [, resolvedAxInfo] = await Promise.all([
+            (async () => {
+                try {
+                    await sendCommand(target, "DOM.focus", { backendNodeId });
+                } catch {
+                    if (box) {
+                        await sendCommand(target, "Input.dispatchMouseEvent", {
+                            type: "mousePressed",
+                            x: box.x + box.w / 2,
+                            y: box.y + box.h / 2,
+                            button: "left",
+                            clickCount: 1,
+                        });
+                        await sendCommand(target, "Input.dispatchMouseEvent", {
+                            type: "mouseReleased",
+                            x: box.x + box.w / 2,
+                            y: box.y + box.h / 2,
+                            button: "left",
+                            clickCount: 1,
+                        });
+                    }
+                }
+            })(),
             getAxInfoForNode(target, backendNodeId),
         ]);
         axInfo = resolvedAxInfo;
-        if (boxModel?.model?.content) {
-            const box = quadToBox(boxModel.model.content);
+        if (box) {
             const cx = box.x + box.w / 2;
             const cy = box.y + box.h / 2;
             await runCanvasOverlay(target, `(${moveCursorTo.toString()})(${cx}, ${cy}, ${opts.fast})`, true);
             await showNativeHighlight(target, box, KIND_COLORS.type.rgb);
-            if (!opts.fast) await pageDelay(target, 350);
+            if (!opts.fast) await sleep(350);
             void runCanvasOverlay(target, `(${showClickRipple.toString()})(${cx}, ${cy}, 'type', ${opts.fast})`);
             setTimeout(() => hideNativeHighlight(target), opts.fast ? 350 : 1200);
         }
@@ -450,21 +579,26 @@ export async function performDrag(
         clickCount: 1,
     });
 
-    // 3. Move through every calculated trajectory point
-    const perStepDelay = opts.fast ? 0 : Math.max(5, Math.min(25, Math.round(250 / points.length)));
-    for (let i = 1; i < points.length; i++) {
-        const pt = points[i];
+    // 3. Move through trajectory points (subsample if points > 24 to prevent CDP queue flooding)
+    const maxCdpPoints = opts.fast ? 8 : 24;
+    const stepRatio = Math.max(1, Math.floor(points.length / maxCdpPoints));
+    const cdpPoints: Point[] = [];
+    for (let i = 1; i < points.length - 1; i += stepRatio) {
+        cdpPoints.push(points[i]!);
+    }
+    cdpPoints.push(end);
+
+    const perStepDelay = opts.fast ? 0 : Math.max(8, Math.min(30, Math.round(200 / cdpPoints.length)));
+    for (let i = 0; i < cdpPoints.length; i++) {
+        const pt = cdpPoints[i]!;
         await sendCommand(target, "Input.dispatchMouseEvent", {
             type: "mouseMoved",
             x: pt.x,
             y: pt.y,
             button,
         });
-        if (!opts.fast && i % 2 === 0) {
-            void runCanvasOverlay(target, `(${moveCursorTo.toString()})(${pt.x}, ${pt.y}, true)`);
-        }
         if (perStepDelay > 0) {
-            await pageDelay(target, perStepDelay);
+            await new Promise((resolve) => setTimeout(resolve, perStepDelay));
         }
     }
 
