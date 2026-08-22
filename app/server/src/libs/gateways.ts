@@ -68,6 +68,7 @@ export const KnowledgeAction = {
   ListFlows: "list_flows",
   SaveFlow: "save_flow",
   DeleteFlow: "delete_flow",
+  RecordFlow: "record_flow",
   QueryDocs: "query_docs",
 } as const;
 export type KnowledgeAction = (typeof KnowledgeAction)[keyof typeof KnowledgeAction];

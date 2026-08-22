@@ -17,3 +17,7 @@ web-ext.config.ts
 
 # Turborepo's local task cache.
 .turbo/
+
+
+scratch/
+docs/

@@ -73,6 +73,10 @@ export class ScreencastRelay {
         return this.capturePort !== null;
     }
 
+    public getRelayedFrameCount(): number {
+        return this.relayedFrameCount;
+    }
+
     public async stop(target: chrome.debugger.Debuggee): Promise<void> {
         this.capturePort = null;
         try {

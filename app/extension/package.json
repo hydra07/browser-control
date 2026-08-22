@@ -2,7 +2,7 @@
     "name": "@browsercontrol/extension",
     "description": "The Chrome extension — service worker, offscreen document, and the side panel. Built with WXT.",
     "private": true,
-    "version": "0.1.0",
+    "version": "0.2.0",
     "type": "module",
     "scripts": {
         "dev": "wxt",

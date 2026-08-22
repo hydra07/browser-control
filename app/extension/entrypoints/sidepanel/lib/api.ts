@@ -55,6 +55,88 @@ export async function getFlow(id: string): Promise<FlowFull> {
   return data.flow;
 }
 
+export async function saveFlow(input: {
+  id?: string;
+  name: string;
+  description?: string;
+  domain?: string;
+  steps: FlowStep[];
+}): Promise<FlowFull> {
+  const res = await daemonFetch("/flows", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(data?.error ?? `Failed to save flow (HTTP ${res.status})`);
+  }
+  const data = (await res.json()) as { flow: FlowFull };
+  return data.flow;
+}
+
+export async function executeDirect(cmd: string, args: Record<string, unknown> = {}): Promise<unknown> {
+  if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
+    try {
+      const response = await new Promise<{ result?: unknown; error?: string }>((resolve, reject) => {
+        chrome.runtime.sendMessage({ target: "background", payload: { cmd, ...args } }, (res) => {
+          if (chrome.runtime.lastError) {
+            return reject(new Error(chrome.runtime.lastError.message));
+          }
+          resolve(res);
+        });
+      });
+      if (response?.error) throw new Error(response.error);
+      return response?.result;
+    } catch {
+      // Fall through to daemonFetch fallback
+    }
+  }
+
+  const res = await daemonFetch("/execute", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cmd, ...args }),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(data?.error ?? `Direct command failed (HTTP ${res.status})`);
+  }
+  const data = (await res.json()) as { success?: boolean; result?: unknown; error?: string };
+  if (data.error) throw new Error(data.error);
+  return data.result ?? data;
+}
+
+export async function startFlowRecording(domain?: string): Promise<{ success: boolean; message: string }> {
+  return (await executeDirect("start_flow_recording", { domain })) as { success: boolean; message: string };
+}
+
+export async function stopFlowRecording(): Promise<{
+  steps: FlowStep[];
+  domain: string;
+  stepCount: number;
+  durationMs: number;
+}> {
+  return (await executeDirect("stop_flow_recording")) as {
+    steps: FlowStep[];
+    domain: string;
+    stepCount: number;
+    durationMs: number;
+  };
+}
+
+export async function getFlowRecordingStatus(): Promise<{
+  isRecording: boolean;
+  stepCount: number;
+  steps: FlowStep[];
+}> {
+  return (await executeDirect("flow_recording_status")) as {
+    isRecording: boolean;
+    stepCount: number;
+    steps: FlowStep[];
+  };
+}
+
 export interface DaemonStatus {
   extensionConnected: boolean;
   version: string;
@@ -77,6 +159,21 @@ export async function deleteFlow(id: string): Promise<void> {
 }
 
 export async function runFlow(id: string): Promise<FlowRunResult> {
+  try {
+    const flow = await getFlow(id);
+    if (flow?.steps && flow.steps.length > 0) {
+      const res = (await executeDirect("run_flow", {
+        steps: flow.steps,
+        domain: flow.domain,
+      })) as FlowRunResult;
+      if (res && typeof res.success === "boolean") {
+        return res;
+      }
+    }
+  } catch {
+    // Fallback to daemon endpoint
+  }
+
   const res = await daemonFetch(`/flows/${encodeURIComponent(id)}/run`, {
     method: "POST",
   });

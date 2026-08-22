@@ -40,7 +40,7 @@ if (!/^\d+\.\d+\.\d+$/.test(next)) {
 }
 
 pkg.version = next;
-writeFileSync(PACKAGE_PATH, JSON.stringify(pkg, null, 2) + "\n");
+writeFileSync(PACKAGE_PATH, `${JSON.stringify(pkg, null, 2)}\n`);
 console.log(`package.json: ${current} -> ${next}`);
 
 console.log(`\nNext (not run automatically):`);

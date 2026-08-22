@@ -6,7 +6,11 @@ import {
   type FlowRunResult,
   type FlowStep,
   getFlow,
+  getFlowRecordingStatus,
   runFlow,
+  saveFlow,
+  startFlowRecording,
+  stopFlowRecording,
 } from "../lib/api";
 import {
   CheckIcon,
@@ -92,111 +96,67 @@ function StepActionBadge({ action }: { action: FlowStep["action"] }) {
         </span>
       );
     default:
-      return (
-        <span className="inline-flex items-center gap-1 rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-mono text-zinc-400">
-          {action}
-        </span>
-      );
+      return null;
   }
 }
 
-function StepDetails({ step, index }: { step: FlowStep; index: number }) {
+function StepRow({ step, index }: { step: FlowStep; index: number }) {
   return (
-    <div className="group relative flex items-start gap-2.5 rounded-md bg-[#121318] p-2 border border-zinc-800/80 hover:border-zinc-700 transition">
-      <span className="flex-none font-mono text-[10px] text-zinc-500 w-4 text-right pt-0.5">#{index + 1}</span>
-      <div className="flex-1 min-w-0 space-y-1">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <StepActionBadge action={step.action} />
-          {step.role && (
-            <span className="font-mono text-[10px] text-zinc-400 bg-zinc-800/60 px-1 py-0.2 rounded">
-              role: {step.role}
-            </span>
-          )}
-          {step.name && (
-            <span className="font-mono text-[10px] text-zinc-300 bg-zinc-800/60 px-1 py-0.2 rounded">
-              name: "{step.name}"
-            </span>
-          )}
-          {step.selector && (
-            <span
-              className="font-mono text-[10px] text-indigo-300 bg-indigo-950/40 px-1 py-0.2 rounded border border-indigo-900/40 truncate max-w-[200px]"
-              title={step.selector}
-            >
-              {step.selector}
-            </span>
-          )}
-        </div>
-
-        <div className="text-[10.5px] font-mono text-zinc-400 pl-0.5 space-y-0.5">
-          {step.text && (
-            <div className="text-amber-300/90 truncate">
-              text: <span className="text-zinc-200">"{step.text}"</span>
-            </div>
-          )}
-          {step.key && (
-            <div className="text-purple-300/90">
-              key: <span className="text-zinc-200">{step.key}</span>
-            </div>
-          )}
-          {step.contains && (
-            <div className="text-emerald-300/90 truncate">
-              contains: <span className="text-zinc-200">"{step.contains}"</span>
-            </div>
-          )}
-          {(step.deltaX !== undefined || step.deltaY !== undefined) && (
-            <div className="text-zinc-400">
-              delta: ({step.deltaX ?? 0}, {step.deltaY ?? 0})px
-            </div>
-          )}
-          {(step.fromX !== undefined || step.toX !== undefined) && (
-            <div className="text-orange-300/90">
-              drag: ({step.fromX}, {step.fromY}) -&gt; ({step.toX}, {step.toY})
-            </div>
-          )}
-          {step.timeoutMs && <div className="text-zinc-500 text-[10px]">timeout: {step.timeoutMs}ms</div>}
-        </div>
+    <div className="flex items-start gap-2 py-1 px-1.5 text-[11px] font-mono hover:bg-zinc-800/40 rounded transition">
+      <span className="w-4 flex-none text-[10px] text-zinc-500 text-right select-none">{index + 1}.</span>
+      <div className="flex-none pt-0.5">
+        <StepActionBadge action={step.action} />
       </div>
-    </div>
-  );
-}
-
-function RunReport({ state }: { state: RunState }) {
-  if (state.status === "idle") return null;
-
-  if (state.status === "running") {
-    return (
-      <div className="mt-2.5 flex items-center gap-2 rounded-lg bg-indigo-950/30 border border-indigo-800/40 px-2.5 py-1.5 font-mono text-[11px] text-indigo-300">
-        <div className="h-2 w-2 rounded-full bg-indigo-400 animate-pulse" />
-        <span>Executing flow steps on current tab…</span>
-      </div>
-    );
-  }
-
-  if (state.status === "error") {
-    return (
-      <div className="mt-2.5 flex items-start gap-2 rounded-lg bg-rose-950/30 border border-rose-800/40 p-2.5 font-mono text-[11px] text-rose-300">
-        <CrossIcon className="w-3.5 h-3.5 flex-none mt-0.5 text-rose-400" />
-        <span className="break-all">{state.message}</span>
-      </div>
-    );
-  }
-
-  const r = state.result;
-  if (r.success) {
-    return (
-      <div className="mt-2.5 flex items-center gap-2 rounded-lg bg-emerald-950/30 border border-emerald-800/40 px-2.5 py-1.5 font-mono text-[11px] text-emerald-300">
-        <CheckIcon className="w-3.5 h-3.5 flex-none text-emerald-400" />
-        <span>{r.message ?? "Flow executed successfully"}</span>
-      </div>
-    );
-  }
-
-  return (
-    <div className="mt-2.5 flex items-start gap-2 rounded-lg bg-rose-950/30 border border-rose-800/40 p-2.5 font-mono text-[11px] text-rose-300">
-      <CrossIcon className="w-3.5 h-3.5 flex-none mt-0.5 text-rose-400" />
-      <div className="flex-1 min-w-0">
-        <div className="font-semibold text-rose-200">Execution failed</div>
-        <div className="mt-0.5 opacity-90">{r.message ?? r.reason ?? r.error ?? "Failed at step"}</div>
+      <div className="flex-1 min-w-0 break-words text-zinc-300">
+        {step.action === "click" && (
+          <span>
+            {step.role && <span className="text-zinc-500">{step.role} </span>}
+            {step.name && <span className="text-zinc-200">"{step.name}" </span>}
+            {step.selector && <span className="text-zinc-500 text-[10px]">({step.selector})</span>}
+          </span>
+        )}
+        {step.action === "type" && (
+          <span>
+            <span className="text-amber-300/90 font-sans font-medium">"{step.text}"</span>
+            {(step.role || step.name) && (
+              <span className="text-zinc-500">
+                {" "}
+                into {step.role} "{step.name}"
+              </span>
+            )}
+            {step.selector && <span className="text-zinc-500 text-[10px]"> ({step.selector})</span>}
+          </span>
+        )}
+        {step.action === "press_key" && (
+          <span>
+            <span className="text-purple-300 font-semibold">{step.key}</span>
+            {step.selector && <span className="text-zinc-500 text-[10px]"> on {step.selector}</span>}
+          </span>
+        )}
+        {step.action === "wait_for" && (
+          <span>
+            {step.role && <span className="text-zinc-500">{step.role} </span>}
+            {step.name && <span className="text-zinc-200">"{step.name}" </span>}
+            {step.selector && <span className="text-zinc-500 text-[10px]">({step.selector}) </span>}
+            {step.timeoutMs && <span className="text-zinc-500 text-[10px]">timeout: {step.timeoutMs}ms</span>}
+          </span>
+        )}
+        {step.action === "assert_text" && (
+          <span>
+            contains <span className="text-emerald-300">"{step.contains}"</span>
+            {step.selector && <span className="text-zinc-500 text-[10px]"> in {step.selector}</span>}
+          </span>
+        )}
+        {step.action === "scroll" && (
+          <span className="text-zinc-400">
+            dx: {step.deltaX ?? 0}, dy: {step.deltaY ?? 0}
+          </span>
+        )}
+        {step.action === "drag" && (
+          <span className="text-zinc-400">
+            ({step.fromX},{step.fromY}) → ({step.toX},{step.toY})
+          </span>
+        )}
       </div>
     </div>
   );
@@ -205,32 +165,38 @@ function RunReport({ state }: { state: RunState }) {
 function FlowCard({ flow, onDeleted }: { flow: FlowMeta; onDeleted: (id: string) => void }) {
   const [expanded, setExpanded] = useState(false);
   const [fullFlow, setFullFlow] = useState<FlowFull | null>(null);
-  const [loadingSteps, setLoadingSteps] = useState(false);
-  const [state, setState] = useState<RunState>({ status: "idle" });
-  const [deleting, setDeleting] = useState(false);
+  const [loadingFull, setLoadingFull] = useState(false);
+  const [runState, setRunState] = useState<RunState>({ status: "idle" });
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    if (expanded && !fullFlow) {
-      setLoadingSteps(true);
+    if (expanded && !fullFlow && !loadingFull) {
+      setLoadingFull(true);
       getFlow(flow.id)
         .then((f) => setFullFlow(f))
-        .catch(() => {})
-        .finally(() => setLoadingSteps(false));
+        .catch((e) => console.error("Failed to load flow details", e))
+        .finally(() => setLoadingFull(false));
     }
-  }, [expanded, flow.id, fullFlow]);
+  }, [expanded, fullFlow, loadingFull, flow.id]);
+
+  useEffect(() => {
+    if (!confirmDelete) return;
+    const timer = setTimeout(() => setConfirmDelete(false), 3000);
+    return () => clearTimeout(timer);
+  }, [confirmDelete]);
 
   async function handleRun(e: MouseEvent) {
     e.stopPropagation();
-    setState({ status: "running" });
+    if (runState.status === "running") return;
+    setRunState({ status: "running" });
     try {
-      const result = await runFlow(flow.id);
-      setState({ status: "done", result });
-    } catch (e) {
-      setState({
+      const res = await runFlow(flow.id);
+      setRunState({ status: "done", result: res });
+    } catch (err: unknown) {
+      setRunState({
         status: "error",
-        message: e instanceof Error ? e.message : String(e),
+        message: err instanceof Error ? err.message : String(err),
       });
     }
   }
@@ -239,140 +205,132 @@ function FlowCard({ flow, onDeleted }: { flow: FlowMeta; onDeleted: (id: string)
     e.stopPropagation();
     if (!confirmDelete) {
       setConfirmDelete(true);
-      setTimeout(() => setConfirmDelete(false), 3000);
       return;
     }
-    setDeleting(true);
     try {
       await deleteFlow(flow.id);
       onDeleted(flow.id);
-    } catch (e) {
-      setDeleting(false);
-      setState({
-        status: "error",
-        message: e instanceof Error ? e.message : String(e),
-      });
+    } catch (err) {
+      console.error("Failed to delete flow:", err);
     }
   }
 
-  function handleCopySteps(e: MouseEvent) {
+  function handleCopyJson(e: MouseEvent) {
     e.stopPropagation();
     if (!fullFlow) return;
-    void navigator.clipboard.writeText(JSON.stringify(fullFlow.steps, null, 2));
+    navigator.clipboard.writeText(JSON.stringify(fullFlow.steps, null, 2));
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setTimeout(() => setCopied(false), 1500);
   }
 
-  const isRunning = state.status === "running";
-
   return (
-    <div className="rounded-xl border border-zinc-800/80 bg-[#16171d] transition hover:border-zinc-700/80 shadow-sm overflow-hidden">
-      <div className="p-3">
-        <div className="flex items-start justify-between gap-2.5">
-          <div className="min-w-0 flex-1 cursor-pointer" onClick={() => setExpanded(!expanded)}>
-            <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="font-semibold text-zinc-100 text-[12.5px] truncate hover:text-white transition">
-                {flow.name}
-              </h3>
-              {flow.domain && (
-                <span className="font-mono text-[10px] text-zinc-400 bg-zinc-800/80 px-1.5 py-0.2 rounded border border-zinc-700/40">
-                  {flow.domain}
-                </span>
-              )}
-            </div>
-
-            {flow.description && (
-              <p className="mt-1 text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">{flow.description}</p>
-            )}
-
-            <div className="mt-2.5 flex items-center gap-2 text-[10.5px] text-zinc-500 font-mono">
-              <span className="rounded bg-zinc-800/60 px-1.5 py-0.5 text-zinc-300">
-                {flow.stepCount} {flow.stepCount === 1 ? "step" : "steps"}
+    <div
+      className={`group rounded-lg border bg-[#14151a] transition ${
+        expanded ? "border-zinc-700/80 shadow-lg" : "border-zinc-800/80 hover:border-zinc-700/60"
+      }`}
+    >
+      <div className="flex items-center gap-3 p-3 cursor-pointer select-none" onClick={() => setExpanded(!expanded)}>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-[12.5px] text-zinc-100 truncate">{flow.name}</span>
+            {flow.domain && (
+              <span className="rounded bg-zinc-800/80 px-1.5 py-0.5 text-[10px] font-mono text-zinc-400 border border-zinc-700/40">
+                {flow.domain}
               </span>
-              <span>•</span>
-              <span>{formatRelativeTime(flow.updatedAt)}</span>
-            </div>
+            )}
           </div>
-
-          <div className="flex flex-none items-center gap-1.5">
-            <button
-              type="button"
-              onClick={handleRun}
-              disabled={isRunning || deleting}
-              title="Run this flow on current tab"
-              className="flex h-7 items-center gap-1.5 rounded-lg bg-zinc-100 px-2.5 text-[11px] font-semibold text-zinc-950 hover:bg-white active:scale-95 disabled:opacity-40 transition shadow-sm"
-            >
-              {isRunning ? (
-                <div className="h-2.5 w-2.5 rounded-full border-2 border-zinc-950 border-t-transparent animate-spin" />
-              ) : (
-                <PlayIcon className="w-2.5 h-2.5" />
-              )}
-              <span>Run</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setExpanded(!expanded)}
-              title={expanded ? "Collapse behaviors" : "Inspect flow behaviors"}
-              className={`flex h-7 w-7 items-center justify-center rounded-lg border transition ${
-                expanded
-                  ? "bg-zinc-800 text-zinc-200 border-zinc-700"
-                  : "bg-zinc-900/60 text-zinc-400 border-zinc-800 hover:text-zinc-200 hover:bg-zinc-800"
-              }`}
-            >
-              <ChevronDownIcon
-                className={`w-3.5 h-3.5 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
-              />
-            </button>
-
-            <button
-              type="button"
-              onClick={handleDelete}
-              disabled={isRunning || deleting}
-              title={confirmDelete ? "Click again to confirm delete" : "Delete flow"}
-              className={`flex h-7 w-7 items-center justify-center rounded-lg border transition ${
-                confirmDelete
-                  ? "bg-rose-950/60 text-rose-300 border-rose-800 ring-1 ring-rose-700/50"
-                  : "bg-zinc-900/40 border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
-              }`}
-            >
-              <TrashIcon className="w-3.5 h-3.5" />
-            </button>
+          {flow.description && <p className="mt-0.5 text-[11.5px] text-zinc-400 line-clamp-1">{flow.description}</p>}
+          <div className="mt-1 flex items-center gap-3 text-[10.5px] text-zinc-500 font-mono">
+            <span>{flow.stepCount} steps</span>
+            <span>•</span>
+            <span>{formatRelativeTime(flow.updatedAt)}</span>
           </div>
         </div>
 
-        <RunReport state={state} />
+        <div className="flex items-center gap-1.5 flex-none" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            title="Run flow"
+            disabled={runState.status === "running"}
+            onClick={handleRun}
+            className="flex items-center gap-1 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 px-2 py-1 text-[11px] font-mono font-medium transition disabled:opacity-50"
+          >
+            <PlayIcon className="w-3 h-3 fill-current" />
+            <span>{runState.status === "running" ? "Running..." : "Run"}</span>
+          </button>
+
+          <button
+            type="button"
+            title={confirmDelete ? "Click again to confirm delete" : "Delete flow"}
+            onClick={handleDelete}
+            className={`rounded-md p-1 transition ${
+              confirmDelete
+                ? "bg-red-500/20 text-red-400 border border-red-500/30"
+                : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
+            }`}
+          >
+            <TrashIcon className="w-3.5 h-3.5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            className="rounded-md p-1 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition"
+          >
+            <ChevronDownIcon className={`w-3.5 h-3.5 transition-transform ${expanded ? "rotate-180" : ""}`} />
+          </button>
+        </div>
       </div>
 
       {expanded && (
-        <div className="border-t border-zinc-800/80 bg-[#0f1015] p-3 space-y-2 animate-in fade-in duration-200">
-          <div className="flex items-center justify-between pb-1">
-            <div className="flex items-center gap-1.5 text-[11px] font-mono font-medium text-zinc-300">
-              <span>BEHAVIOR SEQUENCE</span>
-              <span className="text-[10px] text-zinc-500">({fullFlow?.steps.length ?? flow.stepCount} steps)</span>
-            </div>
-
-            {fullFlow && (
-              <button
-                type="button"
-                onClick={handleCopySteps}
-                className="flex items-center gap-1 rounded bg-zinc-800/70 px-2 py-0.5 text-[10px] font-mono text-zinc-300 hover:bg-zinc-700 hover:text-white transition"
-              >
-                <CopyIcon className="w-2.5 h-2.5" />
-                <span>{copied ? "Copied" : "Copy JSON"}</span>
-              </button>
-            )}
-          </div>
-
-          {loadingSteps && (
-            <div className="py-4 text-center font-mono text-[10.5px] text-zinc-500">Loading steps...</div>
-          )}
+        <div className="border-t border-zinc-800/80 bg-[#0f1013] p-3 rounded-b-lg space-y-3">
+          {loadingFull && <div className="text-center py-2 text-[11px] text-zinc-500 font-mono">Loading steps...</div>}
 
           {fullFlow && (
-            <div className="space-y-1.5 max-h-72 overflow-y-auto pr-0.5">
-              {fullFlow.steps.map((step, idx) => (
-                <StepDetails key={idx} step={step} index={idx} />
-              ))}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10.5px] font-mono text-zinc-500 uppercase tracking-wider">Step Sequence</span>
+                <button
+                  type="button"
+                  onClick={handleCopyJson}
+                  className="flex items-center gap-1 text-[10.5px] font-mono text-zinc-400 hover:text-zinc-200 transition"
+                >
+                  {copied ? <CheckIcon className="w-3 h-3 text-emerald-400" /> : <CopyIcon className="w-3 h-3" />}
+                  <span>{copied ? "Copied" : "Copy JSON"}</span>
+                </button>
+              </div>
+
+              <div className="rounded-md border border-zinc-800 bg-[#14151a]/60 p-1 divide-y divide-zinc-800/40">
+                {fullFlow.steps.map((step, idx) => (
+                  <StepRow key={`${idx}-${step.action}`} step={step} index={idx} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {runState.status !== "idle" && (
+            <div className="mt-2 rounded-md border border-zinc-800 bg-zinc-900/80 p-2.5 text-[11px] font-mono">
+              {runState.status === "running" && (
+                <div className="flex items-center gap-2 text-zinc-400">
+                  <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>Executing flow sequence...</span>
+                </div>
+              )}
+              {runState.status === "done" && (
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5 text-emerald-400 font-semibold">
+                    <CheckIcon className="w-3.5 h-3.5" />
+                    <span>Run completed successfully</span>
+                  </div>
+                  <div className="text-zinc-400 text-[10.5px]">{runState.result.message}</div>
+                </div>
+              )}
+              {runState.status === "error" && (
+                <div className="space-y-1 text-red-400">
+                  <div className="font-semibold">Execution stopped</div>
+                  <div className="text-[10.5px] text-red-400/80 break-words">{runState.message}</div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -384,6 +342,72 @@ function FlowCard({ flow, onDeleted }: { flow: FlowMeta; onDeleted: (id: string)
 export function FlowList({ flows, onFlowDeleted }: { flows: FlowMeta[]; onFlowDeleted: (id: string) => void }) {
   const [query, setQuery] = useState("");
   const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [stepCount, setStepCount] = useState(0);
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [recordedSteps, setRecordedSteps] = useState<FlowStep[]>([]);
+  const [recordedDomain, setRecordedDomain] = useState<string>("");
+  const [flowName, setFlowName] = useState("");
+  const [flowDesc, setFlowDesc] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    async function checkStatus() {
+      try {
+        const stat = await getFlowRecordingStatus();
+        setIsRecording(Boolean(stat?.isRecording));
+        setStepCount(Number(stat?.stepCount || 0));
+      } catch {}
+    }
+    checkStatus();
+    timer = setInterval(checkStatus, isRecording ? 1000 : 3000);
+    return () => clearInterval(timer);
+  }, [isRecording]);
+
+  async function handleToggleRecording() {
+    if (!isRecording) {
+      try {
+        await startFlowRecording();
+        setIsRecording(true);
+        setStepCount(0);
+      } catch (e) {
+        console.error("Failed to start flow recording", e);
+      }
+    } else {
+      try {
+        const res = await stopFlowRecording();
+        setIsRecording(false);
+        setRecordedSteps(res.steps || []);
+        setRecordedDomain(res.domain || "");
+        setFlowName(`Flow - ${new Date().toLocaleTimeString()}`);
+        setShowSaveModal(true);
+      } catch (e) {
+        console.error("Failed to stop flow recording", e);
+      }
+    }
+  }
+
+  async function handleSaveRecordedFlow() {
+    if (!flowName.trim() || recordedSteps.length === 0) return;
+    setSaving(true);
+    try {
+      const saved = await saveFlow({
+        name: flowName.trim(),
+        description: flowDesc.trim() || undefined,
+        domain: recordedDomain || undefined,
+        steps: recordedSteps,
+      });
+      setShowSaveModal(false);
+      setRecordedSteps([]);
+      // Trigger update by notifying parent or refreshing
+      onFlowDeleted(saved.id);
+    } catch (e) {
+      console.error("Failed to save flow", e);
+    } finally {
+      setSaving(false);
+    }
+  }
 
   const domains = useMemo(() => {
     const set = new Set<string>();
@@ -399,8 +423,8 @@ export function FlowList({ flows, onFlowDeleted }: { flows: FlowMeta[]; onFlowDe
       const matchesText =
         !q ||
         f.name.toLowerCase().includes(q) ||
-        (f.description && f.description.toLowerCase().includes(q)) ||
-        (f.domain && f.domain.toLowerCase().includes(q));
+        f.description?.toLowerCase().includes(q) ||
+        f.domain?.toLowerCase().includes(q);
 
       const matchesDomain = !selectedDomain || f.domain === selectedDomain;
       return matchesText && matchesDomain;
@@ -409,6 +433,75 @@ export function FlowList({ flows, onFlowDeleted }: { flows: FlowMeta[]; onFlowDe
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
+      {/* Auto-Flow Recording Bar */}
+      <div className="flex-none p-2.5 border-b border-zinc-800/80 bg-[#16171d] flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          {isRecording ? (
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
+              <span className="text-[11.5px] font-mono text-red-400 font-medium">Recording ({stepCount} steps)</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 text-[11px] text-zinc-400 font-mono">
+              <WorkflowIcon className="w-3.5 h-3.5 text-zinc-500" />
+              <span>Auto-Flow Recorder</span>
+            </div>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={handleToggleRecording}
+          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-mono font-medium transition ${
+            isRecording
+              ? "bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30"
+              : "bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20"
+          }`}
+        >
+          <span>{isRecording ? "⏹ Stop & Save" : "🔴 Record Flow"}</span>
+        </button>
+      </div>
+
+      {/* Save Flow Modal */}
+      {showSaveModal && (
+        <div className="p-3 border-b border-zinc-800 bg-[#121318] space-y-2.5">
+          <div className="text-[12px] font-semibold text-zinc-200">
+            Save Recorded Flow ({recordedSteps.length} steps)
+          </div>
+          <input
+            type="text"
+            placeholder="Flow name (e.g. Login to Dashboard)"
+            value={flowName}
+            onChange={(e) => setFlowName(e.target.value)}
+            className="w-full rounded bg-zinc-900 border border-zinc-800 p-1.5 text-[11.5px] text-zinc-200 focus:outline-none focus:border-zinc-600"
+          />
+          <input
+            type="text"
+            placeholder="Optional description"
+            value={flowDesc}
+            onChange={(e) => setFlowDesc(e.target.value)}
+            className="w-full rounded bg-zinc-900 border border-zinc-800 p-1.5 text-[11.5px] text-zinc-200 focus:outline-none focus:border-zinc-600"
+          />
+          <div className="flex justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => setShowSaveModal(false)}
+              className="px-2.5 py-1 text-[11px] text-zinc-400 hover:text-zinc-200"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={saving || !flowName.trim()}
+              onClick={handleSaveRecordedFlow}
+              className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-zinc-950 font-semibold text-[11px] transition disabled:opacity-50"
+            >
+              {saving ? "Saving..." : "Save Flow"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Search & Domain Filter Bar */}
       <div className="flex-none p-2.5 space-y-2 border-b border-zinc-800/80 bg-[#111217]">
         <div className="relative flex items-center">
           <SearchIcon className="absolute left-2.5 h-3.5 w-3.5 text-zinc-500" />
@@ -471,7 +564,8 @@ export function FlowList({ flows, onFlowDeleted }: { flows: FlowMeta[]; onFlowDe
             <WorkflowIcon className="w-8 h-8 text-zinc-600 mb-2" />
             <div className="font-mono text-[11.5px] text-zinc-400">No flows recorded</div>
             <div className="mt-1 text-[10.5px] text-zinc-600 max-w-[200px]">
-              Use <span className="font-mono text-zinc-300">browser_save_flow</span> to persist reusable step sequences.
+              Click <span className="font-mono text-red-400">🔴 Record Flow</span> above to capture human browser
+              actions into an automated flow.
             </div>
           </div>
         )}

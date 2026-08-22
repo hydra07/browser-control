@@ -19,7 +19,13 @@
         "lineWidth": 120,
         "attributePosition": "auto"
     },
-    "assist": { "actions": { "source": { "organizeImports": "on" } } },
+    "assist": {
+        "actions": {
+            "source": {
+                "organizeImports": "on"
+            }
+        }
+    },
     "linter": {
         "enabled": true,
         "rules": {
@@ -33,24 +39,50 @@
             },
             "suspicious": {
                 "noArrayIndexKey": "off",
-                "noExplicitAny": "warn",
+                "noExplicitAny": "error",
                 "noEmptyBlockStatements": "off",
                 "noControlCharactersInRegex": "off",
-                "useIterableCallbackReturn": "off"
+                "useIterableCallbackReturn": "off",
+                "noDuplicateParameters": "error",
+                "noDuplicateCase": "error",
+                "noUnsafeDeclarationMerging": "error",
+                "noConfusingLabels": "error",
+                "noGlobalAssign": "error"
             },
             "complexity": {
                 "noBannedTypes": "off",
-                "noExtraBooleanCast": "warn"
+                "noExtraBooleanCast": "error",
+                "noUselessSwitchCase": "error",
+                "noUselessConstructor": "error",
+                "noUselessTypeConstraint": "error",
+                "noUselessFragments": "error",
+                "useOptionalChain": "error",
+                "useLiteralKeys": "error",
+                "noAdjacentSpacesInRegex": "error"
             },
             "style": {
                 "noNonNullAssertion": "off",
-                "useImportType": "warn"
+                "useImportType": "error",
+                "useExportType": "error",
+                "useConst": "error",
+                "useTemplate": "error",
+                "useAsConstAssertion": "error",
+                "useSelfClosingElements": "error",
+                "noParameterProperties": "error"
             },
             "correctness": {
-                "noUnusedVariables": "warn",
-                "noUnusedImports": "warn",
+                "noUnusedVariables": "error",
+                "noUnusedImports": "error",
                 "noConstantCondition": "off",
-                "useExhaustiveDependencies": "warn"
+                "useExhaustiveDependencies": "error",
+                "noUnreachable": "error",
+                "noUnreachableSuper": "error",
+                "useValidTypeof": "error",
+                "noInvalidUseBeforeDeclaration": "error"
+            },
+            "performance": {
+                "noDelete": "warn",
+                "noAccumulatingSpread": "warn"
             }
         }
     },

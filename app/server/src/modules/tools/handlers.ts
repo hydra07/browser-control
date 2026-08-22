@@ -8,7 +8,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BenchmarkEngine } from "@browsercontrol/benchmark";
-import type { FlowStep } from "@browsercontrol/shared";
+import type { FlowStep, TrajectoryConfig } from "@browsercontrol/shared";
 import type { CallToolRequest } from "@modelcontextprotocol/sdk/types.js";
 import { HAR_DIR } from "../../configs/paths.js";
 import { errorMessage } from "../../libs/errorMessage.js";
@@ -24,11 +24,13 @@ import {
 } from "../../libs/gateways.js";
 import type { ToolCallResponse } from "../../libs/types.js";
 import { PREVIEW_CHARS } from "../callLog/constants.js";
-import { crawlExists, getDeepCrawlStatusText, startDeepCrawl } from "../crawl/index.js";
+import { batchCrawl, crawlExists, getDeepCrawlStatusText, startDeepCrawl } from "../crawl/index.js";
 import * as dataStore from "../dataStore/index.js";
+import { compileTrajectory } from "../geometry/index.js";
 import { getJobStatusText, jobExists, startJob } from "../jobs/index.js";
 import type { JobTaskInput } from "../jobs/types.js";
 import { findSkillForHostname, listSkills, saveSkill } from "../skills/index.js";
+import * as streamSink from "../streamSink/index.js";
 import type { ToolHandlerCtx } from "./types.js";
 
 export type { ToolHandlerCtx };
@@ -140,25 +142,34 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
               20000,
             );
             break;
-          case ActAction.Drag:
+          case ActAction.Drag: {
+            const trajectoryConfig: TrajectoryConfig = {
+              shape: args?.shape as TrajectoryConfig["shape"],
+              fromX: typeof args?.fromX === "number" ? args.fromX : undefined,
+              fromY: typeof args?.fromY === "number" ? args.fromY : undefined,
+              toX: typeof args?.toX === "number" ? args.toX : undefined,
+              toY: typeof args?.toY === "number" ? args.toY : undefined,
+              points: args?.path as TrajectoryConfig["points"],
+              steps: typeof args?.stepsCount === "number" ? args.stepsCount : undefined,
+              easing: args?.easing as TrajectoryConfig["easing"],
+              ...((args?.shapeParams as Record<string, unknown> | undefined) ?? {}),
+            };
+            const points = compileTrajectory(trajectoryConfig);
             result = await executeCommand(
               "drag",
               {
+                points,
                 fromX: args?.fromX,
                 fromY: args?.fromY,
                 toX: args?.toX,
                 toY: args?.toY,
-                shape: args?.shape,
-                shapeParams: args?.shapeParams,
-                path: args?.path,
-                stepsCount: args?.stepsCount,
-                easing: args?.easing,
                 button: args?.button,
                 tabId: args?.tabId,
               },
               30000,
             );
             break;
+          }
           case ActAction.Evaluate:
             result = await executeCommand("evaluate", { expression: args?.expression, tabId: args?.tabId });
             break;
@@ -389,8 +400,10 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
             result = { success: true, message: `Session ${SESSION_ID} renamed to "${args?.name}".` };
             break;
           case SessionAction.StartRecording: {
+            streamSink.startRecordingStream(SESSION_ID);
             const ack = await executeCommand("start_capture");
             if (!ack?.success) {
+              streamSink.stopRecordingStream();
               return {
                 content: [
                   {
@@ -408,9 +421,13 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
             };
           }
           case SessionAction.StopRecording: {
-            // Longer timeout than the 15s default: flushing the MediaRecorder and base64-encoding a multi-MB blob takes longer than a plain CDP round trip.
             const rec = await executeCommand("stop_capture", {}, 60000);
-            if (!rec?.dataBase64) {
+            const streamResult = streamSink.stopRecordingStream();
+            let recFilePath = streamResult?.filePath;
+            if (!recFilePath && rec?.dataBase64) {
+              recFilePath = saveVideoToFile(rec.dataBase64 as string, (rec.format as string) || "webm");
+            }
+            if (!recFilePath) {
               return {
                 content: [
                   {
@@ -421,17 +438,17 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
                 isError: true,
               };
             }
-            const recFilePath = saveVideoToFile(rec.dataBase64 as string, rec.format as string);
-            const seconds = ((rec.durationMs as number) / 1000).toFixed(1);
+            const durationMs = streamResult?.durationMs ?? (rec?.durationMs as number) ?? 0;
+            const seconds = (durationMs / 1000).toFixed(1);
             const frameNote =
-              rec.frameCount === 0
-                ? " Warning: 0 frames captured — the page may not have repainted during the recording, or the screencast never started; check the daemon log."
-                : ` (${rec.frameCount} frames)`;
+              rec?.frameCount === 0
+                ? " Warning: 0 frames captured — the page may not have repainted during the recording; check the daemon log."
+                : ` (${rec?.frameCount ?? streamResult?.chunkCount ?? 0} frames)`;
             return {
               content: [
                 {
                   type: "text",
-                  text: `Saved ${seconds}s ${rec.format} recording to ${recFilePath}${frameNote}. To see what actions were taken during the recording, check data/logs/session-*.jsonl for entries in that time window.${rec._flowWarning ? `\n\n[${rec._flowWarning}]` : ""}`,
+                  text: `Saved ${seconds}s webm recording to ${recFilePath}${frameNote}. To see what actions were taken during the recording, check data/logs/session-*.jsonl for entries in that time window.${rec?._flowWarning ? `\n\n[${rec._flowWarning}]` : ""}`,
                 },
               ],
             };
@@ -463,56 +480,37 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
       case Gateway.Bulk:
         switch (action) {
           case BulkAction.BatchCrawl: {
-            const crawl = await executeCommand(
-              "batch_crawl",
-              {
-                urls: args?.urls,
-                concurrency: args?.concurrency,
-                maxCharsPerUrl: args?.maxCharsPerUrl,
-              },
-              60000,
-            );
-            if (crawl?.error) {
+            const urls = (args?.urls as string[] | undefined) ?? [];
+            if (urls.length === 0) {
               return {
-                content: [{ type: "text", text: `Error: ${crawl.error}${crawl.hint ? ` (${crawl.hint})` : ""}` }],
+                content: [{ type: "text", text: "Error: Missing urls array to crawl." }],
                 isError: true,
               };
             }
-            const items =
-              (crawl?.items as
-                | Array<{
-                    url: string;
-                    status: string;
-                    fetchDurationMs?: number;
-                    title?: string;
-                    byline?: string;
-                    publishedTime?: string;
-                    readingTime?: string;
-                    description?: string;
-                    markdown?: string;
-                    length?: number;
-                    error?: string;
-                  }>
-                | undefined) ?? [];
+            const start = performance.now();
+            const items = await batchCrawl(urls, {
+              concurrency: typeof args?.concurrency === "number" ? args.concurrency : undefined,
+              maxCharsPerUrl: typeof args?.maxCharsPerUrl === "number" ? args.maxCharsPerUrl : undefined,
+            });
+            const durationMs = Math.round(performance.now() - start);
 
-            const successfulItems = items.filter((i) => i.status === "success" && i.markdown);
+            const successfulItems = items.filter((i) => !i.error && i.status >= 200 && i.status < 300);
             const formattedBlocks = successfulItems.map((item) => {
               const metaLines = [
                 `# [${item.title || item.url}](${item.url})`,
                 `> **Source URL**: \`${item.url}\``,
-                `> **Crawled At**: \`${new Date().toISOString()}\` | **Latency**: \`${item.fetchDurationMs ?? 0}ms\` | **Reading Time**: \`${item.readingTime || "N/A"}\``,
-                ...(item.byline ? [`> **Author**: ${item.byline}`] : []),
+                `> **Crawled At**: \`${new Date().toISOString()}\` | **Latency**: \`${item.fetchDurationMs}ms\` | **Reading Time**: \`${item.readingTime || "N/A"}\``,
+                ...(item.author ? [`> **Author**: ${item.author}`] : []),
                 ...(item.publishedTime ? [`> **Published**: ${item.publishedTime}`] : []),
                 ...(item.description ? [`> **Summary**: ${item.description}`] : []),
                 "",
-                item.markdown,
+                item.text,
               ];
               return metaLines.join("\n");
             });
 
             let fileReport = "";
             if (formattedBlocks.length > 0) {
-              // One row per crawled URL — same reasoning as select_content above.
               const blockIds: number[] = [];
               let sessionTotalChars = 0;
               for (let i = 0; i < formattedBlocks.length; i++) {
@@ -527,18 +525,15 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
             }
 
             const summaryLines = [
-              `[BATCH] Crawled ${crawl?.totalProcessed ?? items.length} URL(s) in ${crawl?.durationMs}ms: ${crawl?.successful} succeeded, ${crawl?.failed} failed${crawl?.duplicatesSkipped ? ` (${crawl.duplicatesSkipped} duplicates skipped)` : ""}.${fileReport}`,
-              `[STATS] Throughput: ${crawl?.throughputPagesPerSec ?? 0} pages/s | Avg Latency: ${crawl?.avgFetchLatencyMs ?? 0}ms/page | Discovered Outlinks: ${(crawl?.discoveredOutlinks as string[])?.length ?? 0}`,
+              `[BATCH] Crawled ${items.length} URL(s) in ${durationMs}ms: ${successfulItems.length} succeeded, ${items.length - successfulItems.length} failed.${fileReport}`,
+              `[STATS] Throughput: ${durationMs > 0 ? ((items.length / durationMs) * 1000).toFixed(2) : 0} pages/s | Avg Latency: ${Math.round(durationMs / Math.max(1, items.length))}ms/page`,
               "",
               "### Crawl Results Summary:",
               ...items.map((item, idx) => {
-                if (item.status === "success") {
-                  return `${idx + 1}. [OK] [${item.title || item.url}](${item.url}) — ${item.fetchDurationMs ? `${item.fetchDurationMs}ms | ` : ""}${item.readingTime || `${item.length} chars`}`;
-                } else if (item.status === "skipped_duplicate") {
-                  return `${idx + 1}. [SKIP] ${item.url} (skipped duplicate)`;
-                } else {
-                  return `${idx + 1}. [FAIL] ${item.url} — ${item.error || "Failed"}`;
+                if (!item.error && item.status >= 200 && item.status < 300) {
+                  return `${idx + 1}. [OK] [${item.title || item.url}](${item.url}) — ${item.fetchDurationMs}ms | ${item.readingTime || `${item.text.length} chars`}`;
                 }
+                return `${idx + 1}. [FAIL] ${item.url} — ${item.error || `HTTP ${item.status}`}`;
               }),
             ];
 
@@ -682,12 +677,45 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
               };
             }
             const deleted = dataStore.deleteFlow(id);
-            result = deleted
-              ? { success: true, message: `Deleted flow ${id}.` }
-              : {
-                  error: `No flow with id "${id}"`,
-                  hint: 'Call action:"list_flows" again — it may already be deleted.',
-                };
+            if (!deleted) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Error: No flow with id "${id}" (hint: call action:"list_flows" to see valid ids.)`,
+                  },
+                ],
+                isError: true,
+              };
+            }
+            result = { success: true, message: `Deleted flow ${id}.` };
+            break;
+          }
+          case KnowledgeAction.RecordFlow: {
+            const mode = typeof args?.mode === "string" ? args.mode : "status";
+            if (mode === "start") {
+              result = await executeCommand("start_flow_recording", { domain: args?.domain });
+            } else if (mode === "stop") {
+              const res = (await executeCommand("stop_flow_recording")) as {
+                steps: FlowStep[];
+                domain: string;
+                stepCount: number;
+                durationMs: number;
+              };
+              if (args?.name && typeof args.name === "string" && res.steps && res.steps.length > 0) {
+                const saved = dataStore.saveFlow({
+                  name: args.name,
+                  description: typeof args?.description === "string" ? args.description : undefined,
+                  domain: res.domain || (typeof args?.domain === "string" ? args.domain : undefined),
+                  steps: res.steps,
+                });
+                result = { success: true, savedFlow: saved, ...res };
+              } else {
+                result = res;
+              }
+            } else {
+              result = await executeCommand("flow_recording_status");
+            }
             break;
           }
           case KnowledgeAction.QueryDocs: {

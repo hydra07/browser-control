@@ -15,7 +15,7 @@ function parseSessionId(logFile: string): string {
 
 function writeCallLog(logFile: string, entry: CallLogEntry): void {
   try {
-    appendFileSync(logFile, JSON.stringify(entry) + "\n");
+    appendFileSync(logFile, `${JSON.stringify(entry)}\n`);
   } catch {}
   console.error(
     `[tool:${entry.source}] ${entry.cmd} ${entry.durationMs}ms ~${entry.inTokens}in/${entry.outTokens}out tok${entry.hasImage ? " [image]" : ""}${entry.isError ? " ERROR" : ""}`,

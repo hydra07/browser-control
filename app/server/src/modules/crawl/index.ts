@@ -1,42 +1,49 @@
 /**
- * browser_bulk's deep_crawl/task_status actions — automatic recursive
- * crawl on top of the batch_crawl action's per-URL fetch+extract.
- *
- * A real frontier, not depth-by-depth batches: one shared {url, depth}
- * queue and N persistent workers pulling from it. A worker that finishes a
- * fetch immediately pushes that page's outlinks onto the same queue and
- * grabs whatever's next (sibling or freshly-discovered child) instead of
- * waiting for the rest of its "level" to finish first — batching by BFS
- * level measured ~2.75 pages/s (head-of-line blocked on each level's
- * slowest page) vs. sustained full-concurrency throughput with this.
- * Concurrency lives entirely in this queue/worker pool — each
- * executeCommand("batch_crawl") call below is single-URL on purpose.
+ * browser_bulk's deep_crawl, batch_crawl, and task_status actions —
+ * high-performance asynchronous web crawler running entirely server-side via Bun.fetch.
  */
 import { cpus } from "node:os";
 import { errorMessage } from "../../libs/errorMessage.js";
 import type { Executor } from "../../libs/types.js";
 import { addDocsBlock } from "../dataStore/index.js";
+import { fetchSingleUrl } from "./batch.js";
 import { MAX_CONCURRENT_CRAWLS, MAX_CRAWL_DEPTH, MAX_CRAWL_PAGES, PAGE_TIMEOUT_MS } from "./constants.js";
-import type { Crawl, DeepCrawlInput, QueueEntry } from "./types.js";
+import type { DeepCrawlInput, QueueEntry } from "./types.js";
 
+export { batchCrawl, fetchSingleUrl, formatBatchResultsToMarkdown } from "./batch.js";
 export { MAX_CONCURRENT_CRAWLS, MAX_CRAWL_DEPTH, MAX_CRAWL_PAGES } from "./constants.js";
-export type { DeepCrawlInput } from "./types.js";
+export { normalizeUrl, parseHtmlToMarkdown } from "./extractor.js";
+export type { BatchCrawlOptions, CrawlItemResult, DeepCrawlInput } from "./types.js";
 
-const crawls = new Map<string, Crawl>();
+interface InternalCrawl {
+  id: string;
+  sessionId: string;
+  depth: number;
+  maxPages: number;
+  maxOutlinksPerPage: number;
+  concurrency: number;
+  pages: Array<{
+    url: string;
+    depth: number;
+    status: "success" | "error";
+    title?: string;
+    error?: string;
+    delivered: boolean;
+  }>;
+  status: "running" | "done" | "error";
+  error?: string;
+  startedAt: number;
+  finishedAt?: number;
+}
 
-/**
- * Fetch+parse is network-bound, not CPU-bound — it scales usefully well
- * past the core count. This runs server-side (Node/Bun), not in the browser
- * extension, so os.cpus() rather than navigator.hardwareConcurrency is the
- * available proxy for "how much this device can actually take" — same
- * reasoning batch.ts uses for its own default, from the daemon's side.
- */
+const crawls = new Map<string, InternalCrawl>();
+
 function defaultCrawlConcurrency(): number {
   const cores = cpus().length || 4;
   return Math.min(Math.max(cores * 4, 8), 48);
 }
 
-/** Starts an async recursive crawl from seedUrls/searchQuery and returns its id immediately — see getDeepCrawlStatusText to poll it. */
+/** Starts an async recursive crawl from seedUrls/searchQuery and returns its id immediately. */
 export function startDeepCrawl(
   input: DeepCrawlInput,
   execute: Executor,
@@ -52,17 +59,17 @@ export function startDeepCrawl(
   if (crawls.size >= MAX_CONCURRENT_CRAWLS) {
     return {
       error: `${MAX_CONCURRENT_CRAWLS} deep crawls are already running`,
-      hint: 'Poll browser_bulk({action:"task_status"}) on an existing crawlId until it completes (it\'s dropped automatically once fully delivered), or that one may be stuck.',
+      hint: 'Poll browser_bulk({action:"task_status"}) on an existing crawlId until it completes.',
     };
   }
 
   const depth = Math.min(Math.max(1, Number(input.depth) || 2), MAX_CRAWL_DEPTH);
   const maxPages = Math.min(Math.max(1, Number(input.maxPages) || 60), MAX_CRAWL_PAGES);
-  const maxOutlinksPerPage = Math.min(Math.max(1, Number(input.maxOutlinksPerPage) || 15), 50);
+  const maxOutlinksPerPage = 15;
   const concurrency = Math.min(Math.max(1, Number(input.concurrency) || defaultCrawlConcurrency()), 64);
 
   const crawlId = crypto.randomUUID();
-  const crawl: Crawl = {
+  const crawl: InternalCrawl = {
     id: crawlId,
     sessionId,
     depth,
@@ -82,7 +89,7 @@ export function startDeepCrawl(
     {
       seedUrls,
       searchQuery: input.searchQuery,
-      maxCharsPerUrl: input.maxCharsPerUrl,
+      maxCharsPerUrl: input.maxCharsPerPage,
     },
     execute,
   ).catch((e) => {
@@ -95,7 +102,7 @@ export function startDeepCrawl(
 }
 
 async function runDeepCrawl(
-  crawl: Crawl,
+  crawl: InternalCrawl,
   opts: { seedUrls: string[]; searchQuery?: string; maxCharsPerUrl?: number },
   execute: Executor,
 ): Promise<void> {
@@ -118,27 +125,20 @@ async function runDeepCrawl(
     for (const r of results) enqueue(r.url, 0);
   }
 
-  /**
-   * A worker finding the queue empty must know whether anyone still IN
-   * FLIGHT might enqueue more work before it's safe to exit — enqueue()
-   * always runs synchronously before crawlOnePage's promise resolves, so
-   * activeFetches hitting 0 reliably means nothing more is coming.
-   */
   let activeFetches = 0;
 
-  // Persistent workers, no depth barrier — a finished worker re-enters and grabs whatever's next.
   async function worker(): Promise<void> {
     while (true) {
       const entry = queue.shift();
       if (!entry) {
         if (crawl.pages.length >= crawl.maxPages) return;
-        if (activeFetches === 0) return; // queue empty, nothing in flight to refill it — truly done
+        if (activeFetches === 0) return;
         await new Promise((r) => setTimeout(r, 50));
         continue;
       }
       activeFetches++;
       try {
-        await crawlOnePage(crawl, entry, opts.maxCharsPerUrl, execute, enqueue);
+        await crawlOnePage(crawl, entry, opts.maxCharsPerUrl, enqueue);
       } finally {
         activeFetches--;
       }
@@ -153,22 +153,20 @@ async function runDeepCrawl(
 }
 
 async function crawlOnePage(
-  crawl: Crawl,
+  crawl: InternalCrawl,
   entry: QueueEntry,
   maxCharsPerUrl: number | undefined,
-  execute: Executor,
   enqueue: (url: string, depth: number) => void,
 ): Promise<void> {
   if (crawl.pages.length >= crawl.maxPages) return;
   try {
-    const res = await execute("batch_crawl", { urls: [entry.url], maxCharsPerUrl, concurrency: 1 }, PAGE_TIMEOUT_MS);
-    const item = (res?.items as Array<Record<string, unknown>> | undefined)?.[0];
-    if (!item || item.status !== "success") {
+    const item = await fetchSingleUrl(entry.url, maxCharsPerUrl, PAGE_TIMEOUT_MS);
+    if (item.error || item.status === 0 || item.status >= 400) {
       crawl.pages.push({
         url: entry.url,
         depth: entry.depth,
         status: "error",
-        error: String(item?.error ?? res?.error ?? "Unknown fetch error"),
+        error: item.error ?? `HTTP ${item.status}`,
         delivered: false,
       });
       return;
@@ -176,7 +174,7 @@ async function crawlOnePage(
 
     addDocsBlock(
       crawl.sessionId,
-      `# [${item.title || entry.url}](${entry.url})\n\n${item.markdown ?? ""}`,
+      `# [${item.title || entry.url}](${entry.url})\n\n${item.text ?? ""}`,
       entry.url,
       typeof item.title === "string" ? item.title : entry.url,
     );
@@ -189,7 +187,7 @@ async function crawlOnePage(
     });
 
     if (entry.depth + 1 < crawl.depth) {
-      const outlinks = (item.outlinks as string[] | undefined)?.slice(0, crawl.maxOutlinksPerPage) ?? [];
+      const outlinks = item.outlinks.slice(0, crawl.maxOutlinksPerPage);
       for (const link of outlinks) enqueue(link, entry.depth + 1);
     }
   } catch (e) {
@@ -203,16 +201,14 @@ async function crawlOnePage(
   }
 }
 
-/** See jobs's matching jobExists — lets task_status tell a crawl id from a job id without either module reaching into the other's internal Map. */
 export function crawlExists(crawlId: string): boolean {
   return crawls.has(crawlId);
 }
 
-/** Human-readable status for a deep crawl — marks newly-finished pages delivered and drops the crawl once every page has been delivered at least once. */
 export function getDeepCrawlStatusText(crawlId: string): string {
   const crawl = crawls.get(crawlId);
   if (!crawl) {
-    return `No deep crawl with id "${crawlId}" — it may have already completed and been cleaned up (a crawl is dropped once you've seen its last result), or the id is wrong.`;
+    return `No deep crawl with id "${crawlId}" — it may have already completed or the id is wrong.`;
   }
 
   const newlyDone = crawl.pages.filter((p) => !p.delivered);
@@ -239,10 +235,5 @@ export function getDeepCrawlStatusText(crawlId: string): string {
   } else {
     lines.push("(nothing new since your last check)");
   }
-
-  if (crawl.status !== "running" && crawl.pages.every((p) => p.delivered)) {
-    crawls.delete(crawlId);
-  }
-
   return lines.join("\n");
 }

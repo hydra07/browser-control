@@ -1,4 +1,4 @@
-import type { BrowserCommand } from "@browsercontrol/shared";
+import type { BrowserCommand, FlowStep } from "@browsercontrol/shared";
 import { sendCommand } from "../libs/cdp.js";
 import { errorMessage } from "../libs/errorMessage.js";
 import { installDialogAutoHandler } from "../modules/dialog/index.js";
@@ -6,6 +6,7 @@ import type { DispatchCtx } from "../modules/dispatch/index.js";
 import { dispatchCommand } from "../modules/dispatch/index.js";
 import { forgetTab, installInterceptor, isSandboxed } from "../modules/interceptor/index.js";
 import { installNetworkCollector } from "../modules/network/index.js";
+import { flowRecorder } from "../modules/recorder/index.js";
 import {
     installScreencastFrameRelay,
     isRecording,
@@ -120,18 +121,25 @@ export default defineBackground(() => {
         extensionVersion: EXTENSION_VERSION,
     };
 
-    chrome.runtime.onMessage.addListener((message: RelayMessage, _sender, sendResponse) => {
-        if (message?.target !== "background") return;
-        const start = Date.now();
-        dispatchCommand(message.payload, dispatchCtx)
-            .then((result) => {
-                const duration = Date.now() - start;
-                const telemetry = telemetryCollector.collectSnapshot(duration);
-                sendResponse({ result, telemetry });
-            })
-            .catch((e: unknown) => sendResponse({ error: errorMessage(e) }));
-        return true; // keep the message channel open for the async response
-    });
+    chrome.runtime.onMessage.addListener(
+        (message: RelayMessage | { type: string; step: FlowStep }, _sender, sendResponse) => {
+            if ("type" in message && message.type === "auto_flow_step") {
+                flowRecorder.addStep(message.step);
+                sendResponse({ received: true });
+                return true;
+            }
+            if (!("target" in message) || message?.target !== "background") return;
+            const start = Date.now();
+            dispatchCommand(message.payload, dispatchCtx)
+                .then((result) => {
+                    const duration = Date.now() - start;
+                    const telemetry = telemetryCollector.collectSnapshot(duration);
+                    sendResponse({ result, telemetry });
+                })
+                .catch((e: unknown) => sendResponse({ error: errorMessage(e) }));
+            return true; // keep the message channel open for the async response
+        },
+    );
 
     // Offscreen document streams screencast frames for recording over a Port
     chrome.runtime.onConnect.addListener((port) => {

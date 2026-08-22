@@ -2,10 +2,10 @@
  * Core user input actions (click, type, press_key, scroll, drag) via CDP Input events,
  * paired with cursor movement, ripple effects, and visual overlays.
  */
+
+import type { Point } from "@browsercontrol/shared";
 import { evalOnPage, quadToBox, sendCommand } from "../../libs/cdp.js";
 import { errorMessage } from "../../libs/errorMessage.js";
-import { compileTrajectory } from "../geometry/index.js";
-import type { Point, TrajectoryConfig } from "../geometry/types.js";
 import {
     hideNativeHighlight,
     KIND_COLORS,
@@ -30,6 +30,30 @@ export async function getAxInfoForNode(target: chrome.debugger.Debuggee, backend
     });
     const node = result?.nodes?.[0];
     return { role: node?.role?.value, name: node?.name?.value };
+}
+
+/**
+ * Reads back an input/textarea's `.value` (or a contenteditable's
+ * `.textContent`) straight from the page. `Input.insertText` isn't targeted
+ * at a node — it inserts wherever focus currently sits — so a framework's
+ * own re-render or competing autofocus between our `DOM.focus` call and the
+ * insert can silently swallow the keystrokes. Returns null if the node is
+ * gone (detached/re-rendered) or unreadable.
+ */
+async function readElementText(target: chrome.debugger.Debuggee, backendNodeId: number): Promise<string | null> {
+    try {
+        const resolved = await sendCommand(target, "DOM.resolveNode", { backendNodeId });
+        const objectId = resolved?.object?.objectId;
+        if (!objectId) return null;
+        const result = await sendCommand(target, "Runtime.callFunctionOn", {
+            objectId,
+            functionDeclaration: "function () { return this.value ?? this.textContent ?? ''; }",
+            returnByValue: true,
+        });
+        return typeof result?.result?.value === "string" ? result.result.value : null;
+    } catch {
+        return null;
+    }
 }
 
 /** Scroll target element into view, retrying once if layout object is not yet attached. */
@@ -168,6 +192,28 @@ export async function performType(
         }
     }
     await waitForStableDom(target);
+
+    if (backendNodeId != null && text.length > 0) {
+        let landed = await readElementText(target, backendNodeId);
+        if (landed == null || !landed.includes(text)) {
+            // One recovery attempt: the node may still be attached, just
+            // knocked out of focus by a re-render — re-focus and re-insert
+            // before giving up on it.
+            try {
+                await sendCommand(target, "DOM.focus", { backendNodeId });
+                await sendCommand(target, "Input.insertText", { text });
+                await waitForStableDom(target);
+                landed = await readElementText(target, backendNodeId);
+            } catch {}
+
+            if (landed == null || !landed.includes(text)) {
+                return {
+                    error: `Typed "${text}" but it didn't land in the target element`,
+                    hint: "The element likely lost focus mid-type (a re-render replaced it, or something else grabbed focus). Take a fresh snapshot and retry, ideally right after the element becomes visible/interactive rather than immediately after the action that revealed it.",
+                };
+            }
+        }
+    }
 
     return withRiskWarning(
         {
@@ -312,29 +358,33 @@ export async function performDrag(
     toY?: number,
     opts: DragOptions = { fast: false },
 ): Promise<ActionResult> {
-    const trajectoryConfig: TrajectoryConfig = {
-        shape: opts.shape,
-        fromX,
-        fromY,
-        toX,
-        toY,
-        points: opts.path,
-        steps: opts.stepsCount,
-        easing: opts.easing,
-        ...(opts.shapeParams ?? {}),
-    };
-
-    const currentCursor = opts.currentCursor ?? lastCursorPosition;
-    const points = compileTrajectory(trajectoryConfig, currentCursor);
-    if (points.length < 2) {
-        return {
-            error: "Drag trajectory requires at least 2 points",
-            hint: "Check coordinates (fromX/fromY/toX/toY), shape parameters, or path array.",
-        };
+    let points: Point[];
+    if (opts.points && opts.points.length >= 2) {
+        points = opts.points;
+    } else {
+        const startX = fromX ?? opts.currentCursor?.x ?? lastCursorPosition.x;
+        const startY = fromY ?? opts.currentCursor?.y ?? lastCursorPosition.y;
+        const endX = toX ?? startX;
+        const endY = toY ?? startY;
+        const steps = Math.max(4, opts.stepsCount ?? 12);
+        points = [];
+        for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            points.push({
+                x: Math.round(startX + (endX - startX) * t),
+                y: Math.round(startY + (endY - startY) * t),
+            });
+        }
     }
 
     const start = points[0];
     const end = points[points.length - 1];
+    if (!start || !end) {
+        return {
+            error: "Drag trajectory requires at least 2 points",
+            hint: "Check coordinates (fromX/fromY/toX/toY) or points array.",
+        };
+    }
     const button = opts.button ?? "left";
 
     // 1. Move cursor to start
