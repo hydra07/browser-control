@@ -21,3 +21,6 @@ web-ext.config.ts
 
 scratch/
 docs/
+
+# CodeGraph local index and runtime state.
+.codegraph/

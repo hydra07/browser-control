@@ -1,0 +1,55 @@
+{
+  "context_servers": {
+    "codegraph": {
+      "command": "mise",
+      "args": [
+        "exec",
+        "--",
+        "bun",
+        "x",
+        "--bun",
+        "@colbymchenry/codegraph@1.6.0",
+        "serve",
+        "--mcp",
+      ],
+      "env": {
+        "CODEGRAPH_TELEMETRY": "0",
+      },
+    },
+  },
+  "languages": {
+    "TypeScript": {
+      "language_servers": ["vtsls"],
+    },
+    "TSX": {
+      "language_servers": ["vtsls"],
+    },
+    "JavaScript": {
+      "language_servers": ["vtsls"],
+    },
+  },
+  "lsp": {
+    "vtsls": {
+      "settings": {
+        "typescript": {
+          "tsdk": "./app/extension/node_modules/typescript/lib",
+        },
+        "vtsls": {
+          "autoUseWorkspaceTsdk": true,
+          "typescript": {
+            "globalTsdk": "./app/extension/node_modules/typescript/lib",
+          },
+        },
+      },
+    },
+    "tailwindcss-language-server": {
+      "settings": {
+        "tailwindCSS": {
+          "lint": {
+            "suggestCanonicalClasses": "ignore",
+          },
+        },
+      },
+    },
+  },
+}
