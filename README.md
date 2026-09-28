@@ -1,180 +1,242 @@
 # BrowserControl
 
-BrowserControl is now a **headless/serverless Chrome DevTools Protocol CLI** for AI agents.
+BrowserControl is an **AI-friendly CLI bridge for the Chrome extension**.
 
-This branch removes the CLI dependency on the Bun daemon, MCP bridge, and Chrome extension for core browser control. The primary runtime is a single Go CLI that connects directly to Chrome CDP over `127.0.0.1:<port>` and launches Chrome itself when needed.
+Default architecture for agents:
 
 ```text
 AI agent / shell
     ↓
-browsercontrol CLI
-    ↓ CDP WebSocket
-Chrome / Chromium / Edge
+browsercontrol extension ...
+    ↓ local Go bridge on 127.0.0.1:8765
+Chrome extension WebSocket
+    ↓
+real Chrome tabs / extension service worker
 ```
 
-## Install / build
+The old Bun daemon/MCP bridge is no longer required for CLI usage. Direct CDP commands still exist as a secondary/debug mode, but agents should use `browsercontrol extension ...` by default.
+
+## Build
+
+Windows:
+
+```powershell
+cd cli
+go mod tidy
+go build -o .\browsercontrol.exe .
+```
+
+Unix-like shells:
 
 ```bash
 cd cli
-go build -o browsercontrol .
+go mod tidy
+go build -o ./browsercontrol .
 ```
 
-The CLI discovers Chrome/Chromium/Edge on Windows, macOS, and Linux. If no browser is already listening on the CDP port, it launches one with a persistent local profile under:
+## Start the extension bridge
 
-```text
-~/.browsercontrol/profile
+Run this in a terminal and keep it open:
+
+```powershell
+.\browsercontrol.exe extension serve --token-file "D:\dev\dotfiles\tool\browsercontrol\data\daemon-auth-token"
 ```
 
-Override the data root with:
+Then reload/open the BrowserControl Chrome extension. If the extension needs pairing, get the token:
 
-```bash
-BROWSERCONTROL_HOME=/path/to/data browsercontrol status
+```powershell
+.\browsercontrol.exe extension token --token-file "D:\dev\dotfiles\tool\browsercontrol\data\daemon-auth-token"
 ```
 
-## Usage
+Check connection:
 
-```bash
-browsercontrol open https://example.com --headless
-browsercontrol snapshot --json
-browsercontrol click 1
-browsercontrol type '#q' 'golang cdp cli'
-browsercontrol press Enter
-browsercontrol read --max-chars 8000
-browsercontrol net list --json --limit 30
-browsercontrol dev layout '#app' --json
-browsercontrol screenshot --full --out page.jpg
+```powershell
+.\browsercontrol.exe extension status --token-file "D:\dev\dotfiles\tool\browsercontrol\data\daemon-auth-token" --json
 ```
 
-## Commands
+Expected:
 
-### Page
-
-```bash
-browsercontrol page open https://example.com
-browsercontrol page snapshot --json
-browsercontrol page read
-browsercontrol page find "login"
-browsercontrol page select "main article"
-browsercontrol page inspect "#submit"
-browsercontrol page eval "document.title"
-browsercontrol page screenshot --out shot.jpg
+```json
+{
+  "extensionConnected": true,
+  "version": "go-cli"
+}
 ```
 
-Top-level aliases are also available:
+## Recommended AI wrapper
 
-```bash
-browsercontrol open https://example.com
-browsercontrol snapshot
-browsercontrol read
-browsercontrol find "term"
-browsercontrol inspect 1
-browsercontrol eval "location.href"
-browsercontrol screenshot
+Use a small PowerShell wrapper so agents do not repeat long paths and token flags:
+
+```powershell
+$BC = "D:\dev\dotfiles\tool\browsercontrol\cli\browsercontrol.exe"
+$BC_TOKEN_FILE = "D:\dev\dotfiles\tool\browsercontrol\data\daemon-auth-token"
+
+function bc {
+  & $BC extension @args --token-file $BC_TOKEN_FILE --json
+}
 ```
 
-### Input
+Agent loop:
 
-```bash
-browsercontrol input click 1
-browsercontrol input type "#email" "user@example.com"
-browsercontrol input press Enter
-browsercontrol input scroll 0 500
-browsercontrol input drag 100 100 400 400
+```powershell
+bc status
+bc snapshot
+bc click 1
+bc snapshot
 ```
 
-Top-level aliases:
+Proceed only when `bc status` reports `extensionConnected: true`.
 
-```bash
-browsercontrol click 1
-browsercontrol type "#q" "search text"
-browsercontrol press Enter
-browsercontrol scroll 0 500
-browsercontrol drag 100 100 400 400
+## AI-friendly commands
+
+All commands below go through the Chrome extension.
+
+### Inspect page
+
+```powershell
+bc snapshot
+bc read --max-chars 12000
+bc find "login"
+bc select "main"
+bc inspect 1
+bc inspect "#submit"
+bc peek
+bc visual
+bc query-region "#main"
+```
+
+`snapshot` defaults to compact semantic mode:
+
+```powershell
+bc snapshot
+```
+
+Equivalent raw command:
+
+```powershell
+bc exec snapshot compact=true semantic=true
+```
+
+### Navigate
+
+```powershell
+bc open https://example.com
+bc open https://example.com --new-tab
+```
+
+### Actions
+
+```powershell
+bc click 1
+bc click "#submit"
+bc click ref:abc123 --document-id doc123
+bc type 2 "hello world"
+bc type "#email" "user@example.com"
+bc press Enter
+bc scroll 800
+bc scroll --delta-y 1200
+bc drag 100 200 500 200
+```
+
+For risky/destructive actions, require explicit user confirmation and pass:
+
+```powershell
+bc click 1 --confirm-risky
+```
+
+### Screenshot
+
+```powershell
+bc screenshot .local/screenshot/AUTH001.png
+bc screenshot .local/screenshot/AUTH001.png --format png --full
+```
+
+Raw `exec` also accepts normal flags now:
+
+```powershell
+bc exec screenshot --full --format png --out .local/screenshot/AUTH001.png
 ```
 
 ### Tabs
 
-```bash
-browsercontrol tabs list --json
-browsercontrol tabs new https://example.com
-browsercontrol tabs switch 2
-browsercontrol tabs close 2
+```powershell
+bc tabs list
+bc tabs switch 123
+bc tabs close 123
 ```
 
-### Network and diagnostics
+### Network
 
-Network commands are serverless and read the browser page's resource timing buffer. They do not require the extension/daemon. Response bodies are not available unless a future pure-CDP network recorder is attached before navigation.
-
-```bash
-browsercontrol net list --json --filter api
-browsercontrol net har --out trace.har.json
-browsercontrol net clear
+```powershell
+bc network list --limit 50
+bc network list --filter api --limit 50
+bc network detail <requestId> --include-body
+bc network clear
+bc network har --include-bodies=false
 ```
 
-Developer helpers:
+### Dev helpers
 
-```bash
-browsercontrol dev layout "#app" --json
-browsercontrol dev memory --json
-browsercontrol dev process --json
-browsercontrol dev emulate iphone
-browsercontrol dev sandbox block_mutations
+```powershell
+bc dev layout "#app"
+bc dev memory
+bc dev process
+bc dev emulate --device iphone
+bc dev sandbox --mode block_mutations
+bc dev har
 ```
 
-### Local flows
+### Flows and evidence
 
-Flows are local JSON files. A flow can be either an array of steps or a document with a `steps` field.
+Raw bridge commands remain available for advanced payloads:
 
-```json
-[
-  { "action": "navigate", "url": "https://example.com" },
-  { "action": "click", "target": "1" },
-  { "action": "type", "target": "#q", "text": "hello" },
-  { "action": "press_key", "key": "Enter" },
-  { "action": "assert_text", "text": "hello" }
-]
+```powershell
+bc exec run_flow @flow.json --return-snapshot
+bc exec explore_flow @flow.json --return-snapshot
+bc evidence --mode overview
+bc start_capture
+bc stop_capture
+bc start_flow_recording --domain example.com
+bc flow_recording_status
+bc stop_flow_recording
 ```
 
-Run a file directly:
+## Raw bridge escape hatch
 
-```bash
-browsercontrol flow run ./flow.json --json
+Use this when a command does not have a shortcut yet:
+
+```powershell
+bc exec <command> [key=value|--flag value|@payload.json|inline-json]
 ```
 
-Save/list/get/delete local flows under `~/.browsercontrol/flows`:
+Examples:
 
-```bash
-browsercontrol flow save login ./login-flow.json
-browsercontrol flow list --json
-browsercontrol flow get login
-browsercontrol flow run login
-browsercontrol flow delete login
+```powershell
+bc exec snapshot compact=true semantic=true
+bc exec screenshot --full --format png --out .local/screenshot/AUTH001.png
+bc exec network_requests --filter api --limit 50
+bc exec network_request_detail --request-id abc --include-body
+bc exec run_flow @flow.json --return-snapshot
 ```
 
-## Flags
+## Rules for AI agents
 
-```text
---headless                 launch Chrome with --headless=new when not already running
---port <number>            Chrome CDP port, default 9222
---tab <id|index>           target a tab by target ID/prefix or 1-based index
---new-tab                  open URL in a new tab
---json                     machine-readable output
---full                     full-page screenshot
---max-chars <number>       cap text extraction
---limit <number>           cap find/network/select results
---filter <text>            filter network/HAR entries
---device <name>            device preset for dev emulate
---out <file>               output file path
+- Use `browsercontrol extension ...` only.
+- Do not use direct CDP commands such as `browsercontrol open`, `browsercontrol snapshot`, or `browsercontrol click` unless the user explicitly asks for CDP mode.
+- Always check `extensionConnected=true` before browser actions.
+- Use shortcut commands first: `snapshot`, `screenshot`, `click`, `type`, `network list`, etc.
+- Prefer `ref + documentId` from semantic snapshots; fall back to `nodeId`; then CSS selector.
+- Verify after every action with `snapshot`, `read`, `peek`, or `network list`.
+- For raw `exec`, command parameters can be `key=value` or normal flags like `--out file`, `--full`, `--format png`.
+- Keep `extension serve` running for the whole session.
+
+## Direct CDP mode
+
+Direct CDP commands still exist for debugging and headless automation, but they bypass the extension:
+
+```powershell
+.\browsercontrol.exe open https://example.com --headless
+.\browsercontrol.exe snapshot --json
 ```
 
-## What was removed from the CLI path
-
-The CLI no longer calls:
-
-```text
-Bun daemon /execute
-MCP stdio bridge
-Chrome extension WebSocket
-```
-
-Those older app/server and extension sources may still exist in repository history, but this branch's CLI path is CDP-first and serverless.
+Use them only when extension mode is not desired.
