@@ -1,82 +1,23 @@
-name: CI
+name: CLI
 
 on:
   push:
-    branches: [main, master]
-    paths-ignore:
-      - "**.md"
-      - "data/**"
-      - "skills/**"
+    branches: [main, master, codex/headless-cli-rewrite]
   pull_request:
     branches: [main, master]
-    paths-ignore:
-      - "**.md"
-      - "data/**"
-      - "skills/**"
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
 
 jobs:
-  verify:
-    name: Fast Verification & Build
+  go-cli:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-
+    defaults:
+      run:
+        working-directory: cli
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          fetch-depth: 0
-
-      - name: Setup Bun runtime
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - name: Install workspace dependencies
-        run: bun install --frozen-lockfile
-
-      # ------------------------------------------------------------------------
-      # 1. Biome Lint & Format Check (Changed files only on PR, Full on push)
-      # ------------------------------------------------------------------------
-      - name: Biome Check (PR Diff)
-        if: github.event_name == 'pull_request'
-        run: |
-          bun x biome check \
-            --changed \
-            --since=origin/${{ github.base_ref }} \
-            --reporter=github
-
-      - name: Biome Check (Main Push)
-        if: github.event_name == 'push'
-        run: bun x biome check . --reporter=github
-
-      # ------------------------------------------------------------------------
-      # 2. Fast Unit Tests
-      # ------------------------------------------------------------------------
-      - name: Run Unit Tests
-        run: bun run test
-
-      # ------------------------------------------------------------------------
-      # 3. TypeScript Typecheck (Affected packages on PR, All on push)
-      # ------------------------------------------------------------------------
-      - name: Typecheck Affected Workspaces (PR Diff)
-        if: github.event_name == 'pull_request'
-        run: bun x turbo run check --filter=...[origin/${{ github.base_ref }}]
-
-      - name: Typecheck Workspaces (Main Push)
-        if: github.event_name == 'push'
-        run: bun run check
-
-      # ------------------------------------------------------------------------
-      # 4. Build Artifacts (Affected packages on PR, All on push)
-      # ------------------------------------------------------------------------
-      - name: Build Affected Packages (PR Diff)
-        if: github.event_name == 'pull_request'
-        run: bun x turbo run build --filter=...[origin/${{ github.base_ref }}]
-
-      - name: Build Packages (Main Push)
-        if: github.event_name == 'push'
-        run: bun run build
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+      - run: gofmt -w . && git diff --exit-code
+      - run: go test ./...
+      - run: go build -o browsercontrol .
