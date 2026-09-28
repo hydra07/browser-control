@@ -68,9 +68,35 @@ func (c *Client) request(method, path string, body any) ([]byte, error) {
 
 func ParsePayloadArgs(args []string) (map[string]any, error) {
 	payload := map[string]any{}
-	for _, arg := range args {
-		arg = strings.TrimSpace(arg)
+	for i := 0; i < len(args); i++ {
+		arg := strings.TrimSpace(args[i])
 		if arg == "" {
+			continue
+		}
+		if strings.HasPrefix(arg, "--") {
+			key, raw, hasInlineValue := strings.Cut(strings.TrimPrefix(arg, "--"), "=")
+			key = NormalizePayloadKey(key)
+			if key == "" {
+				continue
+			}
+			if hasInlineValue {
+				value, err := parseValue(raw)
+				if err != nil {
+					return nil, err
+				}
+				payload[key] = value
+				continue
+			}
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "--") && !looksLikePayloadBoundary(args[i+1]) {
+				value, err := parseValue(args[i+1])
+				if err != nil {
+					return nil, err
+				}
+				payload[key] = value
+				i++
+				continue
+			}
+			payload[key] = true
 			continue
 		}
 		if strings.HasPrefix(arg, "@") {
@@ -79,7 +105,7 @@ func ParsePayloadArgs(args []string) (map[string]any, error) {
 				return nil, err
 			}
 			for k, v := range object {
-				payload[k] = v
+				payload[NormalizePayloadKey(k)] = v
 			}
 			continue
 		}
@@ -89,21 +115,82 @@ func ParsePayloadArgs(args []string) (map[string]any, error) {
 				return nil, fmt.Errorf("parse inline JSON object: %w", err)
 			}
 			for k, v := range object {
-				payload[k] = v
+				payload[NormalizePayloadKey(k)] = v
 			}
 			continue
 		}
 		key, raw, ok := strings.Cut(arg, "=")
 		if !ok {
-			return nil, fmt.Errorf("expected %q to be key=value, @file.json, or inline JSON object", arg)
+			return nil, fmt.Errorf("expected %q to be key=value, --flag value, @file.json, or inline JSON object", arg)
 		}
 		value, err := parseValue(raw)
 		if err != nil {
 			return nil, err
 		}
-		payload[strings.TrimSpace(key)] = value
+		payload[NormalizePayloadKey(strings.TrimSpace(key))] = value
 	}
 	return payload, nil
+}
+
+func NormalizePayloadKey(key string) string {
+	key = strings.TrimSpace(strings.TrimLeft(key, "-"))
+	key = strings.ReplaceAll(key, "_", "-")
+	switch key {
+	case "full", "full-page", "fullpage":
+		return "fullPage"
+	case "max-char", "max-chars", "maxchars":
+		return "maxChars"
+	case "new-tab", "newtab":
+		return "newTab"
+	case "tab", "tab-id", "tabid":
+		return "tabId"
+	case "node", "node-id", "nodeid":
+		return "nodeId"
+	case "document", "document-id", "documentid", "doc", "doc-id":
+		return "documentId"
+	case "request", "request-id", "requestid":
+		return "requestId"
+	case "include-body", "includebody", "body":
+		return "includeBody"
+	case "return-snapshot", "returnsnapshot":
+		return "returnSnapshot"
+	case "confirm-risky", "confirmrisky":
+		return "confirmRisky"
+	case "delta-x", "deltax":
+		return "deltaX"
+	case "delta-y", "deltay":
+		return "deltaY"
+	case "from-x", "fromx":
+		return "fromX"
+	case "from-y", "fromy":
+		return "fromY"
+	case "to-x", "tox":
+		return "toX"
+	case "to-y", "toy":
+		return "toY"
+	case "timeout", "timeout-ms", "timeoutms":
+		return "timeoutMs"
+	}
+	parts := strings.Split(key, "-")
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	var out strings.Builder
+	out.WriteString(parts[0])
+	for _, part := range parts[1:] {
+		if part == "" {
+			continue
+		}
+		out.WriteString(strings.ToUpper(part[:1]))
+		if len(part) > 1 {
+			out.WriteString(part[1:])
+		}
+	}
+	return out.String()
+}
+
+func looksLikePayloadBoundary(value string) bool {
+	return strings.HasPrefix(value, "@") || strings.HasPrefix(value, "{") || strings.Contains(value, "=")
 }
 
 func readJSONObject(path string) (map[string]any, error) {
