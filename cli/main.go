@@ -7,485 +7,567 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
+
+	"github.com/go-rod/rod"
 
 	"github.com/hydra07/browsercontrol/cli/internal/browser"
-	daemoncli "github.com/hydra07/browsercontrol/cli/internal/daemon"
 )
 
+type options struct {
+	tabTarget string
+	asJSON    bool
+	compact   bool
+	fullPage  bool
+	newTab    bool
+	headless  bool
+	port      int
+	maxChars  int
+	limit     int
+	filter    string
+	device    string
+	out       string
+}
+
 func printUsage() {
-	fmt.Print(`BrowserControl CLI - high-speed Chrome controller for AI agents
+	fmt.Print(`BrowserControl CLI - headless/serverless Chrome controller for AI agents
 
 Usage:
   browsercontrol <command> [flags] [arguments]
 
-Direct CDP commands:
-  navigate <url>             Navigate to a URL
-  snapshot                   Capture interactive elements on the page
-  click <target>             Click an element by snapshot ID, CSS selector, or text
-  type <target> <text>       Type text into an input field by ID or selector
-  press <key>                Press a keyboard key
-  scroll [dx] [dy]           Scroll the page
-  screenshot [file]          Take a screenshot
-  read                       Extract readable content from the current page
-  eval <js-code>             Run JavaScript in page context
+Core commands (CDP direct, no daemon/MCP/server):
+  open|navigate <url>        Navigate the active tab, or --new-tab to create one
+  snapshot                   Capture compact interactive/semantic elements
+  click <target>             Click by snapshot ID, CSS selector, or visible text
+  type <target> <text>       Type into an input by snapshot ID/selector/text
+  press <key>                Press Enter, Tab, Escape, Backspace, ArrowDown...
+  scroll [dx] [dy]           Scroll viewport pixels; default dy=400
+  drag <fromX> <fromY> <toX> <toY>
+  screenshot [file]          Save viewport/full-page screenshot
+  read                       Extract readable text from current page
+  find <query>               Search visible text and return snippets
+  select <selector>          Extract text from matching DOM nodes
+  inspect <target>           Inspect element metadata/layout by target
+  eval <js-code>             Evaluate JavaScript in page context
   tabs <subcommand>          list | switch | close | new
-  flow <file.json>           Run a local direct-CDP automation sequence
-  status                     Check direct CDP status
+  status                     Show Chrome/CDP status
 
-Daemon/API parity commands:
-  exec <cmd> [payload] [k=v]  POST /execute for any server BrowserCommand
-  daemon <subcommand>         status | metrics | execute | raw
-  flows <subcommand>          list | get | save | delete | run
-  agent <subcommand>          status | query | stream | abort
+Domain commands:
+  page <action>              open | snapshot | read | find | select | inspect | eval | screenshot
+  input <action>             click | type | press | scroll | drag
+  net <action>               list | har | clear
+  dev <action>               layout | memory | process | emulate | sandbox
+  flow <action>              run | list | save | get | delete
 
-Daemon command examples:
-  browsercontrol exec snapshot compact=true semantic=true --json
-  browsercontrol exec network_requests limit=20 filter=api --json
-  browsercontrol exec dev_har includeBodies=true --json
-  browsercontrol exec run_flow @flow.json returnSnapshot=true --json
-  browsercontrol flows list --json
-  browsercontrol flows save @flow.json --json
-  browsercontrol agent query "summarize this page" agentId=agy effort=high --json
-  browsercontrol daemon raw GET /metrics --json
-
-Payload syntax:
-  key=value                  value is parsed as JSON when possible
-  @file.json                 merge a JSON object from file into request body
-  '{"key":"value"}'          merge inline JSON object into request body
+Examples:
+  browsercontrol open https://example.com --headless
+  browsercontrol snapshot --json
+  browsercontrol click 1
+  browsercontrol type '#q' 'golang cdp cli'
+  browsercontrol net list --json --limit 30
+  browsercontrol dev layout '#app' --json
+  browsercontrol flow run ./flow.json --json
+  browsercontrol flow save login ./login-flow.json
 
 Flags:
-  --tab <id|index>           Target a specific direct-CDP tab
-  --new-tab                  Open in a new direct-CDP tab
-  --compact                  Return compact snapshot format
-  --json                     Print JSON output when supported
-  --headless                 Launch direct-CDP Chrome headless
+  --tab <id|index>           Target a tab by target ID/prefix or 1-based index
+  --new-tab                  Open URL in a new tab
+  --json                     Print machine-readable JSON
+  --compact                  Compact snapshot output
+  --headless                 Launch Chrome with --headless=new when not running
+  --full                     Full page screenshot
   --port <number>            Chrome CDP port (default: 9222)
-  --daemon-url <url>         Daemon URL (default: http://127.0.0.1:8765)
-  --daemon-port <number>     Daemon port when --daemon-url is not set (default: 8765)
-  --token <token>            Daemon bearer token; defaults to BROWSERCONTROL_AUTH_TOKEN or data/daemon-auth-token
-  --token-file <path>        Read daemon bearer token from a file
-  --timeout <duration>       Daemon request timeout (default: 30s)
+  --max-chars <number>       Reading/select output cap (default: 20000)
+  --limit <number>           Result limit for find/network/select (default: 20)
+  --filter <text>            Filter network/HAR entries
+  --device <name>            Device preset for dev emulate
+  --out <file>               Output path for commands that save files
 `)
 }
 
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
-		os.Exit(0)
+		return
 	}
 
 	cmd := os.Args[1]
 	args := os.Args[2:]
+	opt := parseFlags(cmd, args)
+	remainingArgs := opt.args
 
-	// Common flags.
-	var tabTarget string
-	var asJSON bool
-	var compact bool
-	var fullPage bool
-	var newTab bool
-	var headless bool
-	var port int
-	var maxChars int
-	var daemonURL string
-	var daemonPort int
-	var daemonToken string
-	var daemonTokenFile string
-	var requestTimeout time.Duration
-
-	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
-	fs.StringVar(&tabTarget, "tab", "", "Target tab ID or index")
-	fs.BoolVar(&asJSON, "json", false, "Output result as JSON")
-	fs.BoolVar(&compact, "compact", false, "Use compact format for snapshot")
-	fs.BoolVar(&fullPage, "full", false, "Full page screenshot")
-	fs.BoolVar(&newTab, "new-tab", false, "Open in new tab")
-	fs.BoolVar(&headless, "headless", false, "Run Chrome in headless mode")
-	fs.IntVar(&port, "port", browser.DefaultCDPPort, "CDP port")
-	fs.IntVar(&maxChars, "max-chars", 20000, "Max characters for reading mode")
-	fs.StringVar(&daemonURL, "daemon-url", "", "BrowserControl daemon URL")
-	fs.IntVar(&daemonPort, "daemon-port", daemoncli.DefaultPort, "BrowserControl daemon port")
-	fs.StringVar(&daemonToken, "token", "", "BrowserControl daemon bearer token")
-	fs.StringVar(&daemonTokenFile, "token-file", "", "BrowserControl daemon bearer token file")
-	fs.DurationVar(&requestTimeout, "timeout", 30*time.Second, "BrowserControl daemon request timeout")
-
-	if err := fs.Parse(reorderFlagArgs(args)); err != nil {
-		os.Exit(1)
-	}
-	remainingArgs := fs.Args()
-
-	daemonCfg := daemoncli.Config{
-		BaseURL:   daemonURL,
-		Port:      daemonPort,
-		Token:     daemonToken,
-		TokenFile: daemonTokenFile,
-		Timeout:   requestTimeout,
-	}
-
-	switch cmd {
-	case "help", "-h", "--help":
+	if cmd == "help" || cmd == "-h" || cmd == "--help" {
 		printUsage()
-		return
-	case "daemon", "server":
-		if err := daemoncli.HandleDaemon(remainingArgs, daemonCfg, asJSON); err != nil {
-			outputError(asJSON, err.Error())
-			os.Exit(1)
-		}
-		return
-	case "exec", "execute":
-		if err := daemoncli.HandleExecute(remainingArgs, daemonCfg, asJSON); err != nil {
-			outputError(asJSON, err.Error())
-			os.Exit(1)
-		}
-		return
-	case "flows":
-		if err := daemoncli.HandleFlows(remainingArgs, daemonCfg, asJSON); err != nil {
-			outputError(asJSON, err.Error())
-			os.Exit(1)
-		}
-		return
-	case "agent":
-		if err := daemoncli.HandleAgent(remainingArgs, daemonCfg, asJSON); err != nil {
-			outputError(asJSON, err.Error())
-			os.Exit(1)
-		}
 		return
 	}
 
 	cfg := browser.DefaultConfig()
-	cfg.Port = port
-	cfg.Headless = headless
+	cfg.Port = opt.port
+	cfg.Headless = opt.headless
 
-	switch cmd {
-	case "status":
-		available := browser.IsCDPAvailable(port)
-		if !available {
-			fmt.Printf("Chrome CDP is NOT active on port %d.\nRunning any direct CDP command will automatically launch Chrome with remote debugging.\n", port)
-			return
-		}
-		b, err := browser.GetBrowser(cfg)
-		if err != nil {
-			fmt.Printf("Error connecting to Chrome: %v\n", err)
-			os.Exit(1)
-		}
-		tabs, _ := browser.ListTabs(b)
-		fmt.Printf("Chrome CDP is active on port %d (%d open tabs).\n", port, len(tabs))
-		for _, t := range tabs {
-			activeMark := " "
-			if t.Active {
-				activeMark = "*"
-			}
-			fmt.Printf(" [%d]%s %s - %s\n", t.Index, activeMark, t.Title, t.URL)
-		}
+	if cmd == "status" {
+		handleStatus(cfg, opt)
 		return
 	}
 
-	// Connect to Chrome or launch if not yet running for direct CDP commands.
 	b, err := browser.GetBrowser(cfg)
 	if err != nil {
-		outputError(asJSON, fmt.Sprintf("Failed to initialize Chrome: %v", err))
-		os.Exit(1)
+		fatal(opt.asJSON, "failed to initialize Chrome: %v", err)
 	}
 
 	switch cmd {
-	case "tabs":
-		subcmd := "list"
-		if len(remainingArgs) > 0 {
-			subcmd = remainingArgs[0]
-		}
-		switch subcmd {
-		case "list":
-			tabs, err := browser.ListTabs(b)
-			if err != nil {
-				outputError(asJSON, err.Error())
-				os.Exit(1)
-			}
-			if asJSON {
-				outputJSON(tabs)
-			} else {
-				fmt.Printf("Open Tabs (%d):\n", len(tabs))
-				for _, t := range tabs {
-					mark := " "
-					if t.Active {
-						mark = "*"
-					}
-					fmt.Printf(" [%d]%s ID: %s | %s (%s)\n", t.Index, mark, t.ID, t.Title, t.URL)
-				}
-			}
+	case "page":
+		handlePage(b, remainingArgs, opt)
+	case "input":
+		handleInput(b, remainingArgs, opt)
+	case "net", "network":
+		handleNetwork(b, remainingArgs, opt)
+	case "dev":
+		handleDev(b, remainingArgs, opt)
+	case "flow", "flows":
+		handleFlow(b, remainingArgs, opt)
+	case "tabs", "tab":
+		handleTabs(b, remainingArgs, opt)
 
-		case "switch":
-			if len(remainingArgs) < 2 {
-				outputError(asJSON, "Usage: browsercontrol tabs switch <tab-id-or-index>")
-				os.Exit(1)
-			}
-			tab, err := browser.SwitchTab(b, remainingArgs[1])
-			if err != nil {
-				outputError(asJSON, err.Error())
-				os.Exit(1)
-			}
-			outputSuccess(asJSON, fmt.Sprintf("Switched to tab: %s (%s)", tab.Title, tab.URL), tab)
+	case "open", "navigate", "nav":
+		handlePage(b, append([]string{"open"}, remainingArgs...), opt)
+	case "snapshot", "snap":
+		handlePage(b, append([]string{"snapshot"}, remainingArgs...), opt)
+	case "read", "reading-mode", "text":
+		handlePage(b, append([]string{"read"}, remainingArgs...), opt)
+	case "find":
+		handlePage(b, append([]string{"find"}, remainingArgs...), opt)
+	case "select", "select-content":
+		handlePage(b, append([]string{"select"}, remainingArgs...), opt)
+	case "inspect", "inspect-element":
+		handlePage(b, append([]string{"inspect"}, remainingArgs...), opt)
+	case "eval", "evaluate":
+		handlePage(b, append([]string{"eval"}, remainingArgs...), opt)
+	case "screenshot", "shot":
+		handlePage(b, append([]string{"screenshot"}, remainingArgs...), opt)
 
-		case "close":
-			if len(remainingArgs) < 2 {
-				outputError(asJSON, "Usage: browsercontrol tabs close <tab-id-or-index>")
-				os.Exit(1)
-			}
-			if err := browser.CloseTab(b, remainingArgs[1]); err != nil {
-				outputError(asJSON, err.Error())
-				os.Exit(1)
-			}
-			outputSuccess(asJSON, fmt.Sprintf("Closed tab %s", remainingArgs[1]), nil)
+	case "click", "type", "press", "key", "scroll", "drag":
+		handleInput(b, append([]string{cmd}, remainingArgs...), opt)
+	default:
+		fatal(opt.asJSON, "unknown command %q; run 'browsercontrol help'", cmd)
+	}
+}
 
-		case "new":
-			url := ""
-			if len(remainingArgs) >= 2 {
-				url = remainingArgs[1]
-			}
-			_, tab, err := browser.NewTab(b, url)
-			if err != nil {
-				outputError(asJSON, err.Error())
-				os.Exit(1)
-			}
-			outputSuccess(asJSON, fmt.Sprintf("Created new tab: %s", tab.ID), tab)
+type parsedOptions struct {
+	options
+	args []string
+}
 
-		default:
-			outputError(asJSON, fmt.Sprintf("Unknown tabs subcommand %q (supported: list, switch, close, new)", subcmd))
-			os.Exit(1)
-		}
+func parseFlags(cmd string, args []string) parsedOptions {
+	var opt options
+	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
+	fs.StringVar(&opt.tabTarget, "tab", "", "target tab ID or index")
+	fs.BoolVar(&opt.asJSON, "json", false, "print JSON")
+	fs.BoolVar(&opt.compact, "compact", false, "compact text output")
+	fs.BoolVar(&opt.fullPage, "full", false, "full page screenshot")
+	fs.BoolVar(&opt.newTab, "new-tab", false, "open in a new tab")
+	fs.BoolVar(&opt.headless, "headless", false, "launch Chrome headless")
+	fs.IntVar(&opt.port, "port", browser.DefaultCDPPort, "Chrome CDP port")
+	fs.IntVar(&opt.maxChars, "max-chars", 20000, "max chars")
+	fs.IntVar(&opt.limit, "limit", 20, "result limit")
+	fs.StringVar(&opt.filter, "filter", "", "filter string")
+	fs.StringVar(&opt.device, "device", "", "device preset")
+	fs.StringVar(&opt.out, "out", "", "output path")
 
-	case "navigate", "nav", "open":
-		if len(remainingArgs) < 1 {
-			outputError(asJSON, "Usage: browsercontrol navigate <url>")
-			os.Exit(1)
-		}
-		url := remainingArgs[0]
+	if err := fs.Parse(reorderFlagArgs(args)); err != nil {
+		os.Exit(1)
+	}
+	return parsedOptions{options: opt, args: fs.Args()}
+}
 
-		if newTab {
-			_, t, err := browser.NewTab(b, url)
-			if err != nil {
-				outputError(asJSON, err.Error())
-				os.Exit(1)
-			}
-			outputSuccess(asJSON, fmt.Sprintf("Opened new tab [%d] at %s", t.Index, url), t)
+func handleStatus(cfg browser.Config, opt parsedOptions) {
+	available := browser.IsCDPAvailable(cfg.Port)
+	status := map[string]any{"cdpPort": cfg.Port, "cdpAvailable": available, "headlessRequested": cfg.Headless}
+	if !available {
+		if opt.asJSON {
+			outputJSON(status)
 			return
 		}
-
-		p, err := browser.ResolvePage(b, tabTarget)
-		if err != nil {
-			outputError(asJSON, err.Error())
-			os.Exit(1)
+		fmt.Printf("Chrome CDP is not active on port %d. Running a command will launch Chrome directly.\n", cfg.Port)
+		return
+	}
+	b, err := browser.GetBrowser(cfg)
+	if err != nil {
+		fatal(opt.asJSON, "error connecting to Chrome: %v", err)
+	}
+	tabs, _ := browser.ListTabs(b)
+	status["tabs"] = tabs
+	if opt.asJSON {
+		outputJSON(status)
+		return
+	}
+	fmt.Printf("Chrome CDP is active on port %d (%d open tabs).\n", cfg.Port, len(tabs))
+	for _, t := range tabs {
+		mark := " "
+		if t.Active {
+			mark = "*"
 		}
-		page, err := browser.Navigate(p, url)
-		if err != nil {
-			outputError(asJSON, err.Error())
-			os.Exit(1)
-		}
-		outputSuccess(asJSON, page.Message, page)
+		fmt.Printf(" [%d]%s %s - %s\n", t.Index, mark, t.Title, t.URL)
+	}
+}
 
+func handlePage(b *rod.Browser, args []string, opt parsedOptions) {
+	if len(args) == 0 {
+		fatal(opt.asJSON, "usage: browsercontrol page <open|snapshot|read|find|select|inspect|eval|screenshot> ...")
+	}
+	action := args[0]
+	rest := args[1:]
+
+	switch action {
+	case "open", "navigate", "nav":
+		if len(rest) < 1 {
+			fatal(opt.asJSON, "usage: browsercontrol page open <url>")
+		}
+		if opt.newTab {
+			_, tab, err := browser.NewTab(b, rest[0])
+			check(opt.asJSON, err)
+			outputSuccess(opt.asJSON, fmt.Sprintf("opened new tab [%d] at %s", tab.Index, rest[0]), tab)
+			return
+		}
+		p := mustPage(b, opt)
+		res, err := browser.Navigate(p, rest[0])
+		check(opt.asJSON, err)
+		outputSuccess(opt.asJSON, res.Message, res)
 	case "snapshot", "snap":
-		p, err := browser.ResolvePage(b, tabTarget)
-		if err != nil {
-			outputError(asJSON, err.Error())
-			os.Exit(1)
-		}
+		p := mustPage(b, opt)
 		nodes, err := browser.TakeSnapshot(p)
-		if err != nil {
-			outputError(asJSON, err.Error())
-			os.Exit(1)
-		}
-		if asJSON {
+		check(opt.asJSON, err)
+		if opt.asJSON {
 			outputJSON(nodes)
-		} else if compact {
-			fmt.Print(browser.FormatSnapshotCompact(nodes))
-		} else {
-			fmt.Print(browser.FormatSnapshotCompact(nodes))
+			return
 		}
-
-	case "click":
-		if len(remainingArgs) < 1 {
-			outputError(asJSON, "Usage: browsercontrol click <target-id-or-selector>")
-			os.Exit(1)
-		}
-		p, err := browser.ResolvePage(b, tabTarget)
-		if err != nil {
-			outputError(asJSON, err.Error())
-			os.Exit(1)
-		}
-		res, err := browser.Click(p, remainingArgs[0])
-		if err != nil {
-			outputError(asJSON, err.Error())
-			os.Exit(1)
-		}
-		outputSuccess(asJSON, res.Message, res)
-
-	case "type":
-		if len(remainingArgs) < 2 {
-			outputError(asJSON, "Usage: browsercontrol type <target-id-or-selector> <text>")
-			os.Exit(1)
-		}
-		p, err := browser.ResolvePage(b, tabTarget)
-		if err != nil {
-			outputError(asJSON, err.Error())
-			os.Exit(1)
-		}
-		res, err := browser.Type(p, remainingArgs[0], remainingArgs[1], false)
-		if err != nil {
-			outputError(asJSON, err.Error())
-			os.Exit(1)
-		}
-		outputSuccess(asJSON, res.Message, res)
-
-	case "press", "key":
-		if len(remainingArgs) < 1 {
-			outputError(asJSON, "Usage: browsercontrol press <key-name> (e.g. Enter, Tab, Escape, ArrowDown)")
-			os.Exit(1)
-		}
-		p, err := browser.ResolvePage(b, tabTarget)
-		if err != nil {
-			outputError(asJSON, err.Error())
-			os.Exit(1)
-		}
-		res, err := browser.PressKey(p, remainingArgs[0])
-		if err != nil {
-			outputError(asJSON, err.Error())
-			os.Exit(1)
-		}
-		outputSuccess(asJSON, res.Message, res)
-
-	case "scroll":
-		dx, dy := 0.0, 400.0
-		if len(remainingArgs) >= 2 {
-			if v, err := strconv.ParseFloat(remainingArgs[0], 64); err == nil {
-				dx = v
-			}
-			if v, err := strconv.ParseFloat(remainingArgs[1], 64); err == nil {
-				dy = v
-			}
-		} else if len(remainingArgs) == 1 {
-			if v, err := strconv.ParseFloat(remainingArgs[0], 64); err == nil {
-				dy = v
-			}
-		}
-		p, err := browser.ResolvePage(b, tabTarget)
-		if err != nil {
-			outputError(asJSON, err.Error())
-			os.Exit(1)
-		}
-		res, err := browser.Scroll(p, dx, dy)
-		if err != nil {
-			outputError(asJSON, err.Error())
-			os.Exit(1)
-		}
-		outputSuccess(asJSON, res.Message, res)
-
-	case "screenshot", "shot":
-		outputPath := ""
-		if len(remainingArgs) > 0 {
-			outputPath = remainingArgs[0]
-		}
-		p, err := browser.ResolvePage(b, tabTarget)
-		if err != nil {
-			outputError(asJSON, err.Error())
-			os.Exit(1)
-		}
-		path, err := browser.Screenshot(p, outputPath, fullPage)
-		if err != nil {
-			outputError(asJSON, err.Error())
-			os.Exit(1)
-		}
-		outputSuccess(asJSON, fmt.Sprintf("Screenshot saved to: %s", path), map[string]string{"path": path})
-
+		fmt.Print(browser.FormatSnapshotCompact(nodes))
 	case "read", "reading-mode", "text":
-		p, err := browser.ResolvePage(b, tabTarget)
-		if err != nil {
-			outputError(asJSON, err.Error())
-			os.Exit(1)
-		}
-		res, err := browser.ExtractReadingMode(p, maxChars)
-		if err != nil {
-			outputError(asJSON, err.Error())
-			os.Exit(1)
-		}
-		if asJSON {
+		p := mustPage(b, opt)
+		res, err := browser.ExtractReadingMode(p, opt.maxChars)
+		check(opt.asJSON, err)
+		if opt.asJSON {
 			outputJSON(res)
-		} else {
-			fmt.Printf("=== %s ===\nURL: %s\n(%d chars)\n\n%s\n", res.Title, res.URL, res.Chars, res.Text)
+			return
 		}
-
+		fmt.Printf("=== %s ===\nURL: %s\n(%d chars)\n\n%s\n", res.Title, res.URL, res.Chars, res.Text)
+	case "find":
+		if len(rest) < 1 {
+			fatal(opt.asJSON, "usage: browsercontrol page find <query>")
+		}
+		p := mustPage(b, opt)
+		res, err := browser.Find(p, strings.Join(rest, " "), opt.limit)
+		check(opt.asJSON, err)
+		if opt.asJSON {
+			outputJSON(res)
+			return
+		}
+		for _, m := range res.Matches {
+			fmt.Printf("[%d] %s\n", m.Index, m.Text)
+		}
+	case "select", "select-content":
+		if len(rest) < 1 {
+			fatal(opt.asJSON, "usage: browsercontrol page select <css-selector>")
+		}
+		p := mustPage(b, opt)
+		res, err := browser.SelectContent(p, rest[0], opt.maxChars, opt.limit)
+		check(opt.asJSON, err)
+		if opt.asJSON {
+			outputJSON(res)
+			return
+		}
+		for _, item := range res.Items {
+			fmt.Printf("[%d] %s\n", item.Index, item.Text)
+		}
+	case "inspect", "inspect-element":
+		if len(rest) < 1 {
+			fatal(opt.asJSON, "usage: browsercontrol page inspect <target>")
+		}
+		p := mustPage(b, opt)
+		res, err := browser.InspectElement(p, rest[0])
+		check(opt.asJSON, err)
+		outputJSON(res)
 	case "eval", "evaluate":
-		if len(remainingArgs) < 1 {
-			outputError(asJSON, "Usage: browsercontrol eval <javascript-expression>")
-			os.Exit(1)
+		if len(rest) < 1 {
+			fatal(opt.asJSON, "usage: browsercontrol page eval <javascript>")
 		}
-		expr := strings.Join(remainingArgs, " ")
-		p, err := browser.ResolvePage(b, tabTarget)
-		if err != nil {
-			outputError(asJSON, err.Error())
-			os.Exit(1)
+		p := mustPage(b, opt)
+		res, err := browser.Eval(p, strings.Join(rest, " "))
+		check(opt.asJSON, err)
+		outputJSON(res)
+	case "screenshot", "shot":
+		p := mustPage(b, opt)
+		outputPath := opt.out
+		if outputPath == "" && len(rest) > 0 {
+			outputPath = rest[0]
 		}
-		res, err := browser.Eval(p, expr)
-		if err != nil {
-			outputError(asJSON, err.Error())
-			os.Exit(1)
+		path, err := browser.Screenshot(p, outputPath, opt.fullPage)
+		check(opt.asJSON, err)
+		outputSuccess(opt.asJSON, "screenshot saved", map[string]string{"path": path})
+	default:
+		fatal(opt.asJSON, "unknown page action %q", action)
+	}
+}
+
+func handleInput(b *rod.Browser, args []string, opt parsedOptions) {
+	if len(args) == 0 {
+		fatal(opt.asJSON, "usage: browsercontrol input <click|type|press|scroll|drag> ...")
+	}
+	action := args[0]
+	rest := args[1:]
+	p := mustPage(b, opt)
+
+	switch action {
+	case "click":
+		if len(rest) < 1 {
+			fatal(opt.asJSON, "usage: browsercontrol input click <target>")
+		}
+		res, err := browser.Click(p, rest[0])
+		check(opt.asJSON, err)
+		outputSuccess(opt.asJSON, res.Message, res)
+	case "type":
+		if len(rest) < 2 {
+			fatal(opt.asJSON, "usage: browsercontrol input type <target> <text>")
+		}
+		res, err := browser.Type(p, rest[0], rest[1], false)
+		check(opt.asJSON, err)
+		outputSuccess(opt.asJSON, res.Message, res)
+	case "press", "key":
+		if len(rest) < 1 {
+			fatal(opt.asJSON, "usage: browsercontrol input press <key>")
+		}
+		res, err := browser.PressKey(p, rest[0])
+		check(opt.asJSON, err)
+		outputSuccess(opt.asJSON, res.Message, res)
+	case "scroll":
+		dx, dy := parseDeltas(rest)
+		res, err := browser.Scroll(p, dx, dy)
+		check(opt.asJSON, err)
+		outputSuccess(opt.asJSON, res.Message, res)
+	case "drag":
+		if len(rest) < 4 {
+			fatal(opt.asJSON, "usage: browsercontrol input drag <fromX> <fromY> <toX> <toY>")
+		}
+		vals := make([]float64, 4)
+		for i := range vals {
+			v, err := strconv.ParseFloat(rest[i], 64)
+			check(opt.asJSON, err)
+			vals[i] = v
+		}
+		res, err := browser.Drag(p, vals[0], vals[1], vals[2], vals[3])
+		check(opt.asJSON, err)
+		outputSuccess(opt.asJSON, res.Message, res)
+	default:
+		fatal(opt.asJSON, "unknown input action %q", action)
+	}
+}
+
+func handleTabs(b *rod.Browser, args []string, opt parsedOptions) {
+	subcmd := "list"
+	if len(args) > 0 {
+		subcmd = args[0]
+	}
+	switch subcmd {
+	case "list", "ls":
+		tabs, err := browser.ListTabs(b)
+		check(opt.asJSON, err)
+		if opt.asJSON {
+			outputJSON(tabs)
+			return
+		}
+		for _, t := range tabs {
+			mark := " "
+			if t.Active {
+				mark = "*"
+			}
+			fmt.Printf("[%d]%s %s | %s | %s\n", t.Index, mark, t.ID, t.Title, t.URL)
+		}
+	case "switch":
+		if len(args) < 2 {
+			fatal(opt.asJSON, "usage: browsercontrol tabs switch <tab-id-or-index>")
+		}
+		tab, err := browser.SwitchTab(b, args[1])
+		check(opt.asJSON, err)
+		outputSuccess(opt.asJSON, "tab switched", tab)
+	case "close":
+		if len(args) < 2 {
+			fatal(opt.asJSON, "usage: browsercontrol tabs close <tab-id-or-index>")
+		}
+		err := browser.CloseTab(b, args[1])
+		check(opt.asJSON, err)
+		outputSuccess(opt.asJSON, "tab closed", map[string]string{"target": args[1]})
+	case "new":
+		url := ""
+		if len(args) > 1 {
+			url = args[1]
+		}
+		_, tab, err := browser.NewTab(b, url)
+		check(opt.asJSON, err)
+		outputSuccess(opt.asJSON, "tab created", tab)
+	default:
+		fatal(opt.asJSON, "unknown tabs subcommand %q", subcmd)
+	}
+}
+
+func handleNetwork(b *rod.Browser, args []string, opt parsedOptions) {
+	action := "list"
+	if len(args) > 0 {
+		action = args[0]
+	}
+	p := mustPage(b, opt)
+	switch action {
+	case "list", "requests":
+		res, err := browser.NetworkEntries(p, opt.filter, opt.limit)
+		check(opt.asJSON, err)
+		outputJSON(res)
+	case "har", "export-har":
+		res, err := browser.HAR(p, opt.filter, opt.limit)
+		check(opt.asJSON, err)
+		if opt.out != "" {
+			check(opt.asJSON, browser.WriteJSONFile(opt.out, res))
+			outputSuccess(opt.asJSON, "HAR written", map[string]string{"path": opt.out})
+			return
 		}
 		outputJSON(res)
+	case "clear":
+		res, err := browser.ClearPerformanceEntries(p)
+		check(opt.asJSON, err)
+		outputSuccess(opt.asJSON, res.Message, res)
+	default:
+		fatal(opt.asJSON, "unknown net action %q", action)
+	}
+}
 
-	case "flow":
-		if len(remainingArgs) < 1 {
-			outputError(asJSON, "Usage: browsercontrol flow <steps.json>")
-			os.Exit(1)
+func handleDev(b *rod.Browser, args []string, opt parsedOptions) {
+	if len(args) == 0 {
+		fatal(opt.asJSON, "usage: browsercontrol dev <layout|memory|process|emulate|sandbox> ...")
+	}
+	action := args[0]
+	rest := args[1:]
+	p := mustPage(b, opt)
+	switch action {
+	case "layout", "debug-layout":
+		target := "body"
+		if len(rest) > 0 {
+			target = rest[0]
 		}
-		steps, err := browser.LoadFlowFile(remainingArgs[0])
-		if err != nil {
-			outputError(asJSON, err.Error())
-			os.Exit(1)
+		res, err := browser.Layout(p, target)
+		check(opt.asJSON, err)
+		outputJSON(res)
+	case "memory", "inspect-memory":
+		res, err := browser.Memory(p)
+		check(opt.asJSON, err)
+		outputJSON(res)
+	case "process", "inspect-process":
+		res, err := browser.Process(p)
+		check(opt.asJSON, err)
+		outputJSON(res)
+	case "emulate":
+		device := opt.device
+		if device == "" && len(rest) > 0 {
+			device = rest[0]
 		}
-		p, err := browser.ResolvePage(b, tabTarget)
-		if err != nil {
-			outputError(asJSON, err.Error())
-			os.Exit(1)
+		res, err := browser.Emulate(p, device)
+		check(opt.asJSON, err)
+		outputSuccess(opt.asJSON, res.Message, res)
+	case "sandbox":
+		mode := "block_mutations"
+		if len(rest) > 0 {
+			mode = rest[0]
 		}
+		res, err := browser.Sandbox(p, mode)
+		check(opt.asJSON, err)
+		outputSuccess(opt.asJSON, res.Message, res)
+	default:
+		fatal(opt.asJSON, "unknown dev action %q", action)
+	}
+}
+
+func handleFlow(b *rod.Browser, args []string, opt parsedOptions) {
+	if len(args) == 0 {
+		fatal(opt.asJSON, "usage: browsercontrol flow <run|list|save|get|delete> ...")
+	}
+	action := args[0]
+	rest := args[1:]
+	switch action {
+	case "run":
+		if len(rest) < 1 {
+			fatal(opt.asJSON, "usage: browsercontrol flow run <flow-id|flow.json>")
+		}
+		steps, err := browser.LoadFlow(rest[0])
+		check(opt.asJSON, err)
+		p := mustPage(b, opt)
 		report, err := browser.RunFlow(p, steps)
 		if err != nil {
-			if asJSON {
+			if opt.asJSON {
 				outputJSON(report)
 			} else {
 				fmt.Printf("Flow FAILED (%d/%d steps passed): %v\n", report.PassedSteps, report.TotalSteps, err)
 			}
 			os.Exit(1)
 		}
-		if asJSON {
+		if opt.asJSON {
 			outputJSON(report)
-		} else {
-			fmt.Printf("Flow SUCCESS (%d steps passed in %s)\n", report.TotalSteps, report.Duration)
-			for _, s := range report.Steps {
-				fmt.Printf("  [%d] %s: %s (%s)\n", s.StepIndex, s.Action, s.Message, s.Duration)
-			}
+			return
 		}
-
+		fmt.Printf("Flow SUCCESS (%d steps passed in %s)\n", report.TotalSteps, report.Duration)
+		for _, s := range report.Steps {
+			fmt.Printf("  [%d] %s: %s (%s)\n", s.StepIndex, s.Action, s.Message, s.Duration)
+		}
+	case "list", "ls":
+		flows, err := browser.ListSavedFlows()
+		check(opt.asJSON, err)
+		outputJSON(flows)
+	case "save":
+		if len(rest) < 2 {
+			fatal(opt.asJSON, "usage: browsercontrol flow save <id> <flow.json>")
+		}
+		flow, err := browser.SaveFlow(rest[0], rest[1])
+		check(opt.asJSON, err)
+		outputSuccess(opt.asJSON, "flow saved", flow)
+	case "get", "show":
+		if len(rest) < 1 {
+			fatal(opt.asJSON, "usage: browsercontrol flow get <id>")
+		}
+		flow, err := browser.GetSavedFlow(rest[0])
+		check(opt.asJSON, err)
+		outputJSON(flow)
+	case "delete", "rm":
+		if len(rest) < 1 {
+			fatal(opt.asJSON, "usage: browsercontrol flow delete <id>")
+		}
+		check(opt.asJSON, browser.DeleteSavedFlow(rest[0]))
+		outputSuccess(opt.asJSON, "flow deleted", map[string]string{"id": rest[0]})
 	default:
-		outputError(asJSON, fmt.Sprintf("Unknown command %q. Run 'browsercontrol help' for usage.", cmd))
-		os.Exit(1)
+		fatal(opt.asJSON, "unknown flow action %q", action)
 	}
 }
 
+func mustPage(b *rod.Browser, opt parsedOptions) *rod.Page {
+	p, err := browser.ResolvePage(b, opt.tabTarget)
+	check(opt.asJSON, err)
+	return p
+}
+
+func parseDeltas(args []string) (float64, float64) {
+	dx, dy := 0.0, 400.0
+	if len(args) >= 2 {
+		if v, err := strconv.ParseFloat(args[0], 64); err == nil {
+			dx = v
+		}
+		if v, err := strconv.ParseFloat(args[1], 64); err == nil {
+			dy = v
+		}
+	} else if len(args) == 1 {
+		if v, err := strconv.ParseFloat(args[0], 64); err == nil {
+			dy = v
+		}
+	}
+	return dx, dy
+}
+
 func reorderFlagArgs(args []string) []string {
-	boolFlags := map[string]bool{
-		"--json":     true,
-		"--compact":  true,
-		"--full":     true,
-		"--new-tab":  true,
-		"--headless": true,
-	}
-	valueFlags := map[string]bool{
-		"--tab":         true,
-		"--port":        true,
-		"--max-chars":   true,
-		"--daemon-url":  true,
-		"--daemon-port": true,
-		"--token":       true,
-		"--token-file":  true,
-		"--timeout":     true,
-	}
+	boolFlags := map[string]bool{"--json": true, "--compact": true, "--full": true, "--new-tab": true, "--headless": true}
+	valueFlags := map[string]bool{"--tab": true, "--port": true, "--max-chars": true, "--limit": true, "--filter": true, "--device": true, "--out": true}
 	var flags []string
 	var positionals []string
 	for i := 0; i < len(args); i++ {
@@ -511,30 +593,31 @@ func reorderFlagArgs(args []string) []string {
 	return append(flags, positionals...)
 }
 
-func outputJSON(v interface{}) {
+func outputJSON(v any) {
 	bytes, _ := json.MarshalIndent(v, "", "  ")
 	fmt.Println(string(bytes))
 }
 
-func outputSuccess(asJSON bool, message string, data interface{}) {
+func outputSuccess(asJSON bool, message string, data any) {
 	if asJSON {
-		outputJSON(map[string]interface{}{
-			"success": true,
-			"message": message,
-			"data":    data,
-		})
-	} else {
-		fmt.Println(message)
+		outputJSON(map[string]any{"success": true, "message": message, "data": data})
+		return
+	}
+	fmt.Println(message)
+}
+
+func check(asJSON bool, err error) {
+	if err != nil {
+		fatal(asJSON, "%v", err)
 	}
 }
 
-func outputError(asJSON bool, message string) {
+func fatal(asJSON bool, format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
 	if asJSON {
-		outputJSON(map[string]interface{}{
-			"success": false,
-			"error":   message,
-		})
+		outputJSON(map[string]any{"success": false, "error": msg})
 	} else {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", message)
+		fmt.Fprintf(os.Stderr, "Error: %s\n", msg)
 	}
+	os.Exit(1)
 }
