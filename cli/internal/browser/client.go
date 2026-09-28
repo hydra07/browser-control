@@ -7,11 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
+	"runtime"
 	"time"
 
 	"github.com/go-rod/rod"
-	"github.com/go-rod/rod/lib/launcher"
 )
 
 const DefaultCDPPort = 9222
@@ -23,39 +22,37 @@ type Config struct {
 }
 
 func DefaultConfig() Config {
-	dataDir := filepath.Join(os.Getenv("USERPROFILE"), ".browsercontrol", "profile")
-	return Config{
-		Port:     DefaultCDPPort,
-		Headless: false,
-		DataDir:  dataDir,
-	}
+	return Config{Port: DefaultCDPPort, Headless: false, DataDir: filepath.Join(BrowserControlDir(), "profile")}
 }
 
-// FindChromePath discovers the local installation of Chrome or Edge on Windows/macOS/Linux.
+// FindChromePath discovers a local Chrome/Chromium/Edge installation on Windows/macOS/Linux.
 func FindChromePath() string {
 	candidates := []string{
 		`C:\Program Files\Google\Chrome\Application\chrome.exe`,
 		`C:\Program Files (x86)\Google\Chrome\Application\chrome.exe`,
 		filepath.Join(os.Getenv("LOCALAPPDATA"), `Google\Chrome\Application\chrome.exe`),
-		`C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`,
 		`C:\Program Files\Microsoft\Edge\Application\msedge.exe`,
+		`C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`,
 		"/usr/bin/google-chrome",
+		"/usr/bin/google-chrome-stable",
+		"/usr/bin/chromium",
 		"/usr/bin/chromium-browser",
+		"/snap/bin/chromium",
 		"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+		"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
 	}
-	for _, c := range candidates {
-		if c == "" {
+	for _, candidate := range candidates {
+		if candidate == "" {
 			continue
 		}
-		if _, err := os.Stat(c); err == nil {
-			return c
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
 		}
 	}
-	if path, err := exec.LookPath("chrome"); err == nil {
-		return path
-	}
-	if path, err := exec.LookPath("google-chrome"); err == nil {
-		return path
+	for _, name := range []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome", "msedge"} {
+		if path, err := exec.LookPath(name); err == nil {
+			return path
+		}
 	}
 	return ""
 }
@@ -77,7 +74,6 @@ func getWebSocketDebuggerURL(port int) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
-
 	var data struct {
 		WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
 	}
@@ -93,9 +89,11 @@ func getWebSocketDebuggerURL(port int) (string, error) {
 func launchChromeDirect(cfg Config) error {
 	bin := FindChromePath()
 	if bin == "" {
-		return fmt.Errorf("could not find chrome.exe or msedge.exe on system")
+		return fmt.Errorf("could not find Chrome, Chromium, or Edge on system")
 	}
-
+	if cfg.DataDir == "" {
+		cfg.DataDir = filepath.Join(BrowserControlDir(), "profile")
+	}
 	args := []string{
 		fmt.Sprintf("--remote-debugging-port=%d", cfg.Port),
 		fmt.Sprintf("--user-data-dir=%s", cfg.DataDir),
@@ -106,19 +104,16 @@ func launchChromeDirect(cfg Config) error {
 		"--disable-renderer-backgrounding",
 	}
 	if cfg.Headless {
-		args = append(args, "--headless=new")
+		args = append(args, "--headless=new", "--disable-gpu")
 	}
-
+	if runtime.GOOS == "linux" && os.Geteuid() == 0 {
+		args = append(args, "--no-sandbox")
+	}
 	cmd := exec.Command(bin, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		CreationFlags: 0x00000008 | 0x00000200, // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start Chrome: %w", err)
 	}
-
-	// Wait up to 5 seconds for port to open
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(7 * time.Second)
 	for time.Now().Before(deadline) {
 		if IsCDPAvailable(cfg.Port) {
 			return nil
@@ -128,24 +123,21 @@ func launchChromeDirect(cfg Config) error {
 	return fmt.Errorf("timeout waiting for Chrome CDP on port %d", cfg.Port)
 }
 
-// GetBrowser connects to an existing Chrome instance or launches one if not available.
+// GetBrowser connects to an existing Chrome instance or launches one if unavailable.
 func GetBrowser(cfg Config) (*rod.Browser, error) {
 	if cfg.Port <= 0 {
 		cfg.Port = DefaultCDPPort
 	}
-
 	if !IsCDPAvailable(cfg.Port) {
 		_ = os.MkdirAll(cfg.DataDir, 0755)
 		if err := launchChromeDirect(cfg); err != nil {
 			return nil, err
 		}
 	}
-
 	wsURL, err := getWebSocketDebuggerURL(cfg.Port)
 	if err != nil {
-		wsURL, _ = launcher.ResolveURL(fmt.Sprintf("http://127.0.0.1:%d", cfg.Port))
+		return nil, err
 	}
-
 	b := rod.New().ControlURL(wsURL)
 	if err := b.Connect(); err != nil {
 		return nil, fmt.Errorf("failed to connect to Chrome CDP at %s: %w", wsURL, err)
