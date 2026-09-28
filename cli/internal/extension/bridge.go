@@ -304,7 +304,7 @@ func (s *Server) Execute(cmd string, payload map[string]any, timeout time.Durati
 	select {
 	case res := <-ch:
 		if res.Type == "error" {
-			return nil, fmt.Errorf(res.Error)
+			return nil, errors.New(res.Error)
 		}
 		return res.Data, nil
 	case <-time.After(timeout):
