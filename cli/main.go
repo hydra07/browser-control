@@ -7,47 +7,65 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hydra07/browsercontrol/cli/internal/browser"
+	daemoncli "github.com/hydra07/browsercontrol/cli/internal/daemon"
 )
 
 func printUsage() {
-	fmt.Println(`BrowserControl CLI - High-speed, serverless Chrome controller for AI Agents
+	fmt.Print(`BrowserControl CLI - high-speed Chrome controller for AI agents
 
 Usage:
-  browsercontrol <command> [arguments] [flags]
+  browsercontrol <command> [flags] [arguments]
 
-Commands:
-  navigate <url>             Navigate to a URL (e.g. browsercontrol navigate https://google.com)
-  snapshot                   Capture interactive elements on page (for buttons, links, inputs)
-  click <target>             Click an element by snapshot ID [1..N], CSS selector, or text
+Direct CDP commands:
+  navigate <url>             Navigate to a URL
+  snapshot                   Capture interactive elements on the page
+  click <target>             Click an element by snapshot ID, CSS selector, or text
   type <target> <text>       Type text into an input field by ID or selector
-  press <key>                Press a keyboard key (Enter, Tab, Escape, Backspace, ArrowDown...)
-  scroll [dx] [dy]           Scroll the page (e.g. browsercontrol scroll 0 500)
-  screenshot [file]          Take a screenshot (saved to ~/.browsercontrol/screenshots by default)
-  read                       Extract clean article text / readable content from current page
-  eval <js-code>             Run JavaScript in page context and print the returned value
-  tabs                       List, switch, create, or close browser tabs
-  flow <file.json>           Run a multi-step automation sequence from a JSON file
-  status                     Check connection status and active Chrome instances
+  press <key>                Press a keyboard key
+  scroll [dx] [dy]           Scroll the page
+  screenshot [file]          Take a screenshot
+  read                       Extract readable content from the current page
+  eval <js-code>             Run JavaScript in page context
+  tabs <subcommand>          list | switch | close | new
+  flow <file.json>           Run a local direct-CDP automation sequence
+  status                     Check direct CDP status
+
+Daemon/API parity commands:
+  exec <cmd> [payload] [k=v]  POST /execute for any server BrowserCommand
+  daemon <subcommand>         status | metrics | execute | raw
+  flows <subcommand>          list | get | save | delete | run
+  agent <subcommand>          status | query | stream | abort
+
+Daemon command examples:
+  browsercontrol exec snapshot compact=true semantic=true --json
+  browsercontrol exec network_requests limit=20 filter=api --json
+  browsercontrol exec dev_har includeBodies=true --json
+  browsercontrol exec run_flow @flow.json returnSnapshot=true --json
+  browsercontrol flows list --json
+  browsercontrol flows save @flow.json --json
+  browsercontrol agent query "summarize this page" agentId=agy effort=high --json
+  browsercontrol daemon raw GET /metrics --json
+
+Payload syntax:
+  key=value                  value is parsed as JSON when possible
+  @file.json                 merge a JSON object from file into request body
+  '{"key":"value"}'          merge inline JSON object into request body
 
 Flags:
-  --tab <id|index>           Target a specific tab by ID or 1-based index (defaults to active tab)
-  --new-tab                  Open in a new tab (used with navigate)
-  --compact                  Return compact 1-line format for snapshot (saves tokens)
-  --json                     Output result as JSON for programmatic agent parsing
-  --headless                 Run Chrome in headless mode
+  --tab <id|index>           Target a specific direct-CDP tab
+  --new-tab                  Open in a new direct-CDP tab
+  --compact                  Return compact snapshot format
+  --json                     Print JSON output when supported
+  --headless                 Launch direct-CDP Chrome headless
   --port <number>            Chrome CDP port (default: 9222)
-
-Examples:
-  browsercontrol navigate https://news.ycombinator.com
-  browsercontrol snapshot --compact
-  browsercontrol click 1
-  browsercontrol type "#search" "golang"
-  browsercontrol press Enter
-  browsercontrol read
-  browsercontrol tabs list
-  browsercontrol tabs switch 2
+  --daemon-url <url>         Daemon URL (default: http://127.0.0.1:8765)
+  --daemon-port <number>     Daemon port when --daemon-url is not set (default: 8765)
+  --token <token>            Daemon bearer token; defaults to BROWSERCONTROL_AUTH_TOKEN or data/daemon-auth-token
+  --token-file <path>        Read daemon bearer token from a file
+  --timeout <duration>       Daemon request timeout (default: 30s)
 `)
 }
 
@@ -60,7 +78,7 @@ func main() {
 	cmd := os.Args[1]
 	args := os.Args[2:]
 
-	// Common flags
+	// Common flags.
 	var tabTarget string
 	var asJSON bool
 	var compact bool
@@ -69,6 +87,11 @@ func main() {
 	var headless bool
 	var port int
 	var maxChars int
+	var daemonURL string
+	var daemonPort int
+	var daemonToken string
+	var daemonTokenFile string
+	var requestTimeout time.Duration
 
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fs.StringVar(&tabTarget, "tab", "", "Target tab ID or index")
@@ -79,25 +102,64 @@ func main() {
 	fs.BoolVar(&headless, "headless", false, "Run Chrome in headless mode")
 	fs.IntVar(&port, "port", browser.DefaultCDPPort, "CDP port")
 	fs.IntVar(&maxChars, "max-chars", 20000, "Max characters for reading mode")
+	fs.StringVar(&daemonURL, "daemon-url", "", "BrowserControl daemon URL")
+	fs.IntVar(&daemonPort, "daemon-port", daemoncli.DefaultPort, "BrowserControl daemon port")
+	fs.StringVar(&daemonToken, "token", "", "BrowserControl daemon bearer token")
+	fs.StringVar(&daemonTokenFile, "token-file", "", "BrowserControl daemon bearer token file")
+	fs.DurationVar(&requestTimeout, "timeout", 30*time.Second, "BrowserControl daemon request timeout")
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderFlagArgs(args)); err != nil {
 		os.Exit(1)
 	}
 	remainingArgs := fs.Args()
+
+	daemonCfg := daemoncli.Config{
+		BaseURL:   daemonURL,
+		Port:      daemonPort,
+		Token:     daemonToken,
+		TokenFile: daemonTokenFile,
+		Timeout:   requestTimeout,
+	}
+
+	switch cmd {
+	case "help", "-h", "--help":
+		printUsage()
+		return
+	case "daemon", "server":
+		if err := daemoncli.HandleDaemon(remainingArgs, daemonCfg, asJSON); err != nil {
+			outputError(asJSON, err.Error())
+			os.Exit(1)
+		}
+		return
+	case "exec", "execute":
+		if err := daemoncli.HandleExecute(remainingArgs, daemonCfg, asJSON); err != nil {
+			outputError(asJSON, err.Error())
+			os.Exit(1)
+		}
+		return
+	case "flows":
+		if err := daemoncli.HandleFlows(remainingArgs, daemonCfg, asJSON); err != nil {
+			outputError(asJSON, err.Error())
+			os.Exit(1)
+		}
+		return
+	case "agent":
+		if err := daemoncli.HandleAgent(remainingArgs, daemonCfg, asJSON); err != nil {
+			outputError(asJSON, err.Error())
+			os.Exit(1)
+		}
+		return
+	}
 
 	cfg := browser.DefaultConfig()
 	cfg.Port = port
 	cfg.Headless = headless
 
 	switch cmd {
-	case "help", "-h", "--help":
-		printUsage()
-		return
-
 	case "status":
 		available := browser.IsCDPAvailable(port)
 		if !available {
-			fmt.Printf("Chrome CDP is NOT active on port %d.\nRunning any command will automatically launch Chrome with remote debugging.\n", port)
+			fmt.Printf("Chrome CDP is NOT active on port %d.\nRunning any direct CDP command will automatically launch Chrome with remote debugging.\n", port)
 			return
 		}
 		b, err := browser.GetBrowser(cfg)
@@ -117,7 +179,7 @@ func main() {
 		return
 	}
 
-	// Connect to Chrome or launch if not yet running
+	// Connect to Chrome or launch if not yet running for direct CDP commands.
 	b, err := browser.GetBrowser(cfg)
 	if err != nil {
 		outputError(asJSON, fmt.Sprintf("Failed to initialize Chrome: %v", err))
@@ -196,17 +258,14 @@ func main() {
 			os.Exit(1)
 		}
 		url := remainingArgs[0]
-		var page *browser.ActionResult
-		var navErr error
 
 		if newTab {
-			p, t, err := browser.NewTab(b, url)
+			_, t, err := browser.NewTab(b, url)
 			if err != nil {
 				outputError(asJSON, err.Error())
 				os.Exit(1)
 			}
 			outputSuccess(asJSON, fmt.Sprintf("Opened new tab [%d] at %s", t.Index, url), t)
-			_ = p
 			return
 		}
 
@@ -215,9 +274,9 @@ func main() {
 			outputError(asJSON, err.Error())
 			os.Exit(1)
 		}
-		page, navErr = browser.Navigate(p, url)
-		if navErr != nil {
-			outputError(asJSON, navErr.Error())
+		page, err := browser.Navigate(p, url)
+		if err != nil {
+			outputError(asJSON, err.Error())
 			os.Exit(1)
 		}
 		outputSuccess(asJSON, page.Message, page)
@@ -246,13 +305,12 @@ func main() {
 			outputError(asJSON, "Usage: browsercontrol click <target-id-or-selector>")
 			os.Exit(1)
 		}
-		target := remainingArgs[0]
 		p, err := browser.ResolvePage(b, tabTarget)
 		if err != nil {
 			outputError(asJSON, err.Error())
 			os.Exit(1)
 		}
-		res, err := browser.Click(p, target)
+		res, err := browser.Click(p, remainingArgs[0])
 		if err != nil {
 			outputError(asJSON, err.Error())
 			os.Exit(1)
@@ -264,14 +322,12 @@ func main() {
 			outputError(asJSON, "Usage: browsercontrol type <target-id-or-selector> <text>")
 			os.Exit(1)
 		}
-		target := remainingArgs[0]
-		text := remainingArgs[1]
 		p, err := browser.ResolvePage(b, tabTarget)
 		if err != nil {
 			outputError(asJSON, err.Error())
 			os.Exit(1)
 		}
-		res, err := browser.Type(p, target, text, false)
+		res, err := browser.Type(p, remainingArgs[0], remainingArgs[1], false)
 		if err != nil {
 			outputError(asJSON, err.Error())
 			os.Exit(1)
@@ -283,13 +339,12 @@ func main() {
 			outputError(asJSON, "Usage: browsercontrol press <key-name> (e.g. Enter, Tab, Escape, ArrowDown)")
 			os.Exit(1)
 		}
-		key := remainingArgs[0]
 		p, err := browser.ResolvePage(b, tabTarget)
 		if err != nil {
 			outputError(asJSON, err.Error())
 			os.Exit(1)
 		}
-		res, err := browser.PressKey(p, key)
+		res, err := browser.PressKey(p, remainingArgs[0])
 		if err != nil {
 			outputError(asJSON, err.Error())
 			os.Exit(1)
@@ -411,6 +466,49 @@ func main() {
 		outputError(asJSON, fmt.Sprintf("Unknown command %q. Run 'browsercontrol help' for usage.", cmd))
 		os.Exit(1)
 	}
+}
+
+func reorderFlagArgs(args []string) []string {
+	boolFlags := map[string]bool{
+		"--json":     true,
+		"--compact":  true,
+		"--full":     true,
+		"--new-tab":  true,
+		"--headless": true,
+	}
+	valueFlags := map[string]bool{
+		"--tab":         true,
+		"--port":        true,
+		"--max-chars":   true,
+		"--daemon-url":  true,
+		"--daemon-port": true,
+		"--token":       true,
+		"--token-file":  true,
+		"--timeout":     true,
+	}
+	var flags []string
+	var positionals []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		name := arg
+		if before, _, ok := strings.Cut(arg, "="); ok {
+			name = before
+		}
+		if boolFlags[name] || (strings.Contains(arg, "=") && valueFlags[name]) {
+			flags = append(flags, arg)
+			continue
+		}
+		if valueFlags[name] {
+			flags = append(flags, arg)
+			if !strings.Contains(arg, "=") && i+1 < len(args) {
+				flags = append(flags, args[i+1])
+				i++
+			}
+			continue
+		}
+		positionals = append(positionals, arg)
+	}
+	return append(flags, positionals...)
 }
 
 func outputJSON(v interface{}) {
