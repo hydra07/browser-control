@@ -129,8 +129,15 @@ export async function performClick(
         button: "left",
         clickCount: 1,
     });
-    await waitForStableDom(target);
+    const settleResult = await waitForStableDom(target);
     setTimeout(() => hideNativeHighlight(target), opts.fast ? 350 : 1200);
+    if (settleResult.reason === "timeout") {
+        return {
+            error: "Click did not reach DOM quiet before the settle timeout",
+            hint: "The page is still changing; inspect the current page before retrying.",
+            settleReason: settleResult.reason,
+        };
+    }
 
     return withRiskWarning(
         {
@@ -138,6 +145,7 @@ export async function performClick(
             message: `Clicked at (${x}, ${y})`,
             role: axInfo.role,
             name: axInfo.name,
+            settleReason: settleResult.reason,
         },
         axInfo,
         "clicked",
@@ -191,7 +199,7 @@ export async function performType(
             if (perCharDelayMs > 0) await pageDelay(target, perCharDelayMs);
         }
     }
-    await waitForStableDom(target);
+    let settleReason = (await waitForStableDom(target)).reason;
 
     if (backendNodeId != null && text.length > 0) {
         let landed = await readElementText(target, backendNodeId);
@@ -202,7 +210,7 @@ export async function performType(
             try {
                 await sendCommand(target, "DOM.focus", { backendNodeId });
                 await sendCommand(target, "Input.insertText", { text });
-                await waitForStableDom(target);
+                settleReason = (await waitForStableDom(target)).reason;
                 landed = await readElementText(target, backendNodeId);
             } catch {}
 
@@ -210,9 +218,17 @@ export async function performType(
                 return {
                     error: `Typed "${text}" but it didn't land in the target element`,
                     hint: "The element likely lost focus mid-type (a re-render replaced it, or something else grabbed focus). Take a fresh snapshot and retry, ideally right after the element becomes visible/interactive rather than immediately after the action that revealed it.",
+                    settleReason,
                 };
             }
         }
+    }
+    if (settleReason === "timeout") {
+        return {
+            error: "Type action did not reach DOM quiet before the settle timeout",
+            hint: "The page is still changing; inspect the current page before retrying.",
+            settleReason,
+        };
     }
 
     return withRiskWarning(
@@ -221,6 +237,7 @@ export async function performType(
             message: `Typed "${text}"`,
             role: axInfo.role,
             name: axInfo.name,
+            settleReason,
         },
         axInfo,
         "typed into",
@@ -312,12 +329,20 @@ export async function performPressKey(
         key: def.key,
         code: def.code,
     });
-    await waitForStableDom(target);
+    const settleResult = await waitForStableDom(target);
+    if (settleResult.reason === "timeout") {
+        return {
+            error: "Key action did not reach DOM quiet before the settle timeout",
+            hint: "The page is still changing; inspect the current page before retrying.",
+            settleReason: settleResult.reason,
+        };
+    }
     return {
         success: true,
         message: `Pressed ${key}`,
         role: axInfo.role,
         name: axInfo.name,
+        settleReason: settleResult.reason,
     };
 }
 
@@ -335,8 +360,15 @@ export async function performScroll(
         { type: "mouseWheel", x: 500, y: 500, deltaX, deltaY },
         { retryOnTimeout: true },
     );
-    await waitForStableDom(target);
-    return { success: true, message: `Scrolled by (${deltaX}, ${deltaY})` };
+    const settleResult = await waitForStableDom(target);
+    if (settleResult.reason === "timeout") {
+        return {
+            error: "Scroll action did not reach DOM quiet before the settle timeout",
+            hint: "The page is still changing; inspect the current page before retrying.",
+            settleReason: settleResult.reason,
+        };
+    }
+    return { success: true, message: `Scrolled by (${deltaX}, ${deltaY})`, settleReason: settleResult.reason };
 }
 
 let lastCursorPosition: Point = { x: 400, y: 300 };
@@ -429,12 +461,20 @@ export async function performDrag(
         clickCount: 1,
     });
     setLastCursorPosition(end.x, end.y);
-    await waitForStableDom(target);
+    const settleResult = await waitForStableDom(target);
+    if (settleResult.reason === "timeout") {
+        return {
+            error: "Drag action did not reach DOM quiet before the settle timeout",
+            hint: "The page is still changing; inspect the current page before retrying.",
+            settleReason: settleResult.reason,
+        };
+    }
 
     const shapeNote =
         opts.shape && opts.shape !== "straight" ? ` (${opts.shape} trajectory, ${points.length} points)` : "";
     return {
         success: true,
         message: `Dragged from (${start.x}, ${start.y}) to (${end.x}, ${end.y})${shapeNote}`,
+        settleReason: settleResult.reason,
     };
 }

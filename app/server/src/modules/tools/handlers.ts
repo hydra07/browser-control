@@ -8,7 +8,15 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BenchmarkEngine } from "@browsercontrol/benchmark";
-import type { FlowStep, TrajectoryConfig } from "@browsercontrol/shared";
+import type {
+  EvidenceProfile,
+  EvidenceRun,
+  EvidenceTimelineEvent,
+  FlowStep,
+  FlowStepV2,
+  TrajectoryConfig,
+} from "@browsercontrol/shared";
+import { normalizeFlowStep } from "@browsercontrol/shared";
 import type { CallToolRequest } from "@modelcontextprotocol/sdk/types.js";
 import { HAR_DIR } from "../../configs/paths.js";
 import { errorMessage } from "../../libs/errorMessage.js";
@@ -17,12 +25,13 @@ import {
   BulkAction,
   DevAction,
   DocsAction,
+  EvidenceAction,
   Gateway,
   InspectAction,
   KnowledgeAction,
   SessionAction,
 } from "../../libs/gateways.js";
-import type { ToolCallResponse } from "../../libs/types.js";
+import type { ToolArgs, ToolCallResponse } from "../../libs/types.js";
 import { PREVIEW_CHARS } from "../callLog/constants.js";
 import { batchCrawl, crawlExists, getDeepCrawlStatusText, startDeepCrawl } from "../crawl/index.js";
 import * as dataStore from "../dataStore/index.js";
@@ -31,7 +40,8 @@ import { getJobStatusText, jobExists, startJob } from "../jobs/index.js";
 import type { JobTaskInput } from "../jobs/types.js";
 import { findSkillForHostname, listSkills, saveSkill } from "../skills/index.js";
 import * as streamSink from "../streamSink/index.js";
-import type { ToolHandlerCtx } from "./types.js";
+import { isActionAllowed } from "./capabilities.js";
+import type { StoredArtifact, ToolHandlerCtx } from "./types.js";
 
 export type { ToolHandlerCtx };
 
@@ -41,6 +51,12 @@ function saveHarToFile(harData: unknown, sessionId: string): string {
   const fullPath = join(HAR_DIR, filename);
   writeFileSync(fullPath, JSON.stringify(harData, null, 2), "utf-8");
   return fullPath;
+}
+
+const EVIDENCE_PROFILES = ["none", "failure", "step", "flow", "full"] as const satisfies readonly EvidenceProfile[];
+
+function isEvidenceProfile(value: unknown): value is EvidenceProfile {
+  return typeof value === "string" && EVIDENCE_PROFILES.includes(value as EvidenceProfile);
 }
 
 function unknownAction(gateway: string, action: string, valid: readonly string[]): ToolCallResponse {
@@ -64,10 +80,11 @@ function unknownAction(gateway: string, action: string, valid: readonly string[]
  * "found no element matching X" only discovered whenever someone finally
  * hits Run in the panel.
  */
-function findBadFlowStep(steps: FlowStep[]): { index: number; reason: string } | null {
+function findBadFlowStep(steps: readonly (FlowStep | FlowStepV2)[]): { index: number; reason: string } | null {
   for (let i = 0; i < steps.length; i++) {
-    const step = steps[i];
-    if (!step) continue;
+    const rawStep = steps[i];
+    if (!rawStep) continue;
+    const step = normalizeFlowStep(rawStep);
     const needsTarget =
       step.action !== "scroll" &&
       step.action !== "drag" &&
@@ -98,9 +115,30 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
     inlineImages: INLINE_IMAGES,
     saveScreenshotToFile,
     saveVideoToFile,
+    saveEvidenceTrack,
+    capabilityProfile,
   } = ctx;
-  const { name, arguments: args } = request.params;
+  const { name, arguments: rawArgs } = request.params;
+  const rawTabId = typeof rawArgs?.tabId === "number" ? rawArgs.tabId : undefined;
+  const tabId = rawTabId !== undefined && Number.isInteger(rawTabId) && rawTabId > 0 ? rawTabId : undefined;
+  const args: ToolArgs = rawArgs
+    ? {
+        ...rawArgs,
+        ...(rawArgs.tabId !== undefined ? { tabId } : {}),
+      }
+    : undefined;
   const action = typeof args?.action === "string" ? args.action : "";
+  if (!isActionAllowed(name, action, capabilityProfile)) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Error: Action "${action}" is disabled by capability profile "${capabilityProfile}". Use an allowed profile or choose another action.`,
+        },
+      ],
+      isError: true,
+    };
+  }
   try {
     let result: unknown;
     switch (name) {
@@ -119,19 +157,43 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
       case Gateway.Act:
         switch (action) {
           case ActAction.Click:
-            result = await executeCommand("click", { nodeId: args?.nodeId, tabId: args?.tabId }, 20000);
+            result = await executeCommand(
+              "click",
+              {
+                nodeId: args?.nodeId,
+                ref: args?.ref,
+                documentId: args?.documentId,
+                confirmRisky: args?.confirmRisky,
+                tabId: args?.tabId,
+              },
+              20000,
+            );
             break;
           case ActAction.Type:
             result = await executeCommand(
               "type",
-              { text: args?.text, nodeId: args?.nodeId, tabId: args?.tabId },
+              {
+                text: args?.text,
+                nodeId: args?.nodeId,
+                ref: args?.ref,
+                documentId: args?.documentId,
+                confirmRisky: args?.confirmRisky,
+                tabId: args?.tabId,
+              },
               20000,
             );
             break;
           case ActAction.PressKey:
             result = await executeCommand(
               "press_key",
-              { key: args?.key, nodeId: args?.nodeId, tabId: args?.tabId },
+              {
+                key: args?.key,
+                nodeId: args?.nodeId,
+                ref: args?.ref,
+                documentId: args?.documentId,
+                confirmRisky: args?.confirmRisky,
+                tabId: args?.tabId,
+              },
               20000,
             );
             break;
@@ -202,15 +264,17 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
                   isError: true,
                 };
               }
-              const snapFilePath = saveScreenshotToFile(snap.dataBase64 as string, "jpeg");
+              const snapArtifact = saveScreenshotToFile(snap.dataBase64 as string, "jpeg");
+              const sendInline = args?.inline === true || args?.inlineImage === true || INLINE_IMAGES;
+              const fileUrl = `file:///${snapArtifact.path.replace(/\\/g, "/")}`;
               return {
                 content: [
-                  ...(INLINE_IMAGES
+                  ...(sendInline
                     ? [{ type: "image" as const, data: snap.dataBase64 as string, mimeType: "image/jpeg" }]
                     : []),
                   {
                     type: "text",
-                    text: `${snap.message}\nScreenshot saved to ${snapFilePath}${INLINE_IMAGES ? " (also shown above)" : " — open it to see the annotated boxes; inline image content is off by default (see BROWSERCONTROL_INLINE_IMAGES)"}.${snap._flowWarning ? `\n\n[${snap._flowWarning}]` : ""}\n\n${JSON.stringify(snap.nodes, null, 2)}`,
+                    text: `${snap.message}\nScreenshot artifact ${snapArtifact.ref.id} (${snapArtifact.ref.byteSize} bytes).\nFile: ${snapArtifact.path}\nMarkdown: ![Annotated Screenshot](${fileUrl})${sendInline ? " (image included in response)" : " (pass inline:true to include raw image in response)"}.${snap._flowWarning ? `\n\n[${snap._flowWarning}]` : ""}\n\n${JSON.stringify(snap.nodes, null, 2)}`,
                   },
                 ],
               };
@@ -225,6 +289,7 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
                   tabId: args?.tabId,
                   compact: args?.compact,
                   format: args?.compact ? "compact" : undefined,
+                  semantic: args?.semantic,
                 });
             break;
           }
@@ -235,7 +300,12 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
             result = await executeCommand("reading_mode", { maxChars: args?.maxChars, tabId: args?.tabId });
             break;
           case InspectAction.InspectElement:
-            result = await executeCommand("inspect_element", { nodeId: args?.nodeId, tabId: args?.tabId });
+            result = await executeCommand("inspect_element", {
+              nodeId: args?.nodeId,
+              ref: args?.ref,
+              documentId: args?.documentId,
+              tabId: args?.tabId,
+            });
             break;
           case InspectAction.Screenshot: {
             const shot = await executeCommand("screenshot", {
@@ -255,10 +325,12 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
                 isError: true,
               };
             }
-            const shotFilePath = saveScreenshotToFile(shot.dataBase64 as string, shot.format as string);
+            const shotArtifact = saveScreenshotToFile(shot.dataBase64 as string, shot.format as string);
+            const sendInline = args?.inline === true || args?.inlineImage === true || INLINE_IMAGES;
+            const fileUrl = `file:///${shotArtifact.path.replace(/\\/g, "/")}`;
             return {
               content: [
-                ...(INLINE_IMAGES
+                ...(sendInline
                   ? [
                       {
                         type: "image" as const,
@@ -269,7 +341,7 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
                   : []),
                 {
                   type: "text",
-                  text: `Captured ${shot.format} screenshot (${args?.fullPage ? "full page" : "viewport"}). Saved to ${shotFilePath}${INLINE_IMAGES ? " (also shown above)" : " — open it to view; inline image content is off by default (see BROWSERCONTROL_INLINE_IMAGES)"}.${shot._flowWarning ? `\n\n[${shot._flowWarning}]` : ""}`,
+                  text: `Captured ${shot.format} screenshot (${args?.fullPage ? "full page" : "viewport"}). Artifact ${shotArtifact.ref.id} (${shotArtifact.ref.byteSize} bytes).\nFile: ${shotArtifact.path}\nMarkdown: ![Screenshot](${fileUrl})${sendInline ? " (image included in response)" : " (pass inline:true to include raw image in response)"}.${shot._flowWarning ? `\n\n[${shot._flowWarning}]` : ""}`,
                 },
               ],
             };
@@ -305,19 +377,27 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
               blockIds.push(added.blockId);
               sessionTotalChars = added.sessionTotalChars;
             }
-            const preview = firstBlock.slice(0, PREVIEW_CHARS);
+            const fullMarkdown = blocks.join("\n\n---\n\n");
+            const returnDirectContent = args?.returnContent !== false;
+            const contentText = returnDirectContent
+              ? `\n\n### Extracted Content (Markdown):\n\n${fullMarkdown}`
+              : `\n\nPreview of first block:\n${firstBlock.slice(0, PREVIEW_CHARS)}${firstBlock.length > PREVIEW_CHARS ? "…" : ""}`;
             return {
               content: [
                 {
                   type: "text",
-                  text: `Extracted ${blocks.length} of ${sel?.count} matched element(s) from ${source}. Saved as docs block${blockIds.length > 1 ? "s" : ""} [${blockIds.join(", ")}] — this session now has ${sessionTotalChars} docs chars total. Content is NOT included in this response; use browser_knowledge({action:"query_docs", docsAction:"read", blockId:${blockIds[0]}}) to retrieve one, or {docsAction:"search", query:"..."} to search across blocks.${sel?.truncated ? " [truncated at maxChars/maxMatches this call — narrow the selector or raise the caps for more]" : ""}\n\nPreview of first block:\n${preview}${firstBlock.length > PREVIEW_CHARS ? "…" : ""}`,
+                  text: `Extracted ${blocks.length} of ${sel?.count} matched element(s) from ${source}. Saved as docs block${blockIds.length > 1 ? "s" : ""} [${blockIds.join(", ")}] — this session now has ${sessionTotalChars} docs chars total.${sel?.truncated ? " [truncated at maxChars/maxMatches this call — narrow the selector or raise the caps for more]" : ""}${contentText}`,
                 },
               ],
             };
           }
           case InspectAction.NetworkRequests:
             result = args?.requestId
-              ? await executeCommand("network_request_detail", { requestId: args.requestId, tabId: args?.tabId })
+              ? await executeCommand("network_request_detail", {
+                  requestId: args.requestId,
+                  includeBody: args?.includeBody === true,
+                  tabId: args?.tabId,
+                })
               : await executeCommand("network_requests", {
                   resourceTypes: args?.resourceTypes,
                   filter: args?.filter,
@@ -328,6 +408,22 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
           case InspectAction.NetworkClear:
             result = await executeCommand("network_clear", { tabId: args?.tabId });
             break;
+          case InspectAction.Evidence: {
+            const requestedMode = args?.evidenceAction;
+            if (
+              requestedMode !== undefined &&
+              !Object.values(EvidenceAction).includes(requestedMode as EvidenceAction)
+            ) {
+              return unknownAction("evidence", String(requestedMode), Object.values(EvidenceAction));
+            }
+            result = await executeCommand("evidence", {
+              mode: (requestedMode as EvidenceAction | undefined) ?? EvidenceAction.Overview,
+              after: args?.after,
+              limit: args?.limit,
+              sessionId: SESSION_ID,
+            });
+            break;
+          }
           case InspectAction.PeekScreen: {
             const peek = await executeCommand("peek_screen", {
               screenshot: args?.screenshot,
@@ -340,10 +436,11 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
                 isError: true,
               };
             }
-            let shotFilePath: string | undefined;
+            const sendInline = args?.inline === true || args?.inlineImage === true || INLINE_IMAGES;
+            let shotArtifact: ReturnType<typeof saveScreenshotToFile> | undefined;
             if (peek?.screenshotBase64) {
               try {
-                shotFilePath = saveScreenshotToFile(peek.screenshotBase64 as string, "jpeg");
+                shotArtifact = saveScreenshotToFile(peek.screenshotBase64 as string, "jpeg");
               } catch {}
             }
             const isWorkspace = peek?.isWorkspaceTab ? "🤖 AI Workspace" : "Personal / Non-Workspace Tab (Read-Only)";
@@ -351,11 +448,14 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
             if (peek?.selectedText) details += `\n\n[SELECTION]\n"${peek.selectedText}"`;
             if (peek?.h1) details += `\n\nHeading: ${peek.h1}`;
             if (peek?.text) details += `\n\nPage Text Content (${peek?.textLength} chars):\n${peek.text}`;
-            if (shotFilePath) details += `\n\n[SCREENSHOT] saved to: ${shotFilePath}`;
+            if (shotArtifact) {
+              const fileUrl = `file:///${shotArtifact.path.replace(/\\/g, "/")}`;
+              details += `\n\n[SCREENSHOT]\nArtifact: ${shotArtifact.ref.id} (${shotArtifact.ref.byteSize} bytes)\nFile: ${shotArtifact.path}\nMarkdown: ![Peek Screenshot](${fileUrl})${sendInline ? " (image included in response)" : " (pass inline:true to include raw image in response)"}`;
+            }
 
             return {
               content: [
-                ...(INLINE_IMAGES && peek?.screenshotBase64
+                ...(sendInline && peek?.screenshotBase64
                   ? [{ type: "image" as const, data: peek.screenshotBase64 as string, mimeType: "image/jpeg" as const }]
                   : []),
                 { type: "text", text: details },
@@ -389,19 +489,44 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
           case SessionAction.ListTabs:
             result = await executeCommand("list_tabs", { scope: args?.scope });
             break;
-          case SessionAction.SwitchTab:
-            result = await executeCommand("switch_tab", { tabId: args?.tabId });
+          case SessionAction.SwitchTab: {
+            if (!tabId) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Error: A valid positive tabId is required for switch_tab${rawTabId !== undefined ? ` (got ${rawTabId})` : ""}. Call browser_session({action:"list_tabs"}) to see open tabs and their IDs.`,
+                  },
+                ],
+                isError: true,
+              };
+            }
+            result = await executeCommand("switch_tab", { tabId });
             break;
-          case SessionAction.CloseTab:
-            result = await executeCommand("close_tab", { tabId: args?.tabId });
+          }
+          case SessionAction.CloseTab: {
+            if (!tabId) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Error: A valid positive tabId is required for close_tab${rawTabId !== undefined ? ` (got ${rawTabId})` : ""}. Call browser_session({action:"list_tabs"}) to see open tabs and their IDs.`,
+                  },
+                ],
+                isError: true,
+              };
+            }
+            result = await executeCommand("close_tab", { tabId });
             break;
+          }
           case SessionAction.SetSessionName:
             dataStore.setSessionName(SESSION_ID, String(args?.name ?? ""));
             result = { success: true, message: `Session ${SESSION_ID} renamed to "${args?.name}".` };
             break;
           case SessionAction.StartRecording: {
-            streamSink.startRecordingStream(SESSION_ID);
-            const ack = await executeCommand("start_capture");
+            const profile = isEvidenceProfile(args?.profile) ? args.profile : "flow";
+            streamSink.startRecordingStream(SESSION_ID, "webm", profile);
+            const ack = await executeCommand("start_capture", { profile });
             if (!ack?.success) {
               streamSink.stopRecordingStream();
               return {
@@ -423,11 +548,11 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
           case SessionAction.StopRecording: {
             const rec = await executeCommand("stop_capture", {}, 60000);
             const streamResult = streamSink.stopRecordingStream();
-            let recFilePath = streamResult?.filePath;
-            if (!recFilePath && rec?.dataBase64) {
-              recFilePath = saveVideoToFile(rec.dataBase64 as string, (rec.format as string) || "webm");
+            let videoArtifact = streamResult?.artifactRef;
+            if (!videoArtifact && rec?.dataBase64) {
+              videoArtifact = saveVideoToFile(rec.dataBase64 as string, (rec.format as string) || "webm").ref;
             }
-            if (!recFilePath) {
+            if (!videoArtifact) {
               return {
                 content: [
                   {
@@ -438,17 +563,34 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
                 isError: true,
               };
             }
+            let timelineArtifact: StoredArtifact | undefined;
+            try {
+              const exported = await executeCommand(
+                "evidence",
+                { mode: "export", sessionId: SESSION_ID, profile: "flow", limit: 500 },
+                10000,
+              );
+              const overview = exported.overview;
+              const events = exported.events;
+              if (overview && typeof overview === "object" && Array.isArray(events)) {
+                timelineArtifact = saveEvidenceTrack({
+                  overview: overview as EvidenceRun,
+                  events: events as EvidenceTimelineEvent[],
+                });
+              }
+            } catch {}
             const durationMs = streamResult?.durationMs ?? (rec?.durationMs as number) ?? 0;
             const seconds = (durationMs / 1000).toFixed(1);
             const frameNote =
               rec?.frameCount === 0
                 ? " Warning: 0 frames captured — the page may not have repainted during the recording; check the daemon log."
                 : ` (${rec?.frameCount ?? streamResult?.chunkCount ?? 0} frames)`;
+            const timelineNote = timelineArtifact ? ` Event track: ${timelineArtifact.ref.id}.` : "";
             return {
               content: [
                 {
                   type: "text",
-                  text: `Saved ${seconds}s webm recording to ${recFilePath}${frameNote}. To see what actions were taken during the recording, check data/logs/session-*.jsonl for entries in that time window.${rec?._flowWarning ? `\n\n[${rec._flowWarning}]` : ""}`,
+                  text: `Saved ${seconds}s webm recording as artifact ${videoArtifact.id} (${videoArtifact.byteSize} bytes)${frameNote}${timelineNote} Query browser_inspect({action:"evidence", evidenceAction:"overview"}) for bounded run counts.${rec?._flowWarning ? `\n\n[${rec._flowWarning}]` : ""}`,
                 },
               ],
             };
@@ -470,6 +612,34 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
                 argsSummary: c.argsSummary,
               })),
             };
+            break;
+          }
+          case SessionAction.GetArtifact: {
+            const artifactId = typeof args?.artifactId === "string" ? args.artifactId : "";
+            if (!artifactId) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Error: Missing artifactId (hint: use the opaque id returned by screenshot, peek_screen, or stop_recording.)`,
+                  },
+                ],
+                isError: true,
+              };
+            }
+            const artifact = dataStore.getArtifactMeta(artifactId, SESSION_ID, args?.allSessions === true);
+            if (!artifact) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Error: No artifact with id "${artifactId}" in the selected session scope.`,
+                  },
+                ],
+                isError: true,
+              };
+            }
+            result = { artifact };
             break;
           }
           default:
@@ -640,7 +810,7 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
                 isError: true,
               };
             }
-            const flowSteps = steps as FlowStep[];
+            const flowSteps = steps as Array<FlowStep | FlowStepV2>;
             const badStep = findBadFlowStep(flowSteps);
             if (badStep) {
               const badStepItem = flowSteps[badStep.index];
@@ -836,6 +1006,8 @@ export async function handleToolCall(request: CallToolRequest, ctx: ToolHandlerC
             result = await executeCommand("dev_layout", {
               selector: args?.selector,
               nodeId: args?.nodeId,
+              ref: args?.ref,
+              documentId: args?.documentId,
               focus: args?.focus,
               tabId: args?.tabId,
             });

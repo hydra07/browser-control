@@ -7,6 +7,7 @@
     "scripts": {
         "dev": "wxt",
         "check": "tsc --noEmit",
+        "test": "bun test",
         "build": "wxt build",
         "zip": "wxt zip",
         "postinstall": "wxt prepare",
@@ -20,7 +21,10 @@
     },
     "devDependencies": {
         "@tailwindcss/vite": "^4.3.3",
+        "@types/bun": "^1.3.14",
         "@types/chrome": "^0.0.263",
+        "@types/filesystem": "^0.0.36",
+        "bun-types": "1.3.14",
         "@types/react": "^19.2.18",
         "@types/react-dom": "^19.2.4",
         "@wxt-dev/module-react": "^1.1.5",

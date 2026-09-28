@@ -1,4 +1,4 @@
-import type { Point, TrajectoryConfig } from "@browsercontrol/shared";
+import type { Point, SettleReason, TrajectoryConfig } from "@browsercontrol/shared";
 
 export type AxInfo = { role?: string; name?: string };
 export type ActionResult =
@@ -7,9 +7,10 @@ export type ActionResult =
           message: string;
           role?: string;
           name?: string;
+          settleReason?: SettleReason;
           _riskWarning?: string;
       }
-    | { error: string; hint?: string };
+    | { error: string; hint?: string; settleReason?: SettleReason };
 
 export interface DragOptions {
     fast: boolean;

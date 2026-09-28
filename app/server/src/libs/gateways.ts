@@ -38,8 +38,16 @@ export const InspectAction = {
   NetworkRequests: "network_requests",
   NetworkClear: "network_clear",
   PeekScreen: "peek_screen",
+  Evidence: "evidence",
 } as const;
 export type InspectAction = (typeof InspectAction)[keyof typeof InspectAction];
+
+export const EvidenceAction = {
+  Overview: "overview",
+  Events: "events",
+  Failure: "failure",
+} as const;
+export type EvidenceAction = (typeof EvidenceAction)[keyof typeof EvidenceAction];
 
 export const SessionAction = {
   Navigate: "navigate",
@@ -50,6 +58,7 @@ export const SessionAction = {
   StartRecording: "start_recording",
   StopRecording: "stop_recording",
   GetMetrics: "get_metrics",
+  GetArtifact: "get_artifact",
 } as const;
 export type SessionAction = (typeof SessionAction)[keyof typeof SessionAction];
 

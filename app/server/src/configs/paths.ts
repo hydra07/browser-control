@@ -15,9 +15,11 @@ export const DATA_DIR = join(REPO_ROOT, "data");
 export const IMAGES_DIR = join(DATA_DIR, "images");
 export const VIDEOS_DIR = join(DATA_DIR, "videos");
 export const LOGS_DIR = join(DATA_DIR, "logs");
+export const EVIDENCE_DIR = join(DATA_DIR, "evidence");
 export const HAR_DIR = join(DATA_DIR, "har");
 export const AGENT_SANDBOX_DIR = join(DATA_DIR, "sandbox", "agent");
 export const MCP_CONFIG_PATH = join(AGENT_SANDBOX_DIR, "mcp-config.json");
+export const AUTH_TOKEN_PATH = join(DATA_DIR, "daemon-auth-token");
 export const DB_PATH = join(DATA_DIR, "index.sqlite");
 
 /** Pre-migration locations — daemon.ts moves anything found here into the data/-rooted paths above on startup; readers fall back to these only if that hasn't happened yet in this checkout. */

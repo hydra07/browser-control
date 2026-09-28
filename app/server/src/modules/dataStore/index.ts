@@ -15,11 +15,14 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync, statSync, unlinkSync } from "node:fs";
 import { BenchmarkEngine, type RawCallRecord } from "@browsercontrol/benchmark";
-import type { FlowStep } from "@browsercontrol/shared";
+import type { ArtifactRef, FlowStep, FlowStepV2 } from "@browsercontrol/shared";
+import { migrateFlowStep, normalizeFlowStep } from "@browsercontrol/shared";
 import { DATA_DIR, DB_PATH } from "../../configs/paths.js";
 import { errorMessage } from "../../libs/errorMessage.js";
+import { redactValue } from "../../libs/redaction.js";
 import { HOSTS_NAME_SHOW_CAP, HOSTS_STORE_CAP } from "./constants.js";
 import type {
+  ArtifactMeta,
   BenchmarkMetrics,
   DeleteSummary,
   DocsBlockFull,
@@ -73,10 +76,28 @@ db.run(`
     kind TEXT NOT NULL,
     path TEXT NOT NULL,
     source TEXT,
+    profile TEXT,
+    mime_type TEXT,
+    redacted INTEGER NOT NULL DEFAULT 0,
+    retention_deadline INTEGER,
+    action_id TEXT,
+    flow_id TEXT,
     size_bytes INTEGER,
     created_at INTEGER NOT NULL
   )
 `);
+for (const column of [
+  "profile TEXT",
+  "mime_type TEXT",
+  "redacted INTEGER NOT NULL DEFAULT 0",
+  "retention_deadline INTEGER",
+  "action_id TEXT",
+  "flow_id TEXT",
+]) {
+  try {
+    db.run(`ALTER TABLE artifacts ADD COLUMN ${column}`);
+  } catch {}
+}
 db.run(`CREATE INDEX IF NOT EXISTS idx_artifacts_session ON artifacts(session_id)`);
 db.run(`
   CREATE TABLE IF NOT EXISTS docs_blocks (
@@ -126,10 +147,14 @@ db.run(`
     description TEXT,
     domain TEXT,
     steps_json TEXT NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 1,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )
 `);
+try {
+  db.run(`ALTER TABLE flows ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 1`);
+} catch {}
 
 db.run(`
   CREATE TABLE IF NOT EXISTS tool_calls (
@@ -256,16 +281,100 @@ export function setSessionName(sessionId: string, name: string): void {
 
 export function recordArtifact(input: RecordArtifactInput): number {
   const result = db
-    .query(`INSERT INTO artifacts (session_id, kind, path, source, size_bytes, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+    .query(
+      `INSERT INTO artifacts (session_id, kind, path, source, profile, mime_type, redacted, retention_deadline, action_id, flow_id, size_bytes, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
     .run(
       input.sessionId,
       input.kind,
       input.path,
       input.source ?? null,
+      input.profile ?? null,
+      input.mimeType ?? null,
+      input.redacted ? 1 : 0,
+      input.retentionDeadline ?? null,
+      input.actionId ?? null,
+      input.flowId ?? null,
       input.sizeBytes ?? null,
       input.createdAt ?? Date.now(),
     );
   return Number(result.lastInsertRowid);
+}
+
+/** Converts an internal SQLite artifact row id into the opaque model-facing handle. */
+export function artifactRefFor(
+  id: number,
+  kind: RecordArtifactInput["kind"],
+  byteSize: number,
+  redacted = false,
+): ArtifactRef {
+  return {
+    id: `a${id}`,
+    kind: kind === "image" ? "screenshot" : kind === "video" ? "video" : kind === "trace" ? "trace" : "other",
+    byteSize: Math.max(0, Math.floor(byteSize)),
+    redacted,
+  };
+}
+
+function parseArtifactId(id: string): number | undefined {
+  const match = /^a([1-9][0-9]*)$/.exec(id.trim());
+  if (!match) return undefined;
+  const numericId = Number(match[1]);
+  return Number.isSafeInteger(numericId) ? numericId : undefined;
+}
+
+/** Returns bounded artifact metadata without exposing the local storage path. */
+export function getArtifactMeta(id: string, sessionId: string, allSessions = false): ArtifactMeta | undefined {
+  const numericId = parseArtifactId(id);
+  if (numericId == null) return undefined;
+  const row = (
+    allSessions
+      ? db
+          .query(
+            `SELECT id, kind, path, source, profile, mime_type, redacted, retention_deadline, action_id, flow_id, size_bytes, created_at FROM artifacts WHERE id = ?`,
+          )
+          .get(numericId)
+      : db
+          .query(
+            `SELECT id, kind, path, source, profile, mime_type, redacted, retention_deadline, action_id, flow_id, size_bytes, created_at FROM artifacts WHERE id = ? AND session_id = ?`,
+          )
+          .get(numericId, sessionId)
+  ) as
+    | {
+        id: number;
+        kind: string;
+        path: string;
+        source: string | null;
+        profile: "none" | "failure" | "step" | "flow" | "full" | null;
+        mime_type: string | null;
+        redacted: number;
+        retention_deadline: number | null;
+        action_id: string | null;
+        flow_id: string | null;
+        size_bytes: number | null;
+        created_at: number;
+      }
+    | undefined;
+  if (!row) return undefined;
+  let byteSize = row.size_bytes ?? 0;
+  if (row.size_bytes == null) {
+    try {
+      byteSize = statSync(row.path).size;
+    } catch {}
+  }
+  const kind: RecordArtifactInput["kind"] =
+    row.kind === "image" || row.kind === "video" || row.kind === "trace" || row.kind === "log" ? row.kind : "log";
+  return {
+    ref: artifactRefFor(row.id, kind, byteSize, row.redacted === 1),
+    source: row.source,
+    profile: row.profile,
+    mimeType: row.mime_type,
+    retentionDeadline: row.retention_deadline,
+    actionId: row.action_id,
+    flowId: row.flow_id,
+    createdAt: row.created_at,
+  };
 }
 
 function metaFromRow(row: DocsBlockRow): DocsBlockMeta {
@@ -445,12 +554,20 @@ export function getSessionDetail(id: string): SessionDetail | undefined {
     | undefined;
   if (!s) return undefined;
   const artifacts = db
-    .query(`SELECT id, kind, path, source, size_bytes, created_at FROM artifacts WHERE session_id = ? ORDER BY id`)
+    .query(
+      `SELECT id, kind, path, source, profile, mime_type, redacted, retention_deadline, action_id, flow_id, size_bytes, created_at FROM artifacts WHERE session_id = ? ORDER BY id`,
+    )
     .all(id) as Array<{
     id: number;
     kind: string;
     path: string;
     source: string | null;
+    profile: "none" | "failure" | "step" | "flow" | "full" | null;
+    mime_type: string | null;
+    redacted: number;
+    retention_deadline: number | null;
+    action_id: string | null;
+    flow_id: string | null;
     size_bytes: number | null;
     created_at: number;
   }>;
@@ -475,6 +592,12 @@ export function getSessionDetail(id: string): SessionDetail | undefined {
       kind: a.kind,
       path: a.path,
       source: a.source,
+      profile: a.profile,
+      mimeType: a.mime_type,
+      redacted: a.redacted === 1,
+      retentionDeadline: a.retention_deadline,
+      actionId: a.action_id,
+      flowId: a.flow_id,
       sizeBytes: a.size_bytes,
       createdAt: a.created_at,
     })),
@@ -563,21 +686,31 @@ export function saveFlow(input: {
   name: string;
   description?: string;
   domain?: string;
-  steps: FlowStep[];
+  steps: readonly (FlowStep | FlowStepV2)[];
 }): FlowMeta {
   const id = input.id ?? crypto.randomUUID();
   const now = Date.now();
-  const stepsJson = JSON.stringify(input.steps);
+  const safeSteps = input.steps.map((step) => {
+    const migratedStep = migrateFlowStep(step);
+    const runtimeStep = normalizeFlowStep(migratedStep);
+    const targetHint = `${runtimeStep.role ?? ""} ${runtimeStep.name ?? ""} ${runtimeStep.selector ?? ""}`;
+    const safeStep = redactValue(migratedStep) as FlowStepV2;
+    return /password|passcode|pin|token|secret|credential/i.test(targetHint)
+      ? { ...safeStep, text: migratedStep.text ? "[REDACTED]" : undefined }
+      : safeStep;
+  });
+  const stepsJson = JSON.stringify(safeSteps);
   const existing = db.query(`SELECT created_at FROM flows WHERE id = ?`).get(id) as { created_at: number } | undefined;
   const createdAt = existing?.created_at ?? now;
   db.query(
-    `INSERT INTO flows (id, name, description, domain, steps_json, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO flows (id, name, description, domain, steps_json, schema_version, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name, description = excluded.description,
       domain = excluded.domain, steps_json = excluded.steps_json,
+      schema_version = excluded.schema_version,
       updated_at = excluded.updated_at`,
-  ).run(id, input.name, input.description ?? null, input.domain ?? null, stepsJson, createdAt, now);
+  ).run(id, input.name, input.description ?? null, input.domain ?? null, stepsJson, 2, createdAt, now);
   return {
     id,
     name: input.name,
@@ -602,11 +735,15 @@ export function listFlows(opts: { domain?: string } = {}): FlowMeta[] {
 export function getFlow(id: string): FlowFull | undefined {
   const row = db.query(`SELECT * FROM flows WHERE id = ?`).get(id) as FlowRow | undefined;
   if (!row) return undefined;
-  let steps: FlowStep[] = [];
+  let steps: FlowStepV2[] = [];
   try {
-    steps = JSON.parse(row.steps_json);
+    steps = JSON.parse(row.steps_json) as FlowStepV2[];
   } catch {}
-  return { ...metaFromFlowRow(row), steps };
+  return {
+    ...metaFromFlowRow(row),
+    schemaVersion: row.schema_version === 2 ? 2 : 1,
+    steps,
+  };
 }
 
 export function deleteFlow(id: string): boolean {

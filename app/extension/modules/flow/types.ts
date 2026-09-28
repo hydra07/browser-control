@@ -1,3 +1,4 @@
+import type { DriftKind, SettleReason } from "@browsercontrol/shared";
 import type { AxInfo } from "../actions/types.js";
 import type { SnapshotEntry } from "../snapshot/types.js";
 
@@ -8,6 +9,10 @@ export type ResolvedStepTarget = {
     // consistent shape to check.
     axInfo: AxInfo;
     ambiguous?: boolean;
+    candidateCount?: number;
+    confidence?: number;
+    recoveryHint?: string;
+    drift?: DriftKind;
 };
 
 export type SnapshotDelta = {
@@ -22,6 +27,10 @@ export type FlowStepResult = {
     action: string;
     matched?: { role?: string; name?: string } | { selector: string };
     ambiguous?: boolean;
+    confidence?: number;
+    recoveryHint?: string;
+    drift?: DriftKind;
+    settleReason?: SettleReason;
     success: boolean;
     error?: string;
     delta?: SnapshotDelta;
@@ -30,7 +39,16 @@ export type FlowStepResult = {
 export type FlowReport = {
     success: boolean;
     stoppedAtStep?: number;
-    reason?: "too_many_steps" | "not_found" | "risky_action_blocked" | "action_failed" | "assert_failed" | "timeout";
+    reason?:
+        | "too_many_steps"
+        | "not_found"
+        | "ambiguous"
+        | "risky_action_blocked"
+        | "action_failed"
+        | "assert_failed"
+        | "behavior_drift"
+        | "target_drift"
+        | "timeout";
     message?: string;
     steps: FlowStepResult[];
     finalSnapshot?: SnapshotEntry[];

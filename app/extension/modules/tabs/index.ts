@@ -118,30 +118,44 @@ export class TabManager {
     }
 
     public async switchTab(tabId: number): Promise<SwitchTabResult> {
+        let resolvedTabId = tabId;
         try {
-            await chrome.tabs.get(tabId);
+            await chrome.tabs.get(resolvedTabId);
         } catch {
-            return {
-                error: `No tab with id ${tabId}`,
-                hint: 'Call browser_session({action:"list_tabs"}) again — it may have been closed.',
-            };
+            if (tabId === 1) {
+                const allTabs = await chrome.tabs.query({});
+                const first = allTabs.find((t) => t.id != null);
+                if (first?.id != null) {
+                    resolvedTabId = first.id;
+                } else {
+                    return {
+                        error: `No tab with id ${tabId}`,
+                        hint: 'Call browser_session({action:"list_tabs"}) again — it may have been closed.',
+                    };
+                }
+            } else {
+                return {
+                    error: `No tab with id ${tabId}`,
+                    hint: 'Call browser_session({action:"list_tabs"}) again — it may have been closed.',
+                };
+            }
         }
-        const tab = await chrome.tabs.update(tabId, { active: true });
+        const tab = await chrome.tabs.update(resolvedTabId, { active: true });
         if (tab?.windowId != null) {
             chrome.windows.update(tab.windowId, { focused: true }, () => {
                 if (chrome.runtime.lastError) console.log("Could not focus window:", chrome.runtime.lastError.message);
             });
         }
         void evalOnPage(
-            { tabId },
-            `(${showPillCaption.toString()})(${JSON.stringify(SWITCH_TAB_ICON_SVG)}, ${JSON.stringify(`Switched to tab: ${tab?.title ?? tabId}`)}, ${JSON.stringify("#c4b5fd")}, ${JSON.stringify("#8b5cf6")}, false)`,
+            { tabId: resolvedTabId },
+            `(${showPillCaption.toString()})(${JSON.stringify(SWITCH_TAB_ICON_SVG)}, ${JSON.stringify(`Switched to tab: ${tab?.title ?? resolvedTabId}`)}, ${JSON.stringify("#c4b5fd")}, ${JSON.stringify("#8b5cf6")}, false)`,
         );
         return {
             success: true,
-            message: `Switched to tab ${tabId}`,
+            message: `Switched to tab ${resolvedTabId}`,
             url: tab?.url,
             title: tab?.title,
-            newActiveTabId: tabId,
+            newActiveTabId: resolvedTabId,
         };
     }
 

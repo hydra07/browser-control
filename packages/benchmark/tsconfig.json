@@ -2,12 +2,13 @@
     "compilerOptions": {
         "target": "ES2022",
         "module": "ES2022",
-        "moduleResolution": "node",
+        "moduleResolution": "bundler",
         "strict": true,
         "noUncheckedIndexedAccess": true,
         "esModuleInterop": true,
         "skipLibCheck": true,
         "forceConsistentCasingInFileNames": true,
+        "types": ["bun"],
         "noEmit": true
     },
     "include": ["src/**/*.ts"]

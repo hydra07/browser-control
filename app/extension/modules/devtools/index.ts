@@ -3,7 +3,7 @@
  */
 import { sendCommand } from "../../libs/cdp.js";
 import { errorMessage } from "../../libs/errorMessage.js";
-import { listNetworkRequests } from "../network/index.js";
+import { getNetworkRequestDetail, listNetworkRequests } from "../network/index.js";
 import { telemetryCollector } from "../telemetry/index.js";
 
 export type { MemoryMetricsReport } from "./types.js";
@@ -218,6 +218,19 @@ export async function handleAnalyzeHar(
         slowestRequest: slowestUrl ? `${slowestUrl.slice(0, 80)} (${slowestDuration}ms)` : "none",
     };
 
+    // Body retrieval is opt-in and remains bounded/redacted by the network module.
+    const requestsForHar = opts.includeBodies
+        ? await Promise.all(
+              rawRequests.map(async (request) => {
+                  if (!request.requestId) return request;
+                  const detail = await getNetworkRequestDetail(_target, request.requestId, true);
+                  const body = typeof detail.body === "string" ? detail.body : undefined;
+                  const requestBody = typeof detail.postData === "string" ? detail.postData : undefined;
+                  return body || requestBody ? { ...request, responseBody: body, requestBody } : request;
+              }),
+          )
+        : rawRequests;
+
     // Format into standard HAR 1.2 structure
     const harLog = {
         version: "1.2",
@@ -230,7 +243,7 @@ export async function handleAnalyzeHar(
                 pageTimings: {},
             },
         ],
-        entries: rawRequests.map((r) => ({
+        entries: requestsForHar.map((r) => ({
             startedDateTime: new Date(r.timestamp ?? Date.now()).toISOString(),
             time: r.durationMs ?? 0,
             request: {
@@ -239,9 +252,12 @@ export async function handleAnalyzeHar(
                 httpVersion: "HTTP/1.1",
                 headers: Object.entries(r.requestHeaders ?? {}).map(([name, value]) => ({ name, value })),
                 queryString: [],
-                postData: r.postData ? { mimeType: "text/plain", text: r.postData } : undefined,
+                postData:
+                    "requestBody" in r && typeof r.requestBody === "string"
+                        ? { mimeType: "text/plain", text: r.requestBody }
+                        : undefined,
                 headersSize: -1,
-                bodySize: r.postData ? r.postData.length : 0,
+                bodySize: "requestBody" in r && typeof r.requestBody === "string" ? r.requestBody.length : 0,
             },
             response: {
                 status: r.status ?? (r.failed ? 0 : 200),
@@ -251,6 +267,7 @@ export async function handleAnalyzeHar(
                 content: {
                     size: r.sizeBytes ?? 0,
                     mimeType: r.mimeType ?? "text/plain",
+                    ...("responseBody" in r && typeof r.responseBody === "string" ? { text: r.responseBody } : {}),
                 },
                 redirectURL: "",
                 headersSize: -1,

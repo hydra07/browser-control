@@ -2,8 +2,11 @@
  * Flow execution engine behind run_flow and explore_flow commands.
  * Resolves targets against live DOM/AXTree dynamically per step.
  */
-import type { FlowStep } from "@browsercontrol/shared";
+
+import type { DriftKind, ExpectedTransition, FailureEvent, FlowStep, FlowStepV2 } from "@browsercontrol/shared";
+import { normalizeFlowStep, toFlowTargetDescriptor } from "@browsercontrol/shared";
 import { sendCommand } from "../../libs/cdp.js";
+import { emitActionLifecycle } from "../actions/events.js";
 import type { ActionResult } from "../actions/index.js";
 import {
     getAxInfoForNode,
@@ -14,6 +17,7 @@ import {
     performScroll,
     performType,
 } from "../actions/index.js";
+import { emitAssertionEvent, emitFailureEvent } from "../evidence/index.js";
 import { pageDelay } from "../overlay/index.js";
 import type { SnapshotEntry } from "../snapshot/index.js";
 import { getFullSnapshot } from "../snapshot/index.js";
@@ -25,6 +29,7 @@ import {
     WAIT_FOR_DEFAULT_TIMEOUT_MS,
     WAIT_FOR_POLL_MS,
 } from "./constants.js";
+import { selectUniqueCandidate } from "./resolution.js";
 import type { FlowReport, ResolvedStepTarget, SnapshotDelta } from "./types.js";
 
 export type { FlowReport } from "./types.js";
@@ -39,31 +44,53 @@ function normalizeRole(role?: string): string[] {
     return [r];
 }
 
+function ambiguousSelectorTarget(selector: string, count: number): ResolvedStepTarget {
+    return {
+        backendNodeId: 0,
+        matched: { selector },
+        axInfo: {},
+        ambiguous: true,
+        candidateCount: count,
+        confidence: 0,
+        recoveryHint: "Narrow the selector or provide a semantic target fingerprint.",
+    };
+}
+
+async function resolveSelectorTarget(
+    target: chrome.debugger.Debuggee,
+    selector: string,
+): Promise<ResolvedStepTarget | null> {
+    const docResult = await sendCommand(target, "DOM.getDocument", { depth: 0 });
+    const rootNodeId = docResult?.root?.nodeId;
+    if (!rootNodeId) return null;
+    const queryResult = await sendCommand(target, "DOM.querySelectorAll", { nodeId: rootNodeId, selector });
+    const nodeIds = queryResult?.nodeIds ?? [];
+    if (nodeIds.length === 0) return null;
+    if (nodeIds.length > 1) return ambiguousSelectorTarget(selector, nodeIds.length);
+
+    const nodeId = nodeIds[0];
+    if (nodeId == null) return null;
+    const describeResult = await sendCommand(target, "DOM.describeNode", { nodeId });
+    const backendNodeId = describeResult?.node?.backendNodeId;
+    if (!backendNodeId) return null;
+    const axInfo = await getAxInfoForNode(target, backendNodeId);
+    return { backendNodeId, matched: { selector }, axInfo, drift: "EXACT", confidence: 1 };
+}
+
+function fuzzyConfidence(expected: string, actual: string): number {
+    if (!expected || !actual) return 0;
+    return Math.min(expected.length, actual.length) / Math.max(expected.length, actual.length);
+}
+
 /** Resolves step target against live page accessibility tree or CSS selector. */
 async function resolveStepTarget(target: chrome.debugger.Debuggee, step: FlowStep): Promise<ResolvedStepTarget | null> {
     const hasSpecificSelector = Boolean(step.selector && (step.selector.includes("#") || step.selector.includes("[")));
 
-    // 1. If selector has specific ID or attribute, try DOM query first
+    // 1. If selector has specific ID or attribute, try DOM query first.
     if (hasSpecificSelector && step.selector) {
         try {
-            const docResult = await sendCommand(target, "DOM.getDocument", { depth: 0 });
-            const rootNodeId = docResult?.root?.nodeId;
-            if (rootNodeId) {
-                const queryResult = await sendCommand(target, "DOM.querySelector", {
-                    nodeId: rootNodeId,
-                    selector: step.selector,
-                });
-                if (queryResult?.nodeId) {
-                    const describeResult = await sendCommand(target, "DOM.describeNode", {
-                        nodeId: queryResult.nodeId,
-                    });
-                    const backendNodeId = describeResult?.node?.backendNodeId;
-                    if (backendNodeId) {
-                        const axInfo = await getAxInfoForNode(target, backendNodeId);
-                        return { backendNodeId, matched: { selector: step.selector }, axInfo };
-                    }
-                }
-            }
+            const resolved = await resolveSelectorTarget(target, step.selector);
+            if (resolved && (!resolved.ambiguous || !step.name)) return resolved;
         } catch {}
     }
 
@@ -83,8 +110,10 @@ async function resolveStepTarget(target: chrome.debugger.Debuggee, step: FlowSte
                 return roleMatches && nameMatches;
             });
 
+            let drift: DriftKind = "EXACT";
             if (candidates.length === 0) {
-                // Substring / fuzzy match
+                // Substring / fuzzy match is reported as a repair, not silently treated as exact.
+                drift = "SEMANTIC_REPAIR";
                 candidates = nodes.filter((n) => {
                     if (n.backendDOMNodeId == null || !n.name?.value) return false;
                     const nodeRole = n.role?.value?.toLowerCase();
@@ -97,38 +126,44 @@ async function resolveStepTarget(target: chrome.debugger.Debuggee, step: FlowSte
                 });
             }
 
-            if (candidates.length > 0) {
+            const selection = selectUniqueCandidate(candidates, (candidate) => candidate.backendDOMNodeId);
+            if (selection.kind === "ambiguous") {
                 return {
-                    backendNodeId: candidates[0].backendDOMNodeId!,
+                    backendNodeId: 0,
                     matched: { role: step.role, name: step.name },
                     axInfo: { role: step.role, name: step.name },
-                    ambiguous: candidates.length > 1,
+                    ambiguous: true,
+                    candidateCount: selection.count,
+                    confidence: 0,
+                    recoveryHint: "Narrow the role/name or add a durable selector hint.",
+                    drift,
+                };
+            }
+            if (selection.kind === "matched") {
+                const actualName = String(selection.value.name?.value ?? "").trim();
+                const confidence = drift === "EXACT" ? 1 : fuzzyConfidence(targetNameLower, actualName.toLowerCase());
+                const resolvedDrift: DriftKind = confidence < 0.5 ? "TARGET_DRIFT" : drift;
+                return {
+                    backendNodeId: selection.value.backendDOMNodeId!,
+                    matched: { role: step.role, name: step.name },
+                    axInfo: { role: step.role, name: step.name },
+                    confidence,
+                    ...(resolvedDrift === "SEMANTIC_REPAIR"
+                        ? { recoveryHint: "Review the repaired target and save a refreshed descriptor if intentional." }
+                        : {}),
+                    ...(resolvedDrift === "TARGET_DRIFT"
+                        ? { recoveryHint: "Refresh the snapshot and confirm the intended target before retrying." }
+                        : {}),
+                    drift: resolvedDrift,
                 };
             }
         } catch {}
     }
 
-    // 3. Fallback to generic selector if not already matched
+    // 3. Fallback to generic selector if not already matched.
     if (!hasSpecificSelector && step.selector) {
         try {
-            const docResult = await sendCommand(target, "DOM.getDocument", { depth: 0 });
-            const rootNodeId = docResult?.root?.nodeId;
-            if (rootNodeId) {
-                const queryResult = await sendCommand(target, "DOM.querySelector", {
-                    nodeId: rootNodeId,
-                    selector: step.selector,
-                });
-                if (queryResult?.nodeId) {
-                    const describeResult = await sendCommand(target, "DOM.describeNode", {
-                        nodeId: queryResult.nodeId,
-                    });
-                    const backendNodeId = describeResult?.node?.backendNodeId;
-                    if (backendNodeId) {
-                        const axInfo = await getAxInfoForNode(target, backendNodeId);
-                        return { backendNodeId, matched: { selector: step.selector }, axInfo };
-                    }
-                }
-            }
+            return await resolveSelectorTarget(target, step.selector);
         } catch {}
     }
 
@@ -172,13 +207,115 @@ function diffSnapshots(prev: SnapshotEntry[] | undefined, curr: SnapshotEntry[])
     };
 }
 
+type TransitionCheck = { ok: true } | { ok: false; reason: string };
+
+function escapeRegexPart(part: string): string {
+    let escaped = "";
+    for (const character of part) {
+        if ("\\^$+.()|[]{}".includes(character)) escaped += "\\";
+        escaped += character;
+    }
+    return escaped;
+}
+
+function matchesUrlPattern(url: string, pattern: string): boolean {
+    const expression = new RegExp(`^${pattern.split("*").map(escapeRegexPart).join(".*")}$`);
+    return expression.test(url);
+}
+
+async function getCurrentFrameUrl(target: chrome.debugger.Debuggee): Promise<string | undefined> {
+    try {
+        const frameTree = await sendCommand(target, "Page.getFrameTree");
+        return frameTree?.frameTree?.frame?.url;
+    } catch {
+        return undefined;
+    }
+}
+
+async function verifyExpectedTransition(
+    target: chrome.debugger.Debuggee,
+    expected: ExpectedTransition,
+    beforeUrl?: string,
+): Promise<TransitionCheck> {
+    if (expected.kind === "none") return { ok: true };
+
+    try {
+        if (expected.kind === "navigation") {
+            const afterUrl = await getCurrentFrameUrl(target);
+            if (!afterUrl || afterUrl === beforeUrl) return { ok: false, reason: "navigation was not observed" };
+            if (expected.urlPattern && !matchesUrlPattern(afterUrl, expected.urlPattern)) {
+                return { ok: false, reason: `navigation ended at an unexpected URL (${afterUrl})` };
+            }
+            return { ok: true };
+        }
+
+        if (expected.kind === "text") {
+            const contains = expected.contains?.trim();
+            if (!contains) return { ok: false, reason: "text expectation has no contains value" };
+            const result = await sendCommand(target, "Runtime.evaluate", {
+                expression: `document.body?.innerText?.includes(${JSON.stringify(contains)}) === true`,
+                returnByValue: true,
+            });
+            return result?.result?.value === true
+                ? { ok: true }
+                : { ok: false, reason: `page text did not contain ${JSON.stringify(contains)}` };
+        }
+
+        if (expected.kind === "state") {
+            const selector = expected.selector?.trim();
+            if (!selector) return { ok: false, reason: "state expectation has no selector" };
+            const selectorExpression = JSON.stringify(selector);
+            const attributeExpression = JSON.stringify(expected.attribute?.trim() ?? "");
+            const valueExpression = JSON.stringify(expected.value ?? "");
+            const checkExpression = expected.attribute
+                ? expected.value !== undefined
+                    ? `element?.getAttribute(${attributeExpression}) === ${valueExpression}`
+                    : `element?.hasAttribute(${attributeExpression}) === true`
+                : "element != null";
+            const result = await sendCommand(target, "Runtime.evaluate", {
+                expression: `(() => { const element = document.querySelector(${selectorExpression}); return ${checkExpression}; })()`,
+                returnByValue: true,
+            });
+            return result?.result?.value === true
+                ? { ok: true }
+                : { ok: false, reason: `state expectation did not match ${selector}` };
+        }
+    } catch {
+        return { ok: false, reason: "expected transition could not be evaluated" };
+    }
+
+    return { ok: false, reason: "unsupported expected transition" };
+}
+
+function isSensitiveStep(step: FlowStep): boolean {
+    const targetHint = `${step.role ?? ""} ${step.name ?? ""} ${step.selector ?? ""}`;
+    return /password|passcode|pin|token|secret|credential|authorization|cookie/i.test(targetHint);
+}
+
+function reportFlowFailure(phase: FailureEvent["phase"], code: string, message: string, sensitive: boolean): void {
+    emitFailureEvent({
+        phase,
+        code,
+        message: sensitive ? "Sensitive flow step failed." : message,
+    });
+}
+
+function reportFlowAssertion(expression: string, result: "passed" | "failed", sensitive: boolean): void {
+    emitAssertionEvent({
+        expression: sensitive ? "Sensitive assertion" : expression,
+        result,
+        sensitive,
+    });
+}
+
 /** Executes sequential action steps on the page, halting immediately on any failure or unconfirmed risk. */
 export async function runFlowSteps(
     target: chrome.debugger.Debuggee,
-    steps: FlowStep[],
+    steps: readonly (FlowStep | FlowStepV2)[],
     opts: { captureEachStep: boolean; returnSnapshot?: boolean },
 ): Promise<FlowReport> {
     if (steps.length > MAX_FLOW_STEPS) {
+        reportFlowFailure("resolve", "too_many_steps", `Flow exceeded the ${MAX_FLOW_STEPS}-step limit.`, false);
         return {
             success: false,
             reason: "too_many_steps",
@@ -202,7 +339,10 @@ export async function runFlowSteps(
     if (opts.captureEachStep) previousSnapshot = await getFullSnapshot(target);
 
     for (let i = 0; i < steps.length; i++) {
-        const step = steps[i];
+        const rawStep = steps[i]!;
+        const step = normalizeFlowStep(rawStep);
+        const expected = "expected" in rawStep ? rawStep.expected : undefined;
+        const policy = "policy" in rawStep ? rawStep.policy : undefined;
         const needsTarget =
             step.action !== "scroll" &&
             step.action !== "drag" &&
@@ -227,10 +367,67 @@ export async function runFlowSteps(
                     success: false,
                     error: "not_found",
                 });
+                reportFlowFailure(
+                    "resolve",
+                    "target_not_found",
+                    `Step ${i} (${step.action}) found no element matching ${describeStepTarget(step)}.`,
+                    isSensitiveStep(step),
+                );
                 return stop(
                     i,
                     "not_found",
                     `Step ${i} (${step.action}) found no element matching ${describeStepTarget(step)} after ${timeoutMs}ms. Stopped before continuing — take a fresh browser_inspect({action:"snapshot"}) and correct this step.`,
+                );
+            }
+
+            if (resolved.ambiguous) {
+                const candidateCount = resolved.candidateCount ?? 2;
+                results.push({
+                    index: i,
+                    action: step.action,
+                    matched: resolved.matched,
+                    ambiguous: true,
+                    confidence: resolved.confidence,
+                    recoveryHint: resolved.recoveryHint,
+                    drift: resolved.drift,
+                    success: false,
+                    error: "ambiguous_target",
+                });
+                reportFlowFailure(
+                    "resolve",
+                    "ambiguous_target",
+                    `Step ${i} (${step.action}) matched ${candidateCount} elements.`,
+                    isSensitiveStep(step),
+                );
+                return stop(
+                    i,
+                    "ambiguous",
+                    `Step ${i} (${step.action}) matched ${candidateCount} elements for ${describeStepTarget(step)}. Stopped without acting — narrow the selector or add more semantic context.`,
+                );
+            }
+
+            if (resolved.drift === "TARGET_DRIFT") {
+                results.push({
+                    index: i,
+                    action: step.action,
+                    matched: resolved.matched,
+                    ambiguous: resolved.ambiguous,
+                    confidence: resolved.confidence,
+                    recoveryHint: resolved.recoveryHint,
+                    drift: resolved.drift,
+                    success: false,
+                    error: "target_drift",
+                });
+                reportFlowFailure(
+                    "resolve",
+                    "target_drift",
+                    `Step ${i} (${step.action}) resolved with low confidence.`,
+                    isSensitiveStep(step),
+                );
+                return stop(
+                    i,
+                    "target_drift",
+                    `Step ${i} (${step.action}) found a low-confidence target repair for ${describeStepTarget(step)}. ${resolved.recoveryHint ?? "Refresh the snapshot and confirm the target before retrying."}`,
                 );
             }
 
@@ -240,9 +437,41 @@ export async function runFlowSteps(
                     action: step.action,
                     matched: resolved.matched,
                     ambiguous: resolved.ambiguous,
+                    confidence: resolved.confidence,
+                    recoveryHint: resolved.recoveryHint,
+                    drift: resolved.drift,
                     success: false,
                     error: "risky_action_blocked",
                 });
+                const blockedActionId = `a${crypto.randomUUID()}`;
+                const blockedAt = Date.now();
+                const blockedTarget = toFlowTargetDescriptor(step);
+                emitActionLifecycle({
+                    type: "action_started",
+                    actionId: blockedActionId,
+                    ts: blockedAt,
+                    action: step.action,
+                    tabId: target.tabId,
+                    ...(blockedTarget ? { semanticTarget: blockedTarget } : {}),
+                    sensitive: isSensitiveStep(step),
+                });
+                emitActionLifecycle({
+                    type: "action_finished",
+                    actionId: blockedActionId,
+                    ts: Date.now(),
+                    action: step.action,
+                    tabId: target.tabId,
+                    durationMs: Date.now() - blockedAt,
+                    result: "blocked",
+                    drift: resolved.drift,
+                    sensitive: isSensitiveStep(step),
+                });
+                reportFlowFailure(
+                    "risk",
+                    "risky_action_blocked",
+                    `Step ${i} (${step.action}) was blocked by the target-risk policy.`,
+                    isSensitiveStep(step),
+                );
                 return stop(
                     i,
                     "risky_action_blocked",
@@ -251,63 +480,125 @@ export async function runFlowSteps(
             }
         }
 
+        const actionId = `a${crypto.randomUUID()}`;
+        const actionStartedAt = Date.now();
+        const semanticTarget = toFlowTargetDescriptor(step);
+        const sensitive = isSensitiveStep(step);
+        const beforeUrl = expected?.kind === "navigation" ? await getCurrentFrameUrl(target) : undefined;
+        emitActionLifecycle({
+            type: "action_started",
+            actionId,
+            ts: actionStartedAt,
+            action: step.action,
+            tabId: target.tabId,
+            ...(semanticTarget ? { semanticTarget } : {}),
+            sensitive,
+        });
+
         let actionResult: ActionResult;
-        switch (step.action) {
-            case "click":
-                actionResult = await performClick(target, resolved!.backendNodeId, { fast: true });
-                break;
-            case "type":
-                actionResult = await performType(target, resolved?.backendNodeId, step.text ?? "", { fast: true });
-                break;
-            case "press_key":
-                actionResult = await performPressKey(target, step.key ?? "", resolved?.backendNodeId, { fast: true });
-                break;
-            case "scroll":
-                actionResult = await performScroll(target, step.deltaX || 0, step.deltaY || 0, { fast: true });
-                break;
-            case "drag":
-                actionResult = await performDrag(target, step.fromX, step.fromY, step.toX, step.toY, {
-                    fast: true,
-                    shape: step.shape,
-                    shapeParams: step.shapeParams,
-                    path: step.path,
-                    stepsCount: step.stepsCount,
-                    easing: step.easing,
-                    button: step.button,
-                });
-                break;
-            case "wait_for":
-                actionResult = {
-                    success: true,
-                    message: `Found ${describeStepTarget(step)}`,
-                };
-                break;
-            case "assert_text": {
-                const text = resolved!.axInfo.name ?? "";
-                actionResult =
-                    step.contains && text.includes(step.contains)
-                        ? {
-                              success: true,
-                              message: `"${step.contains}" found in "${text}"`,
-                          }
-                        : {
-                              error: `Expected text containing "${step.contains ?? ""}", found "${text}"`,
-                          };
-                break;
+        try {
+            switch (step.action) {
+                case "click":
+                    actionResult = await performClick(target, resolved!.backendNodeId, { fast: true });
+                    break;
+                case "type":
+                    actionResult = await performType(target, resolved?.backendNodeId, step.text ?? "", { fast: true });
+                    break;
+                case "press_key":
+                    actionResult = await performPressKey(target, step.key ?? "", resolved?.backendNodeId, {
+                        fast: true,
+                    });
+                    break;
+                case "scroll":
+                    actionResult = await performScroll(target, step.deltaX || 0, step.deltaY || 0, { fast: true });
+                    break;
+                case "drag":
+                    actionResult = await performDrag(target, step.fromX, step.fromY, step.toX, step.toY, {
+                        fast: true,
+                        shape: step.shape,
+                        shapeParams: step.shapeParams,
+                        path: step.path,
+                        stepsCount: step.stepsCount,
+                        easing: step.easing,
+                        button: step.button,
+                    });
+                    break;
+                case "wait_for":
+                    actionResult = {
+                        success: true,
+                        message: `Found ${describeStepTarget(step)}`,
+                    };
+                    break;
+                case "assert_text": {
+                    const text = resolved!.axInfo.name ?? "";
+                    actionResult =
+                        step.contains && text.includes(step.contains)
+                            ? {
+                                  success: true,
+                                  message: `"${step.contains}" found in "${text}"`,
+                              }
+                            : {
+                                  error: `Expected text containing "${step.contains ?? ""}", found "${text}"`,
+                              };
+                    break;
+                }
+            }
+        } catch (error) {
+            actionResult = { error: error instanceof Error ? error.message : String(error) };
+        }
+
+        let settleReason = actionResult.settleReason;
+        if (step.action === "wait_for") {
+            settleReason = (await waitForStableDom(target, { quietMs: 150, timeoutMs: 1500 })).reason;
+            if (settleReason === "timeout" && "success" in actionResult) {
+                actionResult = { error: "Wait step did not reach DOM quiet before the settle timeout" };
+            }
+        }
+        if (settleReason === "timeout" && "success" in actionResult) {
+            actionResult = { error: "Action did not reach DOM quiet before the settle timeout" };
+        }
+
+        let drift = resolved?.drift;
+        let behaviorDrift = false;
+        if ("success" in actionResult && expected && expected.kind !== "none") {
+            const transition = await verifyExpectedTransition(target, expected, beforeUrl);
+            reportFlowAssertion(`expected ${expected.kind} transition`, transition.ok ? "passed" : "failed", sensitive);
+            if (!transition.ok) {
+                behaviorDrift = true;
+                drift = "BEHAVIOR_DRIFT";
+                actionResult = { error: `Expected transition failed: ${transition.reason}` };
             }
         }
 
-        if (step.action === "click" || step.action === "type" || step.action === "press_key") {
-            await waitForStableDom(target, { quietMs: 150, timeoutMs: 1500 });
-        }
-
         const success = "success" in actionResult;
+        if (step.action === "assert_text") {
+            reportFlowAssertion(
+                `text contains ${JSON.stringify(step.contains ?? "")}`,
+                success ? "passed" : "failed",
+                sensitive,
+            );
+        }
         const stepErrorMessage = "error" in actionResult ? actionResult.error : undefined;
+        emitActionLifecycle({
+            type: "action_finished",
+            actionId,
+            ts: Date.now(),
+            action: step.action,
+            tabId: target.tabId,
+            durationMs: Date.now() - actionStartedAt,
+            result: success ? "succeeded" : "failed",
+            ...(drift ? { drift } : {}),
+            sensitive,
+        });
         results.push({
             index: i,
             action: step.action,
             matched: resolved?.matched,
             ambiguous: resolved?.ambiguous,
+            ...(resolved?.confidence != null ? { confidence: resolved.confidence } : {}),
+            ...(resolved?.recoveryHint ? { recoveryHint: resolved.recoveryHint } : {}),
+            ...(drift ? { drift } : {}),
+            ...(settleReason ? { settleReason } : {}),
             success,
             error: stepErrorMessage,
         });
@@ -319,10 +610,19 @@ export async function runFlowSteps(
         }
 
         if (!success) {
+            reportFlowFailure(
+                behaviorDrift ? "assert" : settleReason === "timeout" ? "settle" : "action",
+                behaviorDrift ? "behavior_drift" : settleReason === "timeout" ? "settle_timeout" : "action_failed",
+                stepErrorMessage ?? `Step ${i} (${step.action}) failed.`,
+                sensitive,
+            );
+            if (behaviorDrift && policy?.onDrift === "report") continue;
             return stop(
                 i,
-                step.action === "assert_text" ? "assert_failed" : "action_failed",
-                `Step ${i} (${step.action}) failed: ${stepErrorMessage}`,
+                behaviorDrift ? "behavior_drift" : step.action === "assert_text" ? "assert_failed" : "action_failed",
+                behaviorDrift
+                    ? `Step ${i} (${step.action}) completed but behavior drifted: ${stepErrorMessage}`
+                    : `Step ${i} (${step.action}) failed: ${stepErrorMessage}`,
             );
         }
     }

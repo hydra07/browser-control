@@ -18,6 +18,7 @@ export interface CaptureResult {
     isStreamed?: boolean;
     durationMs: number;
     frameCount: number;
+    byteCount?: number;
 }
 
 export interface CaptureError {

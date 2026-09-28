@@ -14,7 +14,7 @@ export async function handlePeekScreenCommand(
 ): Promise<PeekScreenResult | { error: string; hint: string }> {
     try {
         let targetTab: chrome.tabs.Tab | undefined;
-        if (options.tabId != null) {
+        if (options.tabId != null && options.tabId > 0) {
             targetTab = await chrome.tabs.get(options.tabId).catch(() => undefined);
         } else {
             // Find active tab in current / last focused window
@@ -91,6 +91,11 @@ export async function handlePeekScreenCommand(
         let screenshotBase64: string | undefined;
         if (options.screenshot && targetTab.windowId != null) {
             try {
+                const win = await chrome.windows.get(targetTab.windowId);
+                if (win.state === "minimized") {
+                    await chrome.windows.update(targetTab.windowId, { state: "normal" });
+                    await new Promise((r) => setTimeout(r, 60));
+                }
                 const dataUrl = await chrome.tabs.captureVisibleTab(targetTab.windowId, {
                     format: "jpeg",
                     quality: 60,

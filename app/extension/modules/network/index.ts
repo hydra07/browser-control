@@ -10,6 +10,15 @@ import type { NetworkEntry } from "./types.js";
 
 export type { NetworkEntry } from "./types.js";
 
+function redactBody(value: string): string {
+    return value
+        .replace(/(Bearer\s+)[^\s,;]+/gi, "$1[REDACTED]")
+        .replace(
+            /((?:["']?(?:password|passcode|pin|token|secret|api[_-]?key|authorization|cookie)["']?)\s*[=:]\s*["']?)[^"'&\s,;}]*/gi,
+            "$1[REDACTED]",
+        );
+}
+
 export class NetworkCollector {
     private readonly entries: Map<string, NetworkEntry>;
     private listener: ((source: chrome.debugger.Debuggee, method: string, params?: unknown) => void) | null;
@@ -42,8 +51,7 @@ export class NetworkCollector {
                         url: p.request.url,
                         method: p.request.method,
                         resourceType: p.type ?? "Other",
-                        requestHeaders: p.request.headers,
-                        postData: p.request.postData,
+                        // Headers and request bodies are intentionally not retained by default.
                         timestamp: Date.now(),
                     });
                     this.evictIfNeeded();
@@ -56,7 +64,6 @@ export class NetworkCollector {
                         entry.status = p.response.status;
                         entry.statusText = p.response.statusText;
                         entry.mimeType = p.response.mimeType;
-                        entry.responseHeaders = p.response.headers;
                     }
                     break;
                 }
@@ -155,7 +162,11 @@ export class NetworkCollector {
         return undefined;
     }
 
-    public async getDetail(target: chrome.debugger.Debuggee, requestId: string): Promise<Record<string, unknown>> {
+    public async getDetail(
+        target: chrome.debugger.Debuggee,
+        requestId: string,
+        includeBody = false,
+    ): Promise<Record<string, unknown>> {
         const entry = this.entries.get(requestId);
         if (!entry) {
             return {
@@ -164,17 +175,48 @@ export class NetworkCollector {
             };
         }
 
+        if (!includeBody) {
+            return {
+                requestId: entry.requestId,
+                url: entry.url,
+                method: entry.method,
+                resourceType: entry.resourceType,
+                status: entry.status,
+                statusText: entry.statusText,
+                mimeType: entry.mimeType,
+                failed: entry.failed,
+                errorText: entry.errorText,
+                timestamp: entry.timestamp,
+                sizeBytes: entry.sizeBytes,
+                durationMs: entry.durationMs,
+                blocked: blockedRequestIds.has(requestId) || undefined,
+                bodyUnavailable:
+                    "Body capture is disabled by default; request it explicitly from a dev-only operation.",
+            };
+        }
+
         let bodyResult: Protocol.Network.GetResponseBodyResponse | undefined;
         let bodyError: string | undefined;
         try {
-            bodyResult = await sendCommand(target, "Network.getResponseBody", {
-                requestId,
-            });
+            bodyResult = await sendCommand(target, "Network.getResponseBody", { requestId });
         } catch (e) {
             bodyError = errorMessage(e);
         }
 
-        let body: string | undefined = bodyResult?.body;
+        let requestPostData: string | undefined;
+        try {
+            const requestBodyResult = await sendCommand(target, "Network.getRequestPostData", { requestId });
+            if (typeof requestBodyResult?.postData === "string")
+                requestPostData = redactBody(requestBodyResult.postData);
+        } catch {
+            // Request post data can be unavailable after the request has completed.
+        }
+
+        let body: string | undefined = bodyResult?.base64Encoded
+            ? undefined
+            : typeof bodyResult?.body === "string"
+              ? redactBody(bodyResult.body)
+              : undefined;
         let bodyTruncated = false;
         if (typeof body === "string" && body.length > MAX_BODY_CHARS) {
             body = body.slice(0, MAX_BODY_CHARS);
@@ -186,6 +228,7 @@ export class NetworkCollector {
             blocked: blockedRequestIds.has(requestId) || undefined,
             body,
             bodyBase64Encoded: bodyResult?.base64Encoded,
+            postData: requestPostData,
             bodyTruncated,
             bodyUnavailable:
                 bodyResult?.body === undefined
@@ -224,6 +267,7 @@ export function findRecordedResponse(
 export function getNetworkRequestDetail(
     target: chrome.debugger.Debuggee,
     requestId: string,
+    includeBody = false,
 ): Promise<Record<string, unknown>> {
-    return networkCollector.getDetail(target, requestId);
+    return networkCollector.getDetail(target, requestId, includeBody);
 }

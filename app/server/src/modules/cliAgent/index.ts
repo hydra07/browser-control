@@ -1,16 +1,17 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { spawn } from "bun";
+import { loadAuthToken } from "../../configs/auth.js";
 import { AGENT_SANDBOX_DIR, MCP_CONFIG_PATH } from "../../configs/paths.js";
 import { HOSTNAME, PORT } from "../../configs/server.js";
 import { errorMessage } from "../../libs/errorMessage.js";
 import { CHAT_SYSTEM_PROMPT, DEFAULT_TIMEOUT_MS } from "./constants.js";
-import type { AgentQueryParams, AgentQueryResult, ClaudeStreamEvent, ClaudeStreamLine } from "./types.js";
+import type { AgentId, AgentQueryParams, AgentQueryResult, ClaudeStreamEvent, ClaudeStreamLine } from "./types.js";
 
 export type { AgentQueryParams, AgentQueryResult } from "./types.js";
 
 /**
- * EXPERIMENTAL — sidepanel Chat tab's backend. Spawns `claude`/`agy`/a
- * custom command per turn (rides the user's CLI subscription, not an API
+ * EXPERIMENTAL — sidepanel Chat tab's backend. Spawns the allowlisted
+ * `claude`/`agy` agent per turn (rides the user's CLI subscription, not an API
  * key). `claude` gets extra flags for streaming, --resume, and read-only
  * browser_inspect access (chatMcpServer in daemon.ts); other CLIs are a
  * best-effort single-shot text pipe.
@@ -32,7 +33,13 @@ function ensureSandboxSetup() {
     writeFileSync(
       MCP_CONFIG_PATH,
       JSON.stringify({
-        mcpServers: { browsercontrol: { type: "http", url: `http://${HOSTNAME}:${PORT}/mcp` } },
+        mcpServers: {
+          browsercontrol: {
+            type: "http",
+            url: `http://${HOSTNAME}:${PORT}/mcp`,
+            headers: { Authorization: `Bearer ${loadAuthToken()}` },
+          },
+        },
       }),
     );
   } catch {}
@@ -44,8 +51,8 @@ let activeTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
 /**
  * Resolved via PATH (Bun.which) rather than a hardcoded per-machine install
  * path — that would leak a local username into git and break for anyone
- * installed elsewhere. Not on PATH? The user types a full path into the
- * Settings tab's command field (customCommand) instead.
+ * installed elsewhere. The settings field accepts only the allowlisted agent
+ * name and documented flags; the server resolves the executable from PATH.
  */
 function resolveBinary(baseName: string): string | null {
   const candidates = process.platform === "win32" ? [`${baseName}.exe`, baseName] : [baseName];
@@ -56,21 +63,14 @@ function resolveBinary(baseName: string): string | null {
   return null;
 }
 
-/** Which CLI agents are on PATH, and their resolved paths. */
-export function detectAvailableAgents(): {
-  hasAgy: boolean;
-  hasClaude: boolean;
-  agyPath?: string;
-  claudePath?: string;
-} {
-  const agy = resolveBinary("agy");
-  const claude = resolveBinary("claude");
-  return {
-    hasAgy: agy !== null,
-    hasClaude: claude !== null,
-    agyPath: agy ?? undefined,
-    claudePath: claude ?? undefined,
-  };
+function resolveAvailableAgents(): { agyPath: string | null; claudePath: string | null } {
+  return { agyPath: resolveBinary("agy"), claudePath: resolveBinary("claude") };
+}
+
+/** Reports which allowlisted CLI agents are available without exposing local paths. */
+export function detectAvailableAgents(): { hasAgy: boolean; hasClaude: boolean } {
+  const { agyPath, claudePath } = resolveAvailableAgents();
+  return { hasAgy: agyPath !== null, hasClaude: claudePath !== null };
 }
 
 /** Kills the whole process tree, not just `pid` — see spawnAgentProc's `detached: true`. */
@@ -108,6 +108,11 @@ export function isAgentBusy(): boolean {
   return activeAgentProc !== null;
 }
 
+const ALLOWED_CLAUDE_FLAGS = new Set(["--print", "-p"]);
+const ALLOWED_AGY_FLAGS = new Set(["--print", "-p", "--effort"]);
+const ALLOWED_EFFORTS = new Set(["low", "medium", "high"]);
+const MAX_OUTPUT_CHARS = 1_000_000;
+
 function parseCommandTokens(cmd: string): string[] {
   const tokens: string[] = [];
   let current = "";
@@ -135,6 +140,61 @@ function parseCommandTokens(cmd: string): string[] {
   return tokens;
 }
 
+export function validateAgentCommand(command: string): { agent: "claude" | "agy"; tokens: string[] } {
+  return validateAgentTokens(parseCommandTokens(command));
+}
+
+function validateAgentTokens(tokens: string[]): { agent: "claude" | "agy"; tokens: string[] } {
+  const executable = tokens[0]?.toLowerCase();
+  const agent =
+    executable === "claude" || executable === "claude.exe"
+      ? "claude"
+      : executable === "agy" || executable === "agy.exe"
+        ? "agy"
+        : null;
+  if (!agent || tokens[0]?.includes("/") || tokens[0]?.includes("\\")) {
+    throw new Error("CLI agent must be the allowlisted `claude` or `agy` binary; arbitrary paths are not permitted");
+  }
+
+  const allowedFlags = agent === "claude" ? ALLOWED_CLAUDE_FLAGS : ALLOWED_AGY_FLAGS;
+  for (let index = 1; index < tokens.length; index++) {
+    const flag = tokens[index];
+    if (!flag || !allowedFlags.has(flag)) throw new Error(`Unsupported ${agent} CLI flag: ${flag ?? ""}`);
+    if (flag === "--effort") {
+      const effort = tokens[++index];
+      if (!effort || !ALLOWED_EFFORTS.has(effort)) throw new Error("--effort must be low, medium, or high");
+    }
+  }
+  return { agent, tokens };
+}
+
+function displayCommand(tokens: string[]): string {
+  return tokens
+    .map((token, index) => {
+      if (index === 0 && /[\\/]/.test(token)) return token.toLowerCase().includes("agy") ? "agy" : "claude";
+      if (token.startsWith("--mcp-config=")) return "--mcp-config=<local>";
+      if (token.startsWith("--append-system-prompt=")) return "--append-system-prompt=<local>";
+      return token;
+    })
+    .join(" ");
+}
+
+async function readLimited(stream: ReadableStream<Uint8Array>, maxChars: number): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+  while (output.length < maxChars) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    output += decoder.decode(value, { stream: true });
+  }
+  if (output.length >= maxChars) {
+    await reader.cancel();
+    output = `${output.slice(0, maxChars)}\n[output truncated]`;
+  }
+  return output;
+}
+
 function buildFusedPrompt(params: AgentQueryParams): string {
   let fullPrompt = params.prompt.trim();
   const contextParts: string[] = [];
@@ -150,30 +210,29 @@ function buildFusedPrompt(params: AgentQueryParams): string {
 }
 
 /**
- * Resolves the base binary+args to run (from customCommand or the claude/agy
- * fallback) and whether it's `claude`, which gets extra flags appended by
+ * Resolves the base binary+args to run from the allowlisted agent selection,
+ * and whether it's `claude`, which gets extra flags appended by
  * the caller (streaming format, mcp-config, session resume).
  */
 function resolveBaseTokens(params: AgentQueryParams): { baseTokens: string[]; isClaude: boolean } | null {
-  const custom = (params.customCommand || "").trim();
-  const agents = detectAvailableAgents();
+  const agents = resolveAvailableAgents();
+  const requested: AgentId | undefined = params.agentId;
+  if (params.effort && !ALLOWED_EFFORTS.has(params.effort)) {
+    throw new Error("--effort must be low, medium, or high");
+  }
+  const selected =
+    requested === "agy"
+      ? agents.agyPath
+      : requested === "claude"
+        ? agents.claudePath
+        : (agents.claudePath ?? agents.agyPath);
+  if (!selected) return null;
 
-  if (custom) {
-    const tokens = parseCommandTokens(custom);
-    const binName = tokens[0]?.toLowerCase();
-    const isClaude = binName === "claude" || binName === "claude.exe";
-    if (isClaude && agents.claudePath) tokens[0] = agents.claudePath;
-    if ((binName === "agy" || binName === "agy.exe") && agents.agyPath) tokens[0] = agents.agyPath;
-    return { baseTokens: tokens, isClaude };
-  }
-
-  if (agents.hasClaude && agents.claudePath) {
-    return { baseTokens: [agents.claudePath, "--print"], isClaude: true };
-  }
-  if (agents.hasAgy && agents.agyPath) {
-    return { baseTokens: [agents.agyPath, "--print"], isClaude: false };
-  }
-  return null;
+  const isClaude = requested === "agy" ? false : requested === "claude" ? true : agents.claudePath !== null;
+  const baseTokens = [selected];
+  if (isClaude || !params.effort) baseTokens.push("--print");
+  else baseTokens.push("--effort", params.effort, "-p");
+  return { baseTokens, isClaude };
 }
 
 /** Appends the flags that make a `claude --print` invocation stream, session-resume, and reach browser_inspect. */
@@ -197,9 +256,14 @@ function withClaudeSmartFlags(
 
 function spawnAgentProc(spawnTokens: string[]) {
   ensureSandboxSetup();
+  const env: Record<string, string> = { NO_COLOR: "1", FORCE_COLOR: "0" };
+  for (const key of ["PATH", "HOME", "USERPROFILE", "SystemRoot", "TEMP", "TMP", "APPDATA", "LOCALAPPDATA"]) {
+    const value = process.env[key];
+    if (value) env[key] = value;
+  }
   const proc = spawn(spawnTokens, {
     cwd: AGENT_SANDBOX_DIR,
-    env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" },
+    env,
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
@@ -234,7 +298,7 @@ export async function executeCliAgentQuery(params: AgentQueryParams): Promise<Ag
   const spawnTokens = resolved.isClaude
     ? [...withClaudeSmartFlags(resolved.baseTokens, params, "json"), fullPrompt]
     : [...resolved.baseTokens, fullPrompt];
-  const commandUsed = spawnTokens.slice(0, -1).join(" ");
+  const commandUsed = displayCommand(spawnTokens.slice(0, -1));
 
   try {
     const proc = spawnAgentProc(spawnTokens);
@@ -247,9 +311,9 @@ export async function executeCliAgentQuery(params: AgentQueryParams): Promise<Ag
     });
 
     const readStdout =
-      proc.stdout && typeof proc.stdout !== "number" ? new Response(proc.stdout).text() : Promise.resolve("");
+      proc.stdout && typeof proc.stdout !== "number" ? readLimited(proc.stdout, MAX_OUTPUT_CHARS) : Promise.resolve("");
     const readStderr =
-      proc.stderr && typeof proc.stderr !== "number" ? new Response(proc.stderr).text() : Promise.resolve("");
+      proc.stderr && typeof proc.stderr !== "number" ? readLimited(proc.stderr, MAX_OUTPUT_CHARS) : Promise.resolve("");
 
     await Promise.race([proc.exited, timeoutPromise]);
 
@@ -318,6 +382,14 @@ function pumpClaudeStream(
 ) {
   const send = (payload: Record<string, unknown>) =>
     controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+  let outputChars = 0;
+  const sendText = (text: string) => {
+    const remaining = MAX_OUTPUT_CHARS - outputChars;
+    if (remaining <= 0) return;
+    const chunk = text.slice(0, remaining);
+    outputChars += chunk.length;
+    if (chunk) send({ type: "chunk", text: chunk });
+  };
   const toolNameById = new Map<string, string>();
   let buffer = "";
 
@@ -357,7 +429,7 @@ function pumpClaudeStream(
                 break;
               case "content_block_delta": {
                 const delta = (event as unknown as { delta?: { type: string; text?: string } }).delta;
-                if (delta?.type === "text_delta" && delta.text) send({ type: "chunk", text: delta.text });
+                if (delta?.type === "text_delta" && delta.text) sendText(delta.text);
                 break;
               }
             }
@@ -412,7 +484,7 @@ export function streamCliAgentQuery(params: AgentQueryParams): ReadableStream {
   const spawnTokens = resolved.isClaude
     ? [...withClaudeSmartFlags(resolved.baseTokens, params, "stream-json"), fullPrompt]
     : [...resolved.baseTokens, fullPrompt];
-  const commandUsed = spawnTokens.slice(0, -1).join(" ");
+  const commandUsed = displayCommand(spawnTokens.slice(0, -1));
   const isClaude = resolved.isClaude;
 
   return new ReadableStream({
@@ -420,6 +492,10 @@ export function streamCliAgentQuery(params: AgentQueryParams): ReadableStream {
       const encoder = new TextEncoder();
       try {
         const proc = spawnAgentProc(spawnTokens);
+        const stderrDrain =
+          proc.stderr && typeof proc.stderr !== "number"
+            ? readLimited(proc.stderr, MAX_OUTPUT_CHARS)
+            : Promise.resolve("");
         activeTimeoutTimer = setTimeout(() => abortActiveAgentQuery(), timeoutMs);
 
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "start", commandUsed })}\n\n`));
@@ -430,16 +506,21 @@ export function streamCliAgentQuery(params: AgentQueryParams): ReadableStream {
           // Non-claude CLIs: no stream-json contract, just forward raw stdout chunks.
           const reader = proc.stdout.getReader();
           const decoder = new TextDecoder();
+          let outputChars = 0;
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
             const textChunk = decoder.decode(value, { stream: true });
-            if (textChunk)
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "chunk", text: textChunk })}\n\n`));
+            const remaining = MAX_OUTPUT_CHARS - outputChars;
+            if (remaining <= 0) continue;
+            const boundedChunk = textChunk.slice(0, remaining);
+            outputChars += boundedChunk.length;
+            if (boundedChunk)
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "chunk", text: boundedChunk })}\n\n`));
           }
         }
 
-        await proc.exited;
+        await Promise.all([proc.exited, stderrDrain]);
         if (activeTimeoutTimer) {
           clearTimeout(activeTimeoutTimer);
           activeTimeoutTimer = null;

@@ -3,6 +3,7 @@
  * Runs DOM-dependent operations (MediaRecorder, DOMParser) directly here.
  */
 import { BinaryOpcode, type BrowserCommand, encodeBinaryPacket } from "@browsercontrol/shared";
+import { getSettings } from "../../configs/settings.js";
 import { errorMessage } from "../../libs/errorMessage.js";
 import { startCapture, stopCapture } from "../../modules/capture/index.js";
 import { handleWebSearchCommand } from "../../modules/search/index.js";
@@ -12,6 +13,35 @@ type IncomingMessage = BrowserCommand & { id: string };
 const WS_URL = "ws://127.0.0.1:8765";
 const INITIAL_RECONNECT_DELAY_MS = 1000;
 const MAX_RECONNECT_DELAY_MS = 15000;
+const WS_PROTOCOL_VERSION = 2;
+type ConnectionState = "DISCONNECTED" | "CONNECTING" | "AUTHENTICATING" | "READY";
+
+interface HelloAck {
+    type: "hello_ack";
+    protocolVersion: number;
+    serverVersion?: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function getExtensionVersion(): Promise<string> {
+    if (typeof chrome !== "undefined" && typeof chrome.runtime?.getManifest === "function") {
+        return chrome.runtime.getManifest().version;
+    }
+    if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return "unknown";
+
+    try {
+        const response = (await chrome.runtime.sendMessage({
+            target: "background",
+            type: "get_extension_version",
+        })) as { version?: unknown } | undefined;
+        return typeof response?.version === "string" ? response.version : "unknown";
+    } catch {
+        return "unknown";
+    }
+}
 
 /**
  * Manages the persistent WebSocket lifecycle, message routing,
@@ -22,6 +52,7 @@ export class OffscreenDaemonBridge {
     private reconnectTimer: ReturnType<typeof setTimeout> | null;
     private reconnectDelayMs: number;
     private isDisposed: boolean;
+    private connectionState: ConnectionState;
     private readonly wsUrl: string;
 
     constructor(wsUrl = WS_URL) {
@@ -30,27 +61,54 @@ export class OffscreenDaemonBridge {
         this.reconnectTimer = null;
         this.reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS;
         this.isDisposed = false;
+        this.connectionState = "DISCONNECTED";
     }
 
     public isConnected(): boolean {
-        return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+        return this.connectionState === "READY" && this.ws !== null && this.ws.readyState === WebSocket.OPEN;
     }
 
     public connect(): void {
         if (this.isDisposed) return;
-        if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+        if (
+            this.ws &&
+            (this.connectionState === "CONNECTING" || this.connectionState === "AUTHENTICATING" || this.isConnected())
+        ) {
             return;
         }
 
         this.clearReconnectTimer();
+        this.connectionState = "CONNECTING";
 
         try {
             const socket = new WebSocket(this.wsUrl);
             socket.binaryType = "arraybuffer";
 
             socket.onopen = () => {
-                console.log("[offscreen] Connected to daemon");
-                this.reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS;
+                this.connectionState = "AUTHENTICATING";
+                void getSettings()
+                    .then(async (settings) => {
+                        if (socket !== this.ws || socket.readyState !== WebSocket.OPEN) return;
+                        const token = settings.daemonAuthToken.trim();
+                        if (!token) {
+                            console.warn("[offscreen] Daemon token is not paired; configure it in Settings");
+                            socket.close(4003, "Daemon token is not paired");
+                            return;
+                        }
+                        socket.send(
+                            JSON.stringify({
+                                type: "hello",
+                                protocolVersion: WS_PROTOCOL_VERSION,
+                                role: "extension",
+                                token,
+                                clientVersion: await getExtensionVersion(),
+                            }),
+                        );
+                    })
+                    .catch((err: unknown) => {
+                        console.error("[offscreen] Failed to load daemon pairing settings:", errorMessage(err));
+                        socket.close(4003, "Daemon token unavailable");
+                    });
             };
 
             socket.onmessage = (event: MessageEvent) => {
@@ -58,7 +116,8 @@ export class OffscreenDaemonBridge {
             };
 
             socket.onclose = () => {
-                if (this.isDisposed) return;
+                if (this.isDisposed || socket !== this.ws) return;
+                this.connectionState = "DISCONNECTED";
                 this.ws = null;
                 console.log(`[offscreen] Disconnected from daemon, retrying in ${this.reconnectDelayMs}ms`);
                 this.scheduleReconnect();
@@ -70,6 +129,7 @@ export class OffscreenDaemonBridge {
 
             this.ws = socket;
         } catch (err) {
+            this.connectionState = "DISCONNECTED";
             console.error("[offscreen] Failed to create WebSocket connection:", errorMessage(err));
             this.scheduleReconnect();
         }
@@ -89,7 +149,8 @@ export class OffscreenDaemonBridge {
     public sendBinary(packet: Uint8Array): boolean {
         if (!this.isConnected() || !this.ws) return false;
         try {
-            this.ws.send(packet);
+            const bytes = packet.slice();
+            this.ws.send(bytes.buffer as ArrayBuffer);
             return true;
         } catch (err) {
             console.error("[offscreen] Error sending binary packet:", errorMessage(err));
@@ -98,13 +159,32 @@ export class OffscreenDaemonBridge {
     }
 
     private async handleIncomingMessage(event: MessageEvent): Promise<void> {
-        let data: IncomingMessage;
+        if (typeof event.data !== "string") return;
+
+        let parsed: unknown;
         try {
-            data = JSON.parse(event.data as string) as IncomingMessage;
+            parsed = JSON.parse(event.data);
         } catch (e: unknown) {
             console.error("[offscreen] Received malformed message:", errorMessage(e));
             return;
         }
+        if (!isRecord(parsed)) return;
+
+        if (this.connectionState === "AUTHENTICATING") {
+            const ack = parsed as Partial<HelloAck>;
+            if (ack.type !== "hello_ack" || ack.protocolVersion !== WS_PROTOCOL_VERSION) {
+                console.error("[offscreen] Daemon rejected the WebSocket protocol handshake");
+                this.ws?.close(4002, "Protocol handshake failed");
+                return;
+            }
+            this.connectionState = "READY";
+            this.reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS;
+            console.log(`[offscreen] Authenticated with daemon${ack.serverVersion ? ` v${ack.serverVersion}` : ""}`);
+            return;
+        }
+        if (this.connectionState !== "READY") return;
+
+        const data = parsed as IncomingMessage;
 
         // 1. Capture commands require DOM context (MediaRecorder/Canvas) in offscreen document
         if (data.cmd === "start_capture" || data.cmd === "stop_capture") {
@@ -181,6 +261,7 @@ export class OffscreenDaemonBridge {
             this.ws.close();
             this.ws = null;
         }
+        this.connectionState = "DISCONNECTED";
     }
 
     public dispose(): void {

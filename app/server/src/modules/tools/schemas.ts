@@ -21,6 +21,7 @@ import {
   BulkAction,
   DevAction,
   DocsAction,
+  EvidenceAction,
   Gateway,
   InspectAction,
   KnowledgeAction,
@@ -172,7 +173,7 @@ export const TOOLS = [
 
 click / type / press_key / run_flow are the ONLY actions that count as testing real user interaction — they dispatch real, trusted mouse/keyboard events, the same as a physical mouse/keyboard, not \`el.click()\`-style calls that skip actual event handlers. Standalone click/type/press_key glide a visible cursor to the target and briefly outline it (violet for click, cyan for type/key) — a multi-step animation (glide, pause, press, ripple) taking a couple of seconds, so a human watching the tab can follow along. This is intentional latency, not a bug. run_flow's steps use a faster, lighter version so a multi-step script doesn't crawl.
 
-- click: click the element with this nodeId (from browser_inspect's snapshot action).
+- click: click the element with this nodeId, or use ref + documentId from a semantic snapshot.
 - type: focus nodeId (omit only if already focused) and type text as a real user would, one CDP input event at a time. Only inserts text — never submits anything on its own; follow with press_key (Enter) to submit.
 - press_key: dispatch a real keydown/keyup, distinct from type. A named key (Enter, Tab, Escape, Backspace, Delete, ArrowUp/Down/Left/Right, Space, Home, End, PageUp, PageDown) for form/navigation use, or a single character to trigger a keyboard-shortcut listener directly — canvas/whiteboard apps (Excalidraw and similar) commonly bind tool selection to single letters rather than exposing DOM buttons. Never inserts text.
 - scroll: scroll by a pixel delta (deltaX/deltaY).
@@ -185,7 +186,20 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
         action: { type: "string", enum: Object.values(ActAction) },
         nodeId: {
           type: "number",
-          description: "Element to act on (click), or to focus first (type/press_key — omit only if already focused).",
+          description: "Legacy element id for click/type/press_key; prefer ref + documentId from semantic snapshot.",
+        },
+        ref: {
+          type: "string",
+          description: "Document-scoped runtime ref from snapshot({semantic:true}) (action: click/type/press_key).",
+        },
+        documentId: {
+          type: "string",
+          description: "Document epoch returned by semantic snapshot; required with ref.",
+        },
+        confirmRisky: {
+          type: "boolean",
+          description:
+            "For click/type/press_key: explicit confirmation for a target classified as potentially destructive.",
         },
         text: { type: "string", description: "Text to type (action: 'type')." },
         key: { type: "string", description: "Key to press (action: 'press_key')." },
@@ -263,17 +277,18 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
   },
   {
     name: Gateway.Inspect,
-    description: `Read/observe the current page without acting on it. Set \`action\` to one of: snapshot, find, reading_mode, inspect_element, screenshot, select_content, network_requests, network_clear, peek_screen.
+    description: `Read/observe the current page without acting on it. Set \`action\` to one of: snapshot, find, reading_mode, inspect_element, screenshot, select_content, network_requests, network_clear, peek_screen, evidence.
 
 - snapshot: the default way to see what's on the page before clicking/typing. Plain call: a flat list, {i,r,n,v?} per entry (i=node id for browser_act/inspect_element, r=role, n=accessible name, v=current value if any). Set \`compact:true\` to get a dense single-line format saving ~75% token whitespace. \`visual:true\` also returns a screenshot with a numbered box over every interactive element (same ids) — use before clicking anything you're not 100% sure about (custom dropdowns, icon-only buttons, ambiguous labels). \`selector:"..."\` scopes to one container (a form/panel/row) and returns a NESTED tree instead of a flat list — a field's label ends up as its sibling in the same \`children\` array; capped at 150 elements, narrow the selector if truncated. If both are set, visual wins (selector-scoped + visual together isn't supported).
 - peek_screen: safely observe and read the user's currently active screen/tab (even if outside the AI Workspace) in pure READ-ONLY mode — captures URL, title, selected text, visible page text, and optional visual screenshot for vision models. Strictly read-only: does not click, mutate, or navigate the tab. Use when the user asks you to look at their screen, summarize the page they are viewing, or gather context from open tabs.
 - find: Ctrl+F-style — jump straight to elements matching text/CSS selector/XPath (\`query\`) instead of scanning a full snapshot. Much cheaper than snapshot when you already know what you're looking for on a large/data-heavy page. Returns the same {i,r,n} shape as snapshot, usable directly with browser_act. Flashes a highlight on the first match.
 - reading_mode: clean article/main-content text (title + body, chrome like nav/ads/sidebars stripped) — like a browser's reader view. Far cheaper than snapshot when the goal is READING content, not acting on interactive elements. Says so and returns nothing useful on non-article pages (an app UI, a form, a dashboard) — fall back to snapshot there.
 - inspect_element: deep-dive on ONE element by nodeId — outerHTML, which CSS rule/selector set its computed styles, key computed layout properties, and any event listeners attached (type only, not handler source). Expensive relative to snapshot — use only for the specific element you need to explain, not in a loop.
-- screenshot: viewport or full-page (\`fullPage:true\`) screenshot for visual inspection (layout, spacing, colors) the accessibility tree can't show — saved to disk, path returned in the text output. Never pass format:"png" unless you specifically need pixel-exact color values — it's 3-5x larger than the jpeg default for no benefit in routine "let me see the page" checks. Inline image content is OFF by default (BROWSERCONTROL_INLINE_IMAGES=true to enable) — some MCP clients can't render it, and a mishandled screenshot risks landing in context as raw base64 (~230k tokens for a ~700KB PNG).
-- select_content: extract clean Markdown (headings, links, lists, code, emphasis preserved) from element(s) — \`selector\` (CSS, matches multiple elements, each its own block) or \`nodeId\` (exactly one). Does NOT return the extracted content in the response — every matched element is saved as its own docs block (see browser_knowledge's query_docs) and you get back the new block id(s) plus a short preview. If you need a small amount of text back immediately instead, use reading_mode, not this.
-- network_requests: list network requests observed since the last navigate/clear — like the DevTools Network tab. Plain call defaults to XHR/Fetch/Document/WebSocket only, hiding static asset noise unless \`resourceTypes\` is passed explicitly. Pass \`requestId\` (from a prior call) instead for full detail on that ONE request — headers, post body, response body — ignoring resourceTypes/filter/limit.
-- network_clear: clear the network log. Call immediately before a submit/action click so a following network_requests only shows what that action triggered. Also happens automatically on browser_session's navigate action.`,
+- screenshot: viewport or full-page (\`fullPage:true\`) screenshot for visual inspection (layout, spacing, colors) the accessibility tree can't show — saved to disk, file path and Markdown image link returned in text output. Never pass format:"png" unless you specifically need pixel-exact color values — it's 3-5x larger than the jpeg default for no benefit in routine "let me see the page" checks. Pass \`inline:true\` (or env BROWSERCONTROL_INLINE_IMAGES=true) to also include the raw base64 image block directly in the MCP response.
+- select_content: extract clean Markdown (headings, links, lists, code, emphasis preserved) from element(s) — \`selector\` (CSS, matches multiple elements, each its own block) or \`nodeId\` (exactly one). Returns the extracted Markdown text directly in the response (unless \`returnContent:false\`), and saves every matched element as its own docs block (see browser_knowledge's query_docs). If you need a small amount of text back immediately instead, use reading_mode, not this.
+- network_requests: list network requests observed since the last navigate/clear — like the DevTools Network tab. Plain call defaults to XHR/Fetch/Document/WebSocket only, hiding static asset noise unless \`resourceTypes\` is passed explicitly. Pass \`requestId\` (from a prior call) instead for metadata on that ONE request. Set \`includeBody:true\` only for an explicit bounded dev inspection; authentication headers, cookies, and request bodies are never returned by default.
+- network_clear: clear the network log. Call immediately before a submit/action click so a following network_requests only shows what that action triggered. Also happens automatically on browser_session's navigate action.
+- evidence: query the bounded action/assertion/failure timeline without returning the whole run by default. Set evidenceAction:'overview' for counts, 'events' for at most 100 events from 'after', or 'failure' for the primary failure. Timeline data is retained across service-worker suspension and is redacted before storage.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -282,6 +297,11 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
           type: "boolean",
           description:
             "(action: 'snapshot') Return dense 1-line-per-node text format instead of multi-line JSON, saving ~75% tokens. Recommended for large DOMs.",
+        },
+        semantic: {
+          type: "boolean",
+          description:
+            "(action: 'snapshot') Return a versioned document-scoped ref snapshot plus a bounded delta. Default false preserves the legacy node-id response.",
         },
         visual: {
           type: "boolean",
@@ -294,10 +314,33 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
             "CSS selector — scopes into a nested tree (action: 'snapshot'), or the elements to extract (action: 'select_content').",
         },
         query: { type: "string", description: "Text, CSS selector, or XPath to search for (action: 'find')." },
-        limit: { type: "number", description: "Max matches to return, default 20 (action: 'find')." },
+        limit: {
+          type: "number",
+          maximum: 100,
+          description:
+            "Max matches to return, default 20 (action: 'find') or max events to return (action: 'evidence').",
+        },
+        evidenceAction: {
+          type: "string",
+          enum: Object.values(EvidenceAction),
+          description: "Evidence query mode (action: 'evidence'): overview, events, or failure.",
+        },
+        after: {
+          type: "number",
+          minimum: 0,
+          description: "Zero-based retained timeline offset for an evidence events query.",
+        },
         nodeId: {
           type: "number",
-          description: "Element id, from a prior snapshot/find (action: 'inspect_element' or 'select_content').",
+          description: "Legacy element id from a prior snapshot/find (action: 'inspect_element' or 'select_content').",
+        },
+        ref: {
+          type: "string",
+          description: "Document-scoped runtime ref from snapshot({semantic:true}) (action: 'inspect_element').",
+        },
+        documentId: {
+          type: "string",
+          description: "Document epoch returned by semantic snapshot; required with ref.",
         },
         maxChars: {
           type: "number",
@@ -324,6 +367,16 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
           description:
             "(action: 'peek_screen') Also capture visual JPEG screenshot of the active screen for multimodal vision inspection.",
         },
+        inline: {
+          type: "boolean",
+          description:
+            "(action: 'screenshot'/'peek_screen', or 'snapshot' with visual:true) Include raw base64 image block in MCP response in addition to saving file to disk and returning Markdown image link.",
+        },
+        returnContent: {
+          type: "boolean",
+          description:
+            "(action: 'select_content') Return extracted Markdown text directly in response (defaults to true). Set false to only save to docs blocks and return preview.",
+        },
         resourceTypes: {
           type: "array",
           items: { type: "string" },
@@ -336,7 +389,12 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
         },
         requestId: {
           type: "string",
-          description: "(action: 'network_requests') Get full detail for this one request instead of listing.",
+          description: "(action: 'network_requests') Get metadata for this one request instead of listing.",
+        },
+        includeBody: {
+          type: "boolean",
+          description:
+            "(action: 'network_requests') Explicitly request a bounded response body for one request; off by default and intended for dev debugging only.",
         },
         ...TAB_ID_PROPERTY,
       },
@@ -352,9 +410,10 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
 - switch_tab: make an existing tab (from list_tabs) the active one for subsequent browser_act/browser_inspect calls that omit tabId, instead of navigating to the same URL fresh.
 - close_tab: close a tab by id (from navigate/list_tabs) — tidy up a tab opened with navigate({newTab:true}).
 - set_session_name: label this daemon session with a short human-readable name so \`mise run data:sessions\`/\`data:show\` can identify it later instead of just a timestamp. Not required — sessions auto-name from the hostnames visited; use this when that's not descriptive enough.
-- start_recording: start recording the active tab as video (no audio, no other tabs) — for a multi-step flow (wizard, drag, animation) you want to review as motion rather than a stack of screenshots. Only one recording at a time. Call stop_recording when done.
-- stop_recording: stop the recording, save it as a .webm file, and return its path. Errors if none is in progress.
-- get_metrics: get real-time token benchmark analytics for the current session (or allSessions:true) — total tokens, tool call count, duration, breakdown by command, recent call history, and estimated token savings.`,
+- start_recording: start recording the active tab as video (no audio, no other tabs) — for a multi-step flow (wizard, drag, animation) you want to review as motion rather than a stack of screenshots. Only one recording at a time. Set profile to 'flow' (default), 'step', or 'full' to label retention/evidence intent. Call stop_recording when done.
+- stop_recording: stop the recording, save raw video and a separate bounded event-track artifact, and return their opaque ids. Errors if none is in progress.
+- get_metrics: get real-time token benchmark analytics for the current session (or allSessions:true) — total tokens, tool call count, duration, breakdown by command, recent call history, and estimated token savings.
+- get_artifact: return bounded metadata for one screenshot/video/event-track artifact id from a prior capture response. The local storage path is intentionally not included; pass allSessions:true only when you explicitly need to inspect another session's artifact.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -368,7 +427,7 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
         tabId: {
           type: "number",
           description:
-            "Target tab. For 'navigate': re-navigate this specific existing tab instead of the current/a new one. For 'switch_tab'/'close_tab': the tab to act on (required).",
+            "Target tab ID. Omit for 'navigate' to reuse the active tab, or pass newTab:true for a new tab. Do not guess dummy numbers like 1. Real tab IDs are returned by navigate or list_tabs (only required for 'switch_tab' and 'close_tab').",
         },
         name: { type: "string", description: "(action: 'set_session_name')" },
         scope: {
@@ -379,7 +438,18 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
         },
         allSessions: {
           type: "boolean",
-          description: "(action: 'get_metrics') Include metrics across all sessions instead of just current session.",
+          description:
+            "(action: 'get_metrics'/'get_artifact') Include data across all sessions instead of just the current session.",
+        },
+        artifactId: {
+          type: "string",
+          description:
+            "(action: 'get_artifact') Opaque artifact id returned by screenshot/peek/stop_recording, for example 'a42'.",
+        },
+        profile: {
+          type: "string",
+          enum: ["none", "failure", "step", "flow", "full"],
+          description: "Capture profile for start_recording; defaults to flow.",
         },
       },
       required: ["action"],
@@ -559,7 +629,15 @@ click / type / press_key / run_flow are the ONLY actions that count as testing r
             "Drill down target for progressive disclosure: 'overview' (default), 'dom', 'listeners', 'gc' (for inspect_memory); 'long_tasks', 'rendering' (for inspect_process); 'box_model', 'computed', 'stacking' (for debug_layout); 'telemetry', 'commands', 'full' (for benchmark_report).",
         },
         selector: { type: "string", description: "CSS selector of element to inspect (action: 'debug_layout')." },
-        nodeId: { type: "number", description: "Node id from snapshot to inspect (action: 'debug_layout')." },
+        nodeId: { type: "number", description: "Legacy node id from snapshot (action: 'debug_layout')." },
+        ref: {
+          type: "string",
+          description: "Document-scoped runtime ref from semantic snapshot (action: 'debug_layout').",
+        },
+        documentId: {
+          type: "string",
+          description: "Document epoch returned by semantic snapshot; required with ref.",
+        },
         filter: {
           type: "string",
           description: "URL substring filter for network analysis (action: 'analyze_har'/'export_har').",

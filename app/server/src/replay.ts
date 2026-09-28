@@ -23,6 +23,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionResponse } from "@browsercontrol/shared";
+import { loadAuthToken } from "./configs/auth.js";
 import { LEGACY_LOGS_DIR, LOGS_DIR as NEW_LOGS_DIR } from "./configs/paths.js";
 import { HOSTNAME, PORT } from "./configs/server.js";
 import { errorMessage } from "./libs/errorMessage.js";
@@ -35,6 +36,14 @@ import { errorMessage } from "./libs/errorMessage.js";
  */
 const LOGS_DIR = existsSync(NEW_LOGS_DIR) ? NEW_LOGS_DIR : LEGACY_LOGS_DIR;
 const DAEMON_URL = `http://${HOSTNAME}:${PORT}/execute`;
+const DAEMON_AUTH_TOKEN = loadAuthToken();
+
+function daemonHeaders(): Headers {
+  return new Headers({
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${DAEMON_AUTH_TOKEN}`,
+  });
+}
 
 /** A logged JSONL line from daemon.ts's writeCallLog — replay only reads these four fields. */
 interface LogEntry {
@@ -50,6 +59,8 @@ interface SnapshotNode {
   r?: string;
   n?: string;
 }
+
+type NodeResolution = { nodeId: number } | { error: string };
 
 function listSessions(): void {
   let files: string[];
@@ -74,7 +85,7 @@ function listSessions(): void {
 async function execute(cmd: string, args: Record<string, unknown>): Promise<Partial<ExtensionResponse>> {
   const res = await fetch(DAEMON_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: daemonHeaders(),
     body: JSON.stringify({ cmd, ...args }),
   });
   return res.json() as Promise<Partial<ExtensionResponse>>;
@@ -89,17 +100,19 @@ async function execute(cmd: string, args: Record<string, unknown>): Promise<Part
  * response), re-resolve against a fresh snapshot instead of trusting the
  * recorded id.
  */
-async function resolveNodeIdByIdentity(
-  role: string,
-  name: string,
-): Promise<{ nodeId: number; ambiguous: boolean } | null> {
+async function resolveNodeIdByIdentity(role: string, name: string): Promise<NodeResolution> {
   const snap = await execute("snapshot", {});
   const data = snap?.data as { nodes?: SnapshotNode[] } | undefined;
   const nodes = data?.nodes ?? [];
   const candidates = nodes.filter((n) => n.r === role && n.n === name);
-  const first = candidates[0];
-  if (!first || first.i == null) return null;
-  return { nodeId: first.i, ambiguous: candidates.length > 1 };
+  const ids = candidates.map((candidate) => candidate.i).filter((id): id is number => id != null);
+  if (ids.length === 0) return { error: `No element matched ${role} "${name}"` };
+  if (new Set(ids).size > 1) {
+    return {
+      error: `${new Set(ids).size} elements matched ${role} "${name}"; replay stopped to avoid acting on an ambiguous target`,
+    };
+  }
+  return { nodeId: ids[0]! };
 }
 
 async function replay(logPath: string, opts: { continueOnError: boolean; delayMs: number }): Promise<void> {
@@ -125,37 +138,40 @@ async function replay(logPath: string, opts: { continueOnError: boolean; delayMs
      */
     const cmd = String(entry.cmd).replace(/^browser_/, "");
     let args = entry.args ?? {};
+    let resolutionError: string | undefined;
 
-    if ((cmd === "click" || cmd === "type") && args.nodeId && entry.elementRole && entry.elementName) {
+    if ((cmd === "click" || cmd === "type" || cmd === "press_key") && entry.elementRole && entry.elementName) {
       try {
         const resolved = await resolveNodeIdByIdentity(entry.elementRole, entry.elementName);
-        if (resolved) {
+        if ("error" in resolved) {
+          resolutionError = resolved.error;
+        } else {
           if (resolved.nodeId !== args.nodeId) {
             console.log(
-              `  (resolved ${entry.elementRole} "${entry.elementName}": logged id ${args.nodeId} -> current id ${resolved.nodeId})`,
+              `  (resolved ${entry.elementRole} "${entry.elementName}": logged id ${args.nodeId ?? "semantic ref"} -> current id ${resolved.nodeId})`,
             );
           }
-          if (resolved.ambiguous) {
-            console.log(
-              `  (WARNING: multiple elements matched ${entry.elementRole} "${entry.elementName}" — used the first; verify this is the right one)`,
-            );
-          }
-          args = { ...args, nodeId: resolved.nodeId };
-        } else {
-          console.log(
-            `  (WARNING: no element matched ${entry.elementRole} "${entry.elementName}" on the current page — falling back to logged id ${args.nodeId}, likely stale)`,
-          );
+          args = { ...args, nodeId: resolved.nodeId, ref: undefined, documentId: undefined };
         }
       } catch (e) {
-        console.log(`  (identity resolution failed: ${errorMessage(e)} — falling back to logged id ${args.nodeId})`);
+        resolutionError = `identity resolution failed: ${errorMessage(e)}`;
       }
     }
 
     process.stdout.write(`[${i + 1}/${lines.length}] ${cmd} ${JSON.stringify(args)} ... `);
+    if (resolutionError) {
+      failures++;
+      console.log(`FAILED (target resolution: ${resolutionError})`);
+      if (!opts.continueOnError) {
+        console.log("\\nStopping at first failure. Pass --continue to replay through errors.");
+        process.exit(1);
+      }
+      continue;
+    }
     try {
       const res = await fetch(DAEMON_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: daemonHeaders(),
         body: JSON.stringify({ cmd, ...args }),
       });
       const data = (await res.json()) as Partial<ExtensionResponse> & { data?: { error?: string } };

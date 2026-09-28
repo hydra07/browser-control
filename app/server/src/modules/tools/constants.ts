@@ -3,7 +3,7 @@ export const TAB_ID_PROPERTY = {
   tabId: {
     type: "number",
     description:
-      "Target this specific tab (id from session.navigate's response or session.list_tabs) instead of the currently active one. Omit to use the current tab, same as always.",
+      "Target this specific tab (real tabId from session.navigate's response or session.list_tabs). Omit to use the currently active tab (recommended). Do not guess dummy IDs like 1.",
   },
 } as const;
 
@@ -84,6 +84,63 @@ export const FLOW_STEP_ITEM_SCHEMA = {
       type: "boolean",
       description:
         "Set true to proceed past a step whose target looks destructive/irreversible (delete, cancel, sign out, pay, confirm, ...) — only after confirming with your user that this step is intended.",
+    },
+    target: {
+      type: "object",
+      description: "Bounded durable target fingerprint; runtime eN refs are provenance only, never replay identity.",
+      properties: {
+        role: { type: "string", maxLength: 200 },
+        name: { type: "string", maxLength: 200 },
+        testId: { type: "string", maxLength: 200 },
+        id: { type: "string", maxLength: 200 },
+        href: { type: "string", maxLength: 200 },
+        inputType: { type: "string", maxLength: 40 },
+        inputName: { type: "string", maxLength: 200 },
+        ancestors: {
+          type: "array",
+          maxItems: 3,
+          items: {
+            type: "object",
+            properties: {
+              role: { type: "string", maxLength: 80 },
+              name: { type: "string", maxLength: 200 },
+            },
+          },
+        },
+        nearby: {
+          type: "array",
+          maxItems: 4,
+          items: {
+            type: "object",
+            properties: {
+              relation: { type: "string", enum: ["before", "after", "inside", "label"] },
+              role: { type: "string", maxLength: 80 },
+              name: { type: "string", maxLength: 200 },
+            },
+          },
+        },
+        selectorHints: { type: "array", maxItems: 3, items: { type: "string", maxLength: 200 } },
+      },
+    },
+    expected: {
+      type: "object",
+      description: "Optional bounded postcondition checked after the step.",
+      properties: {
+        kind: { type: "string", enum: ["none", "navigation", "text", "state"] },
+        urlPattern: { type: "string", maxLength: 500 },
+        selector: { type: "string", maxLength: 300 },
+        contains: { type: "string", maxLength: 200 },
+        attribute: { type: "string", maxLength: 80 },
+        value: { type: "string", maxLength: 200 },
+      },
+    },
+    policy: {
+      type: "object",
+      properties: {
+        timeoutMs: { type: "number", minimum: 100, maximum: 120000 },
+        confirmRisky: { type: "boolean" },
+        onDrift: { type: "string", enum: ["stop", "repair", "report"] },
+      },
     },
   },
   required: ["action"],

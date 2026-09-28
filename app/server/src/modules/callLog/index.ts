@@ -1,5 +1,6 @@
 import { appendFileSync } from "node:fs";
 import { BenchmarkEngine } from "@browsercontrol/benchmark";
+import { redactPreview, redactValue } from "../../libs/redaction.js";
 import type { ToolArgs, ToolCallResponse } from "../../libs/types.js";
 import { recordToolCallDetail } from "../dataStore/index.js";
 import { PREVIEW_CHARS } from "./constants.js";
@@ -14,11 +15,17 @@ function parseSessionId(logFile: string): string {
 }
 
 function writeCallLog(logFile: string, entry: CallLogEntry): void {
+  const safeEntry: CallLogEntry = {
+    ...entry,
+    args: redactValue(entry.args) as ToolArgs,
+    preview: redactPreview(entry.preview),
+    elementName: entry.elementName ? redactPreview(entry.elementName) : undefined,
+  };
   try {
-    appendFileSync(logFile, `${JSON.stringify(entry)}\n`);
+    appendFileSync(logFile, `${JSON.stringify(safeEntry)}\n`);
   } catch {}
   console.error(
-    `[tool:${entry.source}] ${entry.cmd} ${entry.durationMs}ms ~${entry.inTokens}in/${entry.outTokens}out tok${entry.hasImage ? " [image]" : ""}${entry.isError ? " ERROR" : ""}`,
+    `[tool:${safeEntry.source}] ${safeEntry.cmd} ${safeEntry.durationMs}ms ~${safeEntry.inTokens}in/${safeEntry.outTokens}out tok${safeEntry.hasImage ? " [image]" : ""}${safeEntry.isError ? " ERROR" : ""}`,
   );
 
   const stepCount = Array.isArray(entry.args?.steps) ? entry.args.steps.length : 0;
@@ -26,8 +33,8 @@ function writeCallLog(logFile: string, entry: CallLogEntry): void {
 
   recordToolCallDetail({
     sessionId: parseSessionId(logFile),
-    cmd: entry.cmd,
-    args: entry.args ?? {},
+    cmd: safeEntry.cmd,
+    args: (safeEntry.args ?? {}) as Record<string, unknown>,
     durationMs: entry.durationMs,
     inChars: entry.inChars,
     inTokens: entry.inTokens,
@@ -37,10 +44,10 @@ function writeCallLog(logFile: string, entry: CallLogEntry): void {
     approxTokens: entry.approxTokens,
     hasImage: entry.hasImage,
     isError: entry.isError,
-    source: entry.source,
-    preview: entry.preview,
-    elementRole: entry.elementRole,
-    elementName: entry.elementName,
+    source: safeEntry.source,
+    preview: safeEntry.preview,
+    elementRole: safeEntry.elementRole,
+    elementName: safeEntry.elementName,
     stepCount,
     createdAt: Date.now(),
     bunRssMb: mem?.rssMb,

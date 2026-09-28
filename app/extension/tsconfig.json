@@ -6,7 +6,8 @@
         "erasableSyntaxOnly": true,
         "noUnusedLocals": true,
         "noUnusedParameters": true,
-        "noUncheckedIndexedAccess": false
+        "noUncheckedIndexedAccess": false,
+        "types": ["bun", "chrome"]
     },
     // scripts/bump-version.ts is a Bun/Node-side utility (uses
     // import.meta.dir), not browser runtime code — out of place under a

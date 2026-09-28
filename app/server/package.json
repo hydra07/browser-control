@@ -5,11 +5,18 @@
   "description": "The daemon and CLI tools — run directly via Bun, never built.",
   "scripts": {
     "check": "tsc",
+    "test": "bun test",
+    "test:integration": "bun run src/modules/integration/index.ts",
     "dev": "bun run src/daemon.ts",
     "dev:benchmark": "BENCHMARK=1 bun run src/daemon.ts",
     "replay": "bun run src/replay.ts",
     "replay:list": "bun run src/replay.ts --list",
-    "data": "bun run src/dataCli.ts"
+    "data": "bun run src/dataCli.ts",
+    "auth:show": "bun run src/authCli.ts show",
+    "auth:rotate": "bun run src/authCli.ts rotate",
+    "tokens:baseline": "bun run src/tokenBaseline.ts",
+    "benchmark:runtime": "bun run src/modules/benchmark/index.ts",
+    "commands:inventory": "bun run src/commandInventory.ts"
   },
   "dependencies": {
     "@browsercontrol/benchmark": "workspace:*",
@@ -18,6 +25,7 @@
   },
   "devDependencies": {
     "@types/bun": "^1.3.14",
+    "bun-types": "1.3.14",
     "typescript": "^5.4.5"
   }
 }

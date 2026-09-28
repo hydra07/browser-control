@@ -7,7 +7,7 @@ import {
   TAB_GROUP_COLORS,
   type TabGroupColor,
 } from "../../../configs/settings.js";
-import { abortCliAgent, type CliAgentQueryResult, type DaemonStatus, queryCliAgent } from "../lib/api";
+import { abortCliAgent, type CliAgentQueryResult, type DaemonStatus, getStatus, queryCliAgent } from "../lib/api";
 import { ChatIcon, CheckIcon, CopyIcon, PinIcon, RefreshIcon, SparklesIcon, TerminalIcon, ZapIcon } from "./Icons";
 
 interface SettingsTabProps {
@@ -222,8 +222,8 @@ function BehaviorSettings() {
 
         <label className="block">
           <div className="flex items-center justify-between text-[10.5px] text-zinc-400">
-            <span>CLI Command Template</span>
-            <span className="text-[9.5px] font-mono text-zinc-500">Customizable</span>
+            <span>CLI Agent Preset</span>
+            <span className="text-[9.5px] font-mono text-zinc-500">Allowlisted</span>
           </div>
           <input
             type="text"
@@ -233,8 +233,8 @@ function BehaviorSettings() {
             className={inputClass}
           />
           <p className="mt-1 text-[9.5px] text-zinc-500 leading-relaxed">
-            Base binary + flags only. When this starts with `claude`, streaming, session resume, and read-only
-            page-inspection tool access are added automatically.
+            Choose `claude` or `agy` with supported flags only. The daemon resolves the binary from PATH and adds
+            streaming, session resume, and read-only page-inspection access for Claude automatically.
           </p>
         </label>
 
@@ -402,18 +402,22 @@ function BehaviorSettings() {
 }
 
 export function SettingsTab({ daemonStatus, onRefresh }: SettingsTabProps) {
+  const [settings, setSettings] = useState<Settings | null>(null);
   const [pinging, setPinging] = useState(false);
   const [pingState, setPingState] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    void getSettings().then(setSettings);
+  }, []);
 
   async function handlePing() {
     setPinging(true);
     const start = performance.now();
     try {
-      const res = await fetch("http://127.0.0.1:8765/status");
+      await getStatus();
       const ms = Math.round(performance.now() - start);
-      if (res.ok) setPingState(`${ms}ms (OK)`);
-      else setPingState(`HTTP ${res.status}`);
+      setPingState(`${ms}ms (OK)`);
     } catch {
       setPingState("Failed (Offline)");
     } finally {
@@ -445,6 +449,27 @@ export function SettingsTab({ daemonStatus, onRefresh }: SettingsTabProps) {
             </span>
           </div>
         </div>
+
+        <label className="block">
+          <div className="text-[10.5px] text-zinc-500">Daemon pairing token</div>
+          <input
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            value={settings?.daemonAuthToken ?? ""}
+            onChange={(e) => {
+              const daemonAuthToken = e.target.value;
+              setSettings((previous) => (previous ? { ...previous, daemonAuthToken } : previous));
+              void saveSettings({ daemonAuthToken });
+            }}
+            placeholder="Paste token from auth:show"
+            className={inputClass}
+          />
+          <p className="mt-1 text-[9.5px] leading-relaxed text-zinc-500">
+            Run <code>bun run --cwd app/server auth:show</code> locally, paste the result here, then reload the
+            extension if the status stays unpaired. The token is stored only in chrome.storage.local.
+          </p>
+        </label>
 
         <div className="grid grid-cols-2 gap-2 font-mono text-[10.5px]">
           <div className="rounded bg-zinc-900 p-2 border border-zinc-800">

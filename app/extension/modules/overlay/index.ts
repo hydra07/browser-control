@@ -1,92 +1,263 @@
 /**
  * Injected visual feedback (cursor glide, click ripple, scroll/key badges) on live pages.
  */
+import type { ActionLifecycleEvent, DriftKind, FlowAction } from "@browsercontrol/shared";
 import { evalOnPage, sendCommand } from "../../libs/cdp.js";
+import { subscribeActionLifecycle } from "../actions/events.js";
 
 export type ActionKind = "click" | "type";
 
-/** Single source of truth for click=violet/type=cyan — self-contained functions duplicate these values by hand, kept in sync manually. */
+/** Single source of truth for native CDP highlight colors; page feedback uses the same neutral palette. */
 export const KIND_COLORS: Record<ActionKind, { rgb: { r: number; g: number; b: number }; from: string; to: string }> = {
-    click: { rgb: { r: 99, g: 102, b: 241 }, from: "#a78bfa", to: "#6366f1" },
-    type: { rgb: { r: 59, g: 130, b: 246 }, from: "#22d3ee", to: "#3b82f6" },
+    click: { rgb: { r: 79, g: 70, b: 229 }, from: "#6366f1", to: "#4f46e5" },
+    type: { rgb: { r: 37, g: 99, b: 235 }, from: "#3b82f6", to: "#2563eb" },
 };
 
-/** Self-contained. Glides a visible cursor dot to (x, y); `fast` shortens the glide for flow steps. */
+const ACTION_RUNNING_ICON =
+    '<svg data-bc-spin="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9"/></svg>';
+const ACTION_SUCCESS_ICON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6"/></svg>';
+const ACTION_FAILURE_ICON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m15 9-6 6M9 9l6 6"/></svg>';
+const ACTION_BLOCKED_ICON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 4 9 16H3L12 4Z"/><path d="M12 9v5M12 17h.01"/></svg>';
+const ACTION_REPAIR_ICON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5"/><path d="M4 17v-5h5"/><path d="M6.1 9A7 7 0 0 1 18.5 7L20 9M4 15l1.5 2A7 7 0 0 0 17.9 15"/></svg>';
+
+const ACTION_LABELS = {
+    click: "Click",
+    type: "Type",
+    press_key: "Key press",
+    wait_for: "Wait",
+    assert_text: "Check text",
+    scroll: "Scroll",
+    drag: "Drag",
+} as const satisfies Record<FlowAction, string>;
+
+const DRIFT_LABELS = {
+    SEMANTIC_REPAIR: "Repaired",
+    TARGET_DRIFT: "Target changed",
+    BEHAVIOR_DRIFT: "Behavior changed",
+} as const satisfies Record<Exclude<DriftKind, "EXACT">, string>;
+
+export interface ActionFeedback {
+    icon: string;
+    text: string;
+    color: string;
+    glow: string;
+    fast: boolean;
+    durationMs: number;
+}
+
+/** Maps immutable action events to short, privacy-safe visual feedback labels. */
+export function getActionFeedback(event: ActionLifecycleEvent): ActionFeedback {
+    const actionLabel = ACTION_LABELS[event.action];
+    if (event.type === "action_started") {
+        return {
+            icon: ACTION_RUNNING_ICON,
+            text: `${actionLabel} in progress`,
+            color: "#c7d2fe",
+            glow: "#6366f1",
+            fast: true,
+            durationMs: 30_000,
+        };
+    }
+
+    if (event.result === "blocked") {
+        return {
+            icon: ACTION_BLOCKED_ICON,
+            text: `${actionLabel} needs confirmation`,
+            color: "#fcd34d",
+            glow: "#f59e0b",
+            fast: false,
+            durationMs: 2_400,
+        };
+    }
+
+    if (event.result === "failed") {
+        const drift = event.drift && event.drift !== "EXACT" ? `${DRIFT_LABELS[event.drift]} · ` : "";
+        return {
+            icon: ACTION_FAILURE_ICON,
+            text: `${drift}${actionLabel} failed`,
+            color: "#fca5a5",
+            glow: "#ef4444",
+            fast: false,
+            durationMs: 2_400,
+        };
+    }
+
+    if (event.drift && event.drift !== "EXACT") {
+        return {
+            icon: event.drift === "SEMANTIC_REPAIR" ? ACTION_REPAIR_ICON : ACTION_FAILURE_ICON,
+            text: `${DRIFT_LABELS[event.drift]} · ${actionLabel}`,
+            color: event.drift === "SEMANTIC_REPAIR" ? "#93c5fd" : "#fcd34d",
+            glow: event.drift === "SEMANTIC_REPAIR" ? "#3b82f6" : "#f59e0b",
+            fast: false,
+            durationMs: 2_000,
+        };
+    }
+
+    return {
+        icon: ACTION_SUCCESS_ICON,
+        text: `${actionLabel} complete`,
+        color: "#86efac",
+        glow: "#22c55e",
+        fast: false,
+        durationMs: 1_400,
+    };
+}
+
+/** Shows action progress and outcome through the same event stream used by evidence. */
+export function installActionLifecycleOverlay(
+    getTarget: (tabId: number) => chrome.debugger.Debuggee | null,
+): () => void {
+    return subscribeActionLifecycle((event) => {
+        if (event.tabId == null) return;
+        const target = getTarget(event.tabId);
+        if (!target) return;
+        const feedback = getActionFeedback(event);
+        void evalOnPage(
+            target,
+            `(${showPillCaption.toString()})(${JSON.stringify(feedback.icon)}, ${JSON.stringify(feedback.text)}, ${JSON.stringify(feedback.color)}, ${JSON.stringify(feedback.glow)}, ${feedback.fast}, ${feedback.durationMs})`,
+        ).catch(() => {});
+    });
+}
+
+/** Self-contained. Glides a compact, neutral cursor dot to (x, y); `fast` shortens the glide for flow steps. */
 export function moveCursorTo(x: number, y: number, fast?: boolean): Promise<void> {
     return new Promise((resolve) => {
-        console.log("[browsercontrol] moveCursorTo", x, y, fast); // check the PAGE's own DevTools console if the cursor never appears
-        if (!document.getElementById("__bc_cursor_style__")) {
+        const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+        if (!document.getElementById("__bc_overlay_style__")) {
             const style = document.createElement("style");
-            style.id = "__bc_cursor_style__";
-            style.textContent =
-                "@keyframes __bc_halo__ { 0%,100% { transform: scale(0.82); opacity: .55; } 50% { transform: scale(1.15); opacity: .9; } }";
+            style.id = "__bc_overlay_style__";
+            style.textContent = `
+                @keyframes __bc_cursor_breathe__ {
+                    0%, 100% { transform: scale(.82); opacity: .42; }
+                    50% { transform: scale(1); opacity: .72; }
+                }
+                #__bc_cursor__, #__bc_cursor__ * { pointer-events: none !important; }
+                #__bc_cursor__ [data-bc-halo] {
+                    position: absolute;
+                    left: 0;
+                    top: 0;
+                    width: 24px;
+                    height: 24px;
+                    margin: -12px 0 0 -12px;
+                    border: 1px solid rgba(99, 102, 241, .48);
+                    border-radius: 50%;
+                    box-sizing: border-box;
+                    animation: __bc_cursor_breathe__ 1.8s ease-in-out infinite;
+                }
+                #__bc_cursor__ [data-bc-dot] {
+                    position: absolute;
+                    left: 0;
+                    top: 0;
+                    width: 9px;
+                    height: 9px;
+                    margin: -4.5px 0 0 -4.5px;
+                    border: 1.5px solid rgba(255, 255, 255, .96);
+                    border-radius: 50%;
+                    box-sizing: border-box;
+                    background: #4f46e5;
+                    box-shadow: 0 2px 8px rgba(30, 41, 109, .5);
+                    transition: transform .16s cubic-bezier(.34, 1.56, .64, 1), filter .16s ease;
+                }
+                @media (prefers-reduced-motion: reduce) {
+                    #__bc_cursor__ [data-bc-halo],
+                    #__bc_cursor__ [data-bc-dot] { animation: none !important; transition: none !important; }
+                }
+            `;
             document.documentElement.appendChild(style);
         }
-        const durationS = fast ? 0.22 : 0.85;
+
         let cursor = document.getElementById("__bc_cursor__") as HTMLDivElement | null;
         if (!cursor) {
             cursor = document.createElement("div");
             cursor.id = "__bc_cursor__";
-            cursor.innerHTML =
-                '<div style="position:absolute;left:0;top:0;width:32px;height:32px;margin:-16px 0 0 -16px;border-radius:50%;background:radial-gradient(circle, rgba(139,92,246,0.35) 0%, rgba(139,92,246,0) 72%);animation:__bc_halo__ 1.4s ease-in-out infinite;"></div>' +
-                '<div data-bc-dot style="position:absolute;left:0;top:0;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;background:linear-gradient(135deg,#a78bfa,#6366f1);box-shadow:0 0 0 2px rgba(255,255,255,0.95),0 4px 12px rgba(99,102,241,0.6);transition:transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.2s ease;"></div>';
+            cursor.innerHTML = "<span data-bc-halo></span><span data-bc-dot></span>";
             document.documentElement.appendChild(cursor);
         }
-        cursor.style.cssText = `all:initial;position:fixed;width:0;height:0;z-index:2147483647;pointer-events:none;left:${cursor.style.left || "-100px"};top:${cursor.style.top || "-100px"};transition:left ${durationS}s cubic-bezier(0.22,1,0.36,1),top ${durationS}s cubic-bezier(0.22,1,0.36,1);`;
-        void cursor.offsetWidth; // flush layout so the transition animates from the current position
-        cursor.style.left = `${x}px`;
-        cursor.style.top = `${y}px`;
-        setTimeout(resolve, fast ? 260 : 900);
+
+        const previousLeft = cursor.style.left || "-100px";
+        const previousTop = cursor.style.top || "-100px";
+        const durationMs = reducedMotion ? 0 : fast ? 180 : 560;
+        cursor.style.cssText = `all:initial;position:fixed;left:${previousLeft};top:${previousTop};width:1px;height:1px;z-index:2147483647;pointer-events:none;transition:left ${durationMs}ms cubic-bezier(.22,1,.36,1),top ${durationMs}ms cubic-bezier(.22,1,.36,1);`;
+        void cursor.offsetWidth;
+        cursor.style.left = `${Math.round(x)}px`;
+        cursor.style.top = `${Math.round(y)}px`;
+        window.setTimeout(resolve, durationMs + 40);
     });
 }
 
 /** Self-contained. Squish-down/release on the cursor dot, timed to real mousedown/mouseup. */
-export function pulseCursorPress(pressed: boolean) {
+export function pulseCursorPress(pressed: boolean): void {
     const dot = document.querySelector("#__bc_cursor__ [data-bc-dot]") as HTMLElement | null;
-    if (dot) {
-        if (pressed) {
-            dot.style.transform = "scaleX(1.3) scaleY(0.75) translateY(2px)";
-            dot.style.filter = "brightness(1.3)";
-        } else {
-            dot.style.transform = "scale(1)";
-            dot.style.filter = "brightness(1)";
-        }
-    }
+    if (!dot) return;
+    dot.style.transform = pressed ? "scaleX(1.22) scaleY(.78) translateY(1px)" : "scale(1)";
+    dot.style.filter = pressed ? "brightness(1.18)" : "brightness(1)";
 }
 
-/** Self-contained. Ripple at the exact point a click/type/press_key input landed. */
-export function showClickRipple(x: number, y: number, kind: "click" | "type", fast?: boolean) {
+/** Self-contained. Shows one compact ripple at the exact point a click/type input landed. */
+export function showClickRipple(x: number, y: number, kind: "click" | "type", fast?: boolean): void {
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
     if (!document.getElementById("__bc_ripple_style__")) {
         const style = document.createElement("style");
         style.id = "__bc_ripple_style__";
         style.textContent = `
-            @keyframes __bc_ring_out__ {
-                0% { transform: scale(0.2); opacity: 1; border-width: 4px; }
-                100% { transform: scale(1.2); opacity: 0; border-width: 0px; }
+            @keyframes __bc_ripple_out__ {
+                from { transform: scale(.25); opacity: .76; }
+                to { transform: scale(1); opacity: 0; }
             }
-            @keyframes __bc_core_pop__ {
-                0% { transform: scale(0.5); opacity: 1; }
-                40% { transform: scale(1.5); opacity: 1; }
-                100% { transform: scale(0); opacity: 0; }
+            @keyframes __bc_ripple_core__ {
+                from { transform: scale(.7); opacity: .9; }
+                45% { transform: scale(1); opacity: .9; }
+                to { transform: scale(.7); opacity: 0; }
+            }
+            .__bc_ripple_ring__,
+            .__bc_ripple_core__ { pointer-events: none; }
+            .__bc_ripple_ring__ {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 42px;
+                height: 42px;
+                margin: -21px 0 0 -21px;
+                border: 2px solid var(--bc-ripple-color);
+                border-radius: 50%;
+                box-sizing: border-box;
+                box-shadow: 0 0 0 1px var(--bc-ripple-shadow);
+                animation: __bc_ripple_out__ .42s cubic-bezier(.16,1,.3,1) forwards;
+            }
+            .__bc_ripple_core__ {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 8px;
+                height: 8px;
+                margin: -4px 0 0 -4px;
+                border-radius: 50%;
+                background: var(--bc-ripple-color);
+                box-shadow: 0 0 10px 2px var(--bc-ripple-shadow);
+                animation: __bc_ripple_core__ .42s cubic-bezier(.16,1,.3,1) forwards;
+            }
+            @media (prefers-reduced-motion: reduce) {
+                .__bc_ripple_ring__, .__bc_ripple_core__ { animation: none !important; opacity: .72; }
             }
         `;
         document.documentElement.appendChild(style);
     }
-    const [a, b] = kind === "type" ? ["#22d3ee", "#3b82f6"] : ["#a78bfa", "#6366f1"];
+
+    const color = kind === "type" ? "#3b82f6" : "#4f46e5";
+    const shadow = kind === "type" ? "rgba(59,130,246,.45)" : "rgba(79,70,229,.45)";
     const wrap = document.createElement("div");
-    wrap.style.cssText = `all:initial;position:fixed;left:${x}px;top:${y}px;width:0;height:0;z-index:2147483647;pointer-events:none;`;
+    wrap.style.cssText = `all:initial;--bc-ripple-color:${color};--bc-ripple-shadow:${shadow};position:fixed;left:${Math.round(x)}px;top:${Math.round(y)}px;width:1px;height:1px;z-index:2147483647;pointer-events:none;`;
+    const ring = document.createElement("span");
+    ring.className = "__bc_ripple_ring__";
+    const core = document.createElement("span");
+    core.className = "__bc_ripple_core__";
+    wrap.append(ring, core);
     document.documentElement.appendChild(wrap);
-    const ringCount = fast ? 1 : 2;
-    const ringDurationS = fast ? 0.35 : 0.6;
-    for (let i = 0; i < ringCount; i++) {
-        const ring = document.createElement("div");
-        ring.style.cssText = `position:absolute;left:0;top:0;width:56px;height:56px;margin:-28px 0 0 -28px;border-radius:50%;border:0px solid ${a};box-shadow:0 0 20px ${b}88;opacity:0;animation:__bc_ring_out__ ${ringDurationS}s cubic-bezier(0.16, 1, 0.3, 1) ${i * 0.1}s forwards;`;
-        wrap.appendChild(ring);
-    }
-    const core = document.createElement("div");
-    core.style.cssText = `position:absolute;left:0;top:0;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;background:linear-gradient(135deg,${a},${b});box-shadow:0 0 15px 4px ${b}aa;animation:__bc_core_pop__ ${ringDurationS}s cubic-bezier(0.16, 1, 0.3, 1) forwards;`;
-    wrap.appendChild(core);
-    setTimeout(() => wrap.remove(), fast ? 450 : 800);
+    window.setTimeout(() => wrap.remove(), reducedMotion ? 100 : fast ? 300 : 520);
 }
 
 /** Native CDP highlight (Overlay.highlightRect) — immune to the page's own CSS/z-index, unlike a DOM-injected box. */
@@ -114,75 +285,147 @@ export function pageDelay(target: chrome.debugger.Debuggee, ms: number): Promise
     return evalOnPage(target, `new Promise((r) => setTimeout(r, ${ms}))`, true);
 }
 
-/** Self-contained. Animated mouse+wheel badge showing scroll direction — scroll has no single element to point a cursor at. */
-export function showScrollIndicator(deltaX: number, deltaY: number, fast?: boolean) {
-    if (!document.getElementById("__bc_scroll_style__")) {
+/** Self-contained. Compact mouse badge showing scroll direction without adding a second status timeline. */
+export function showScrollIndicator(deltaX: number, deltaY: number, fast?: boolean): void {
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    if (!document.getElementById("__bc_scroll_badge_style__")) {
         const style = document.createElement("style");
-        style.id = "__bc_scroll_style__";
+        style.id = "__bc_scroll_badge_style__";
         style.textContent = `
-            @keyframes __bc_scroll_pop__ {
-                0% { transform: translateX(-50%) translateY(20px) scale(0.9); opacity: 0; }
-                15% { transform: translateX(-50%) translateY(0) scale(1); opacity: 1; }
-                85% { transform: translateX(-50%) translateY(0) scale(1); opacity: 1; }
-                100% { transform: translateX(-50%) translateY(-20px) scale(0.9); opacity: 0; }
+            @keyframes __bc_transient_badge_in__ {
+                from { opacity: 0; transform: translate(-50%, 8px) scale(.96); }
+                to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+            }
+            @keyframes __bc_transient_badge_out__ {
+                from { opacity: 1; transform: translate(-50%, 0) scale(1); }
+                to { opacity: 0; transform: translate(-50%, -6px) scale(.98); }
+            }
+            .__bc_transient_badge__ {
+                all: initial;
+                position: fixed;
+                left: 50%;
+                bottom: max(16px, env(safe-area-inset-bottom, 0px) + 16px);
+                z-index: 2147483647;
+                pointer-events: none;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 38px;
+                border: 1px solid rgba(148, 163, 184, .32);
+                border-radius: 12px;
+                box-sizing: border-box;
+                background: rgba(15, 23, 42, .94);
+                box-shadow: 0 6px 20px rgba(15, 23, 42, .28);
+                animation: __bc_transient_badge_in__ .18s ease-out both;
+            }
+            .__bc_transient_badge__ * { pointer-events: none; }
+            .__bc_transient_badge__ [data-bc-badge-label] {
+                color: #bfdbfe;
+                font: 600 20px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             }
             @keyframes __bc_scroll_wheel_down__ {
-                0% { transform: translateY(-4px); opacity: 0; }
-                20% { opacity: 1; }
-                80% { opacity: 1; }
-                100% { transform: translateY(12px); opacity: 0; }
+                from { transform: translateY(-3px); opacity: .2; }
+                to { transform: translateY(8px); opacity: 1; }
             }
             @keyframes __bc_scroll_wheel_up__ {
-                0% { transform: translateY(12px); opacity: 0; }
-                20% { opacity: 1; }
-                80% { opacity: 1; }
-                100% { transform: translateY(-4px); opacity: 0; }
+                from { transform: translateY(8px); opacity: .2; }
+                to { transform: translateY(-3px); opacity: 1; }
             }
             @keyframes __bc_scroll_wheel_right__ {
-                0% { transform: translateX(-4px); opacity: 0; }
-                20% { opacity: 1; }
-                80% { opacity: 1; }
-                100% { transform: translateX(12px); opacity: 0; }
+                from { transform: translateX(-3px); opacity: .2; }
+                to { transform: translateX(8px); opacity: 1; }
             }
             @keyframes __bc_scroll_wheel_left__ {
-                0% { transform: translateX(12px); opacity: 0; }
-                20% { opacity: 1; }
-                80% { opacity: 1; }
-                100% { transform: translateX(-4px); opacity: 0; }
+                from { transform: translateX(8px); opacity: .2; }
+                to { transform: translateX(-3px); opacity: 1; }
+            }
+            @media (prefers-reduced-motion: reduce) {
+                .__bc_transient_badge__ { animation: none !important; }
+                .__bc_transient_badge__ [data-bc-scroll-wheel] { animation: none !important; }
             }
         `;
         document.documentElement.appendChild(style);
     }
-    const durationS = fast ? 0.6 : 1.2;
+
+    const overlayWindow = window as unknown as { __bcTransientBadgeTimer?: number };
+    if (overlayWindow.__bcTransientBadgeTimer != null) window.clearTimeout(overlayWindow.__bcTransientBadgeTimer);
+    document.getElementById("__bc_transient_badge__")?.remove();
+
     const isVertical = Math.abs(deltaY) >= Math.abs(deltaX);
-    const dir = isVertical ? (deltaY > 0 ? "down" : "up") : deltaX > 0 ? "right" : "left";
-
+    const direction = isVertical ? (deltaY >= 0 ? "down" : "up") : deltaX >= 0 ? "right" : "left";
     const badge = document.createElement("div");
-    badge.style.cssText = `all:initial;position:fixed;left:50%;bottom:8%;z-index:2147483647;pointer-events:none;display:flex;flex-direction:column;align-items:center;justify-content:center;width:52px;height:52px;border-radius:26px;background:rgba(17,24,39,0.85);backdrop-filter:blur(12px);box-shadow:0 8px 32px rgba(0,0,0,0.3),inset 0 1px 1px rgba(255,255,255,0.15);animation:__bc_scroll_pop__ ${durationS}s cubic-bezier(0.16, 1, 0.3, 1) both;`;
-
-    const mouse = document.createElement("div");
-    mouse.style.cssText = `position:relative;width:22px;height:34px;border:2px solid rgba(255,255,255,0.8);border-radius:11px;box-sizing:border-box;`;
-
-    const wheel = document.createElement("div");
-    const animName = `__bc_scroll_wheel_${dir}__`;
-    wheel.style.cssText = `position:absolute;left:50%;top:6px;width:4px;height:5px;margin-left:-2px;background:#fbbf24;border-radius:2px;box-shadow:0 0 8px rgba(251,191,36,0.8);animation:${animName} 0.6s infinite;`;
-
+    badge.id = "__bc_transient_badge__";
+    badge.className = "__bc_transient_badge__";
+    const mouse = document.createElement("span");
+    mouse.style.cssText =
+        "all:initial;position:relative;display:block;width:20px;height:28px;border:1.5px solid rgba(226,232,240,.82);border-radius:10px;box-sizing:border-box;";
+    const wheel = document.createElement("span");
+    wheel.dataset.bcScrollWheel = "true";
+    wheel.style.cssText = `all:initial;position:absolute;left:50%;top:5px;width:3px;height:5px;margin-left:-1.5px;border-radius:2px;background:#60a5fa;animation:__bc_scroll_wheel_${direction}__ .5s ease-in-out infinite alternate;`;
     mouse.appendChild(wheel);
     badge.appendChild(mouse);
     document.documentElement.appendChild(badge);
-    setTimeout(() => badge.remove(), durationS * 1000 + 50);
+    const durationMs = reducedMotion ? 700 : fast ? 650 : 1_100;
+    overlayWindow.__bcTransientBadgeTimer = window.setTimeout(() => {
+        badge.style.animation = reducedMotion ? "none" : "__bc_transient_badge_out__ .16s ease-in forwards";
+        window.setTimeout(() => badge.remove(), reducedMotion ? 0 : 170);
+    }, durationMs);
 }
 
-/** Self-contained 52px icon badge for press_key without a target element. */
-export function showKeyBadge(key: string, fast?: boolean) {
+/** Self-contained. Compact key badge for press_key without a target element. */
+export function showKeyBadge(key: string, fast?: boolean): void {
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
     if (!document.getElementById("__bc_key_badge_style__")) {
         const style = document.createElement("style");
         style.id = "__bc_key_badge_style__";
-        style.textContent =
-            "@keyframes __bc_icon_badge_pop__ { 0% { transform: translateX(-50%) translateY(20px) scale(0.9); opacity: 0; } 15% { transform: translateX(-50%) translateY(0) scale(1); opacity: 1; } 85% { transform: translateX(-50%) translateY(0) scale(1); opacity: 1; } 100% { transform: translateX(-50%) translateY(-20px) scale(0.9); opacity: 0; } }";
+        style.textContent = `
+            @keyframes __bc_transient_badge_in__ {
+                from { opacity: 0; transform: translate(-50%, 8px) scale(.96); }
+                to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+            }
+            @keyframes __bc_transient_badge_out__ {
+                from { opacity: 1; transform: translate(-50%, 0) scale(1); }
+                to { opacity: 0; transform: translate(-50%, -6px) scale(.98); }
+            }
+            .__bc_transient_badge__ {
+                all: initial;
+                position: fixed;
+                left: 50%;
+                bottom: max(16px, env(safe-area-inset-bottom, 0px) + 16px);
+                z-index: 2147483647;
+                pointer-events: none;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                min-width: 44px;
+                height: 38px;
+                padding: 0 12px;
+                border: 1px solid rgba(148, 163, 184, .32);
+                border-radius: 12px;
+                box-sizing: border-box;
+                background: rgba(15, 23, 42, .94);
+                box-shadow: 0 6px 20px rgba(15, 23, 42, .28);
+                animation: __bc_transient_badge_in__ .18s ease-out both;
+            }
+            .__bc_transient_badge__ * { pointer-events: none; }
+            .__bc_transient_badge__ [data-bc-badge-label] {
+                color: #bfdbfe;
+                font: 600 16px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                white-space: nowrap;
+            }
+            @media (prefers-reduced-motion: reduce) {
+                .__bc_transient_badge__ { animation: none !important; }
+            }
+        `;
         document.documentElement.appendChild(style);
     }
-    const GLYPHS: Record<string, string> = {
+
+    const overlayWindow = window as unknown as { __bcTransientBadgeTimer?: number };
+    if (overlayWindow.__bcTransientBadgeTimer != null) window.clearTimeout(overlayWindow.__bcTransientBadgeTimer);
+    document.getElementById("__bc_transient_badge__")?.remove();
+
+    const glyphs: Record<string, string> = {
         Enter: "⏎",
         Tab: "⇥",
         Escape: "⎋",
@@ -198,18 +441,19 @@ export function showKeyBadge(key: string, fast?: boolean) {
         PageUp: "⇞",
         PageDown: "⇟",
     };
-    const glyph = GLYPHS[key];
-    const durationS = fast ? 0.6 : 1.2;
+    const label = document.createElement("span");
+    label.dataset.bcBadgeLabel = "true";
+    label.textContent = glyphs[key] || key.slice(0, 16);
     const badge = document.createElement("div");
-    badge.style.cssText = `all:initial;position:fixed;left:50%;bottom:8%;z-index:2147483647;pointer-events:none;display:flex;align-items:center;justify-content:center;width:52px;height:52px;border-radius:26px;background:rgba(17,24,39,0.85);backdrop-filter:blur(12px);box-shadow:0 8px 32px rgba(0,0,0,0.3),inset 0 1px 1px rgba(255,255,255,0.15);animation:__bc_icon_badge_pop__ ${durationS}s cubic-bezier(0.16, 1, 0.3, 1) both;`;
-    const label = document.createElement("div");
-    label.style.cssText = glyph
-        ? 'color:#67e8f9;font:600 22px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-shadow:0 0 10px rgba(34,211,238,0.7);'
-        : 'color:#67e8f9;font:600 11px/1.1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-align:center;text-shadow:0 0 10px rgba(34,211,238,0.7);';
-    label.textContent = glyph || key;
+    badge.id = "__bc_transient_badge__";
+    badge.className = "__bc_transient_badge__";
     badge.appendChild(label);
     document.documentElement.appendChild(badge);
-    setTimeout(() => badge.remove(), durationS * 1000 + 50);
+    const durationMs = reducedMotion ? 700 : fast ? 650 : 1_100;
+    overlayWindow.__bcTransientBadgeTimer = window.setTimeout(() => {
+        badge.style.animation = reducedMotion ? "none" : "__bc_transient_badge_out__ .16s ease-in forwards";
+        window.setTimeout(() => badge.remove(), reducedMotion ? 0 : 170);
+    }, durationMs);
 }
 
 export const NAVIGATE_ICON_SVG =
@@ -217,26 +461,110 @@ export const NAVIGATE_ICON_SVG =
 export const SWITCH_TAB_ICON_SVG =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>';
 
-/** Self-contained. Wider text pill for actions needing more than a glyph (navigate, switch_tab) — same bottom-dock anchor as showKeyBadge/showScrollIndicator. `icon` is inline SVG markup, `color`/`glow` a hex pair, per caller. */
-export function showPillCaption(icon: string, text: string, color: string, glow: string, fast?: boolean) {
+/** Self-contained. Replaces the previous status pill so rapid actions cannot stack stale feedback. */
+export function showPillCaption(
+    icon: string,
+    text: string,
+    color: string,
+    glow: string,
+    fast?: boolean,
+    durationMs?: number,
+): void {
     if (!document.getElementById("__bc_pill_badge_style__")) {
         const style = document.createElement("style");
         style.id = "__bc_pill_badge_style__";
-        style.textContent =
-            "@keyframes __bc_pill_badge_pop__ { 0% { transform: translateX(-50%) translateY(20px) scale(0.9); opacity: 0; } 15% { transform: translateX(-50%) translateY(0) scale(1); opacity: 1; } 85% { transform: translateX(-50%) translateY(0) scale(1); opacity: 1; } 100% { transform: translateX(-50%) translateY(-20px) scale(0.9); opacity: 0; } }";
+        style.textContent = `
+            @keyframes __bc_pill_badge_in__ {
+                from { opacity: 0; transform: translate(-50%, 8px) scale(.97); }
+                to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+            }
+            @keyframes __bc_pill_badge_out__ {
+                from { opacity: 1; transform: translate(-50%, 0) scale(1); }
+                to { opacity: 0; transform: translate(-50%, -5px) scale(.98); }
+            }
+            .__bc_pill_badge__ {
+                all: initial;
+                position: fixed;
+                left: 50%;
+                bottom: max(16px, env(safe-area-inset-bottom, 0px) + 16px);
+                z-index: 2147483647;
+                pointer-events: none;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                width: max-content;
+                max-width: min(360px, calc(100vw - 32px));
+                min-height: 34px;
+                padding: 7px 12px 7px 10px;
+                border: 1px solid var(--bc-pill-border);
+                border-radius: 10px;
+                box-sizing: border-box;
+                background: rgba(15, 23, 42, .95);
+                box-shadow: 0 7px 24px rgba(15, 23, 42, .3);
+                animation: __bc_pill_badge_in__ .18s ease-out both;
+            }
+            .__bc_pill_badge__ [data-bc-pill-icon] {
+                all: initial;
+                flex: none;
+                display: flex;
+                width: 16px;
+                height: 16px;
+                color: var(--bc-pill-color);
+            }
+            .__bc_pill_badge__ [data-bc-pill-icon] svg {
+                width: 16px;
+                height: 16px;
+            }
+            .__bc_pill_badge__ [data-bc-spin] {
+                transform-origin: center;
+                animation: __bc_pill_spin__ .9s linear infinite;
+            }
+            @keyframes __bc_pill_spin__ { to { transform: rotate(360deg); } }
+            .__bc_pill_badge__ [data-bc-pill-text] {
+                all: initial;
+                overflow: hidden;
+                color: var(--bc-pill-color);
+                font: 600 12px/1.25 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                letter-spacing: .01em;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                text-shadow: 0 0 10px var(--bc-pill-glow);
+            }
+            @media (prefers-reduced-motion: reduce) {
+                .__bc_pill_badge__,
+                .__bc_pill_badge__ [data-bc-spin] { animation: none !important; }
+            }
+        `;
         document.documentElement.appendChild(style);
     }
-    const durationS = fast ? 0.8 : 1.6;
+
+    const safeColor = /^#[0-9a-f]{6}$/i.test(color) ? color : "#c7d2fe";
+    const safeGlow = /^#[0-9a-f]{6}$/i.test(glow) ? glow : "#6366f1";
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    const overlayWindow = window as unknown as { __bcPillTimer?: number };
+    if (overlayWindow.__bcPillTimer != null) window.clearTimeout(overlayWindow.__bcPillTimer);
+    document.getElementById("__bc_status_pill__")?.remove();
+
     const badge = document.createElement("div");
-    badge.style.cssText = `all:initial;position:fixed;left:50%;bottom:8%;z-index:2147483647;pointer-events:none;display:flex;align-items:center;gap:8px;max-width:min(480px,84vw);padding:10px 18px 10px 14px;border-radius:999px;background:rgba(17,24,39,0.85);backdrop-filter:blur(12px);box-shadow:0 8px 32px rgba(0,0,0,0.3),inset 0 1px 1px rgba(255,255,255,0.15);animation:__bc_pill_badge_pop__ ${durationS}s cubic-bezier(0.16, 1, 0.3, 1) both;`;
+    badge.id = "__bc_status_pill__";
+    badge.className = "__bc_pill_badge__";
+    badge.style.setProperty("--bc-pill-color", safeColor);
+    badge.style.setProperty("--bc-pill-glow", `${safeGlow}88`);
+    badge.style.setProperty("--bc-pill-border", `${safeColor}55`);
+
     const iconEl = document.createElement("span");
-    iconEl.style.cssText = `flex:none;display:flex;width:16px;height:16px;color:${color};filter:drop-shadow(0 0 6px ${glow}b3);`;
-    iconEl.innerHTML = icon; // inline SVG markup, not an emoji glyph — see call sites
+    iconEl.dataset.bcPillIcon = "true";
+    if (typeof icon === "string" && icon.length <= 1000 && /^<svg(?:\s|>)/i.test(icon)) iconEl.innerHTML = icon;
+
     const textEl = document.createElement("span");
-    textEl.style.cssText = `color:${color};font:600 13.5px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-shadow:0 0 10px ${glow}80;`;
-    textEl.textContent = text;
-    badge.appendChild(iconEl);
-    badge.appendChild(textEl);
+    textEl.dataset.bcPillText = "true";
+    textEl.textContent = text.slice(0, 120);
+    badge.append(iconEl, textEl);
     document.documentElement.appendChild(badge);
-    setTimeout(() => badge.remove(), durationS * 1000 + 50);
+
+    const visibleMs = durationMs ?? (fast ? 900 : 1_400);
+    overlayWindow.__bcPillTimer = window.setTimeout(() => {
+        badge.style.animation = reducedMotion ? "none" : "__bc_pill_badge_out__ .16s ease-in forwards";
+        window.setTimeout(() => badge.remove(), reducedMotion ? 0 : 170);
+    }, visibleMs);
 }

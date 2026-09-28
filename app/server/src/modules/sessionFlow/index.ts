@@ -17,7 +17,7 @@ const snapshottedSinceNavigate = new Map<string, boolean>();
 
 function tabKey(args: Record<string, unknown>): string {
   const tabId = args?.tabId;
-  return typeof tabId === "number" ? String(tabId) : "__default__";
+  return typeof tabId === "number" && tabId > 0 ? String(tabId) : "__default__";
 }
 
 /**

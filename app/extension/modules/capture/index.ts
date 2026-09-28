@@ -4,6 +4,7 @@
  * Designed specifically for human visual verification, debugging, and feedback.
  */
 import { errorMessage } from "../../libs/errorMessage.js";
+import { MAX_CAPTURE_BYTES, MAX_CAPTURE_DURATION_MS } from "./constants.js";
 import type { CaptureAck, CaptureError, CaptureResult, FrameMessage, PortAck } from "./types.js";
 
 export type { CaptureAck, CaptureError, CaptureResult } from "./types.js";
@@ -54,6 +55,9 @@ export class ScreenCaptureManager {
     private frameCount: number;
     private frameQueue: Promise<void>;
     private pendingDrawCount: number;
+    private capturedBytes: number;
+    private readonly pendingChunkTasks: Set<Promise<void>>;
+    private stopTimer: ReturnType<typeof setTimeout> | null;
 
     constructor() {
         this.port = null;
@@ -67,6 +71,9 @@ export class ScreenCaptureManager {
         this.frameCount = 0;
         this.frameQueue = Promise.resolve();
         this.pendingDrawCount = 0;
+        this.capturedBytes = 0;
+        this.pendingChunkTasks = new Set();
+        this.stopTimer = null;
     }
 
     private async drawFrame(frame: FrameMessage): Promise<void> {
@@ -84,6 +91,27 @@ export class ScreenCaptureManager {
         } finally {
             this.pendingDrawCount--;
         }
+    }
+
+    private async waitForRecorderStop(recorder: MediaRecorder): Promise<void> {
+        if (recorder.state === "inactive") return;
+        await new Promise<void>((resolve) => {
+            const onStop = () => {
+                recorder.removeEventListener("stop", onStop);
+                resolve();
+            };
+            recorder.addEventListener("stop", onStop, { once: true });
+            try {
+                recorder.stop();
+            } catch {
+                recorder.removeEventListener("stop", onStop);
+                resolve();
+            }
+        });
+    }
+
+    private async waitForPendingChunks(): Promise<void> {
+        await Promise.all([...this.pendingChunkTasks]);
     }
 
     public isRecording(): boolean {
@@ -125,19 +153,34 @@ export class ScreenCaptureManager {
         this.onChunk = onChunk ?? null;
         this.frameCount = 0;
         this.pendingDrawCount = 0;
+        this.capturedBytes = 0;
+        this.pendingChunkTasks.clear();
+        this.stopTimer = null;
         this.frameQueue = Promise.resolve();
 
         const mimeType = pickSupportedMimeType();
         const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-        recorder.ondataavailable = async (e) => {
-            if (e.data.size > 0) {
-                if (this.onChunk) {
-                    const buf = await e.data.arrayBuffer();
-                    this.onChunk(new Uint8Array(buf));
-                } else {
-                    this.chunks.push(e.data);
+        recorder.ondataavailable = (e) => {
+            const callback = this.onChunk;
+            const task = (async () => {
+                if (e.data.size <= 0) return;
+                if (this.capturedBytes + e.data.size > MAX_CAPTURE_BYTES) {
+                    console.warn("[browsercontrol] Capture byte limit reached; stopping recording");
+                    setTimeout(() => void this.stop(), 0);
+                    return;
                 }
-            }
+                this.capturedBytes += e.data.size;
+                if (callback) {
+                    const buf = await e.data.arrayBuffer();
+                    callback(new Uint8Array(buf));
+                    return;
+                }
+                this.chunks.push(e.data);
+            })().catch((error: unknown) => {
+                console.error("[browsercontrol] Capture chunk processing failed:", errorMessage(error));
+            });
+            this.pendingChunkTasks.add(task);
+            void task.finally(() => this.pendingChunkTasks.delete(task));
         };
         this.recorder = recorder;
 
@@ -187,6 +230,10 @@ export class ScreenCaptureManager {
         track.requestFrame();
         this.frameCount++;
         this.recordingStartedAt = Date.now();
+        this.stopTimer = setTimeout(() => {
+            console.warn("[browsercontrol] Capture duration limit reached; stopping recording");
+            void this.stop();
+        }, MAX_CAPTURE_DURATION_MS);
         return { success: true, message: "Recording started." };
     }
 
@@ -203,6 +250,11 @@ export class ScreenCaptureManager {
         const wasStreamed = this.onChunk !== null;
         const durationMs = Date.now() - this.recordingStartedAt;
         const frames = this.frameCount;
+        const capturedBytes = this.capturedBytes;
+        if (this.stopTimer !== null) {
+            clearTimeout(this.stopTimer);
+            this.stopTimer = null;
+        }
 
         this.recorder = null;
         this.port = null;
@@ -213,9 +265,8 @@ export class ScreenCaptureManager {
         await this.frameQueue;
 
         if (wasStreamed) {
-            if (finishedRecorder.state !== "inactive") {
-                finishedRecorder.stop();
-            }
+            await this.waitForRecorderStop(finishedRecorder);
+            await this.waitForPendingChunks();
             finishedTrack?.stop();
             this.dispose();
             return {
@@ -224,6 +275,7 @@ export class ScreenCaptureManager {
                 isStreamed: true,
                 durationMs,
                 frameCount: frames,
+                byteCount: capturedBytes,
             };
         }
 
@@ -236,6 +288,7 @@ export class ScreenCaptureManager {
             finishedRecorder.onstop = () => resolve(new Blob(this.chunks, { type: mimeType }));
             finishedRecorder.stop();
         });
+        await this.waitForPendingChunks();
         finishedTrack?.stop();
 
         this.dispose();
@@ -247,10 +300,15 @@ export class ScreenCaptureManager {
             dataBase64,
             durationMs,
             frameCount: frames,
+            byteCount: capturedBytes,
         };
     }
 
     public dispose(): void {
+        if (this.stopTimer !== null) {
+            clearTimeout(this.stopTimer);
+            this.stopTimer = null;
+        }
         this.port?.disconnect();
         this.port = null;
         this.track?.stop();
@@ -263,6 +321,8 @@ export class ScreenCaptureManager {
         this.onChunk = null;
         this.frameCount = 0;
         this.pendingDrawCount = 0;
+        this.capturedBytes = 0;
+        this.pendingChunkTasks.clear();
     }
 }
 

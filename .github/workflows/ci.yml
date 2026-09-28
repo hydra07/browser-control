@@ -33,7 +33,7 @@ jobs:
       - name: Setup Bun runtime
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.14
 
       - name: Install workspace dependencies
         run: bun install --frozen-lockfile
@@ -54,7 +54,13 @@ jobs:
         run: bun x biome check . --reporter=github
 
       # ------------------------------------------------------------------------
-      # 2. TypeScript Typecheck (Affected packages on PR, All on push)
+      # 2. Fast Unit Tests
+      # ------------------------------------------------------------------------
+      - name: Run Unit Tests
+        run: bun run test
+
+      # ------------------------------------------------------------------------
+      # 3. TypeScript Typecheck (Affected packages on PR, All on push)
       # ------------------------------------------------------------------------
       - name: Typecheck Affected Workspaces (PR Diff)
         if: github.event_name == 'pull_request'
@@ -65,7 +71,7 @@ jobs:
         run: bun run check
 
       # ------------------------------------------------------------------------
-      # 3. Build Artifacts (Affected packages on PR, All on push)
+      # 4. Build Artifacts (Affected packages on PR, All on push)
       # ------------------------------------------------------------------------
       - name: Build Affected Packages (PR Diff)
         if: github.event_name == 'pull_request'

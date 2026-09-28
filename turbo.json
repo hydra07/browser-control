@@ -6,6 +6,9 @@
         },
         "check": {
             "outputs": []
+        },
+        "test": {
+            "outputs": []
         }
     }
 }

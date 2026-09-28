@@ -1,7 +1,8 @@
 import type { BenchmarkMetrics } from "@browsercontrol/benchmark";
-import type { FlowStep } from "@browsercontrol/shared";
+import type { FlowStep, FlowStepV2 } from "@browsercontrol/shared";
+import { getSettingsSync } from "../../../configs/settings.js";
 
-export type { BenchmarkMetrics, FlowStep };
+export type { BenchmarkMetrics, FlowStep, FlowStepV2 };
 
 const DAEMON_PORT = 8765;
 const DAEMON_URL = `http://127.0.0.1:${DAEMON_PORT}`;
@@ -17,7 +18,8 @@ export interface FlowMeta {
 }
 
 export interface FlowFull extends FlowMeta {
-  steps: FlowStep[];
+  schemaVersion?: 1 | 2;
+  steps: FlowStepV2[];
 }
 
 export interface FlowRunResult {
@@ -31,9 +33,47 @@ export interface FlowRunResult {
 
 export class DaemonUnreachableError extends Error {}
 
+type AgentId = "claude" | "agy";
+type AgentEffort = "low" | "medium" | "high";
+
+type AgentSelection = { agentId?: AgentId; effort?: AgentEffort };
+
+function agentSelectionFromLegacyCommand(command?: string): AgentSelection {
+  const trimmed = command?.trim();
+  if (!trimmed) return {};
+  const [executable, ...flags] = trimmed.split(/\s+/);
+  const normalized = executable?.toLowerCase();
+  const agentId =
+    normalized === "claude" || normalized === "claude.exe"
+      ? "claude"
+      : normalized === "agy" || normalized === "agy.exe"
+        ? "agy"
+        : null;
+  if (!agentId) throw new Error("CLI agent must be `claude` or `agy`");
+
+  let effort: AgentEffort | undefined;
+  for (let index = 0; index < flags.length; index++) {
+    const flag = flags[index];
+    if (flag === "--print" || flag === "-p") continue;
+    if (flag === "--effort") {
+      const value = flags[++index];
+      if (value !== "low" && value !== "medium" && value !== "high") {
+        throw new Error("--effort must be low, medium, or high");
+      }
+      effort = value;
+      continue;
+    }
+    throw new Error(`Unsupported ${agentId} CLI flag: ${flag ?? ""}`);
+  }
+  return { agentId, ...(effort ? { effort } : {}) };
+}
+
 async function daemonFetch(path: string, init?: RequestInit): Promise<Response> {
   try {
-    return await fetch(`${DAEMON_URL}${path}`, init);
+    const headers = new Headers(init?.headers);
+    const token = getSettingsSync().daemonAuthToken.trim();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    return await fetch(`${DAEMON_URL}${path}`, { ...init, headers });
   } catch {
     throw new DaemonUnreachableError(
       "Can't reach the BrowserControl daemon at 127.0.0.1:8765 — is it running (spawned by your MCP client) with the extension connected?",
@@ -60,7 +100,7 @@ export async function saveFlow(input: {
   name: string;
   description?: string;
   domain?: string;
-  steps: FlowStep[];
+  steps: readonly (FlowStep | FlowStepV2)[];
 }): Promise<FlowFull> {
   const res = await daemonFetch("/flows", {
     method: "POST",
@@ -203,8 +243,6 @@ export interface CliAgentQueryResult {
 export interface CliAgentStatusResult {
   hasAgy: boolean;
   hasClaude: boolean;
-  agyPath?: string;
-  claudePath?: string;
   isBusy: boolean;
 }
 
@@ -223,10 +261,11 @@ export async function queryCliAgent(data: {
   customCommand?: string;
   sessionId?: string;
 }): Promise<CliAgentQueryResult> {
+  const { customCommand, ...request } = data;
   const res = await daemonFetch("/cli-agent/query", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
+    body: JSON.stringify({ ...request, ...agentSelectionFromLegacyCommand(customCommand) }),
   });
   if (!res.ok) throw new Error(`Failed to query CLI agent (HTTP ${res.status})`);
   return (await res.json()) as CliAgentQueryResult;
@@ -256,10 +295,11 @@ export async function streamCliAgent(
     onError?: (error: string) => void;
   },
 ): Promise<void> {
+  const { customCommand, ...request } = data;
   const res = await daemonFetch("/cli-agent/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
+    body: JSON.stringify({ ...request, ...agentSelectionFromLegacyCommand(customCommand) }),
   });
 
   if (!res.ok || !res.body) {

@@ -2,11 +2,20 @@
  * Dispatches relayed BrowserCommand to its respective handler.
  * Manages tab resolution, security boundaries, and CDP execution contexts.
  */
-import type { BrowserCommand } from "@browsercontrol/shared";
+import type { BrowserCommand, FlowAction } from "@browsercontrol/shared";
 import { getSettings, getSettingsSync } from "../../configs/settings.js";
 import { evalOnPage, sendCommand } from "../../libs/cdp.js";
 import { errorMessage } from "../../libs/errorMessage.js";
-import { performClick, performDrag, performPressKey, performScroll, performType } from "../actions/index.js";
+import { emitActionLifecycle } from "../actions/events.js";
+import {
+    getAxInfoForNode,
+    isRiskyTarget,
+    performClick,
+    performDrag,
+    performPressKey,
+    performScroll,
+    performType,
+} from "../actions/index.js";
 import {
     handleAnalyzeHar,
     handleDebugLayout,
@@ -14,6 +23,7 @@ import {
     handleInspectMemory,
     handleInspectProcess,
 } from "../devtools/index.js";
+import { emitFailureEvent, queryEvidence, setEvidenceSession } from "../evidence/index.js";
 import { runFlowSteps } from "../flow/index.js";
 import { inspectElement } from "../inspect/index.js";
 import { clearBlockedRequests, setSandbox } from "../interceptor/index.js";
@@ -23,7 +33,13 @@ import { handlePeekScreenCommand } from "../peek/index.js";
 import { handleFindCommand, handleReadingModeCommand, handleSelectContentCommand } from "../read/index.js";
 import { flowRecorder } from "../recorder/index.js";
 import { captureScreenshot } from "../screenshot/index.js";
-import { handleQueryRegionCommand, handleSnapshotCommand, handleVisualSnapshotCommand } from "../snapshot/index.js";
+import {
+    handleQueryRegionCommand,
+    handleSemanticSnapshotCommand,
+    handleSnapshotCommand,
+    handleVisualSnapshotCommand,
+    resolveSemanticRef,
+} from "../snapshot/index.js";
 import { addTabToWorkspaceGroup, handleListTabsCommand, handleSwitchTabCommand } from "../tabs/index.js";
 import { waitForStableDom } from "../wait/index.js";
 import { NAVIGATE_LOAD_TIMEOUT_MS } from "./constants.js";
@@ -35,6 +51,86 @@ export type { DispatchCtx } from "./types.js";
 function isAttachableUrl(url: string | undefined): boolean {
     if (!url) return false;
     return !/^(chrome|chrome-extension|edge|devtools|chrome-untrusted|chrome-search|about):/i.test(url);
+}
+
+interface ActionLifecycleOptions {
+    tabId?: number;
+    targetRef?: string;
+    lifecycleResult?: "blocked";
+}
+
+async function withActionLifecycle<T extends object>(
+    action: FlowAction,
+    sensitive: boolean,
+    operation: () => Promise<T>,
+    options: ActionLifecycleOptions = {},
+): Promise<T> {
+    const actionId = `a${crypto.randomUUID()}`;
+    const startedAt = Date.now();
+    emitActionLifecycle({
+        type: "action_started",
+        actionId,
+        ts: startedAt,
+        action,
+        ...(options.tabId != null ? { tabId: options.tabId } : {}),
+        ...(options.targetRef ? { targetRef: options.targetRef } : {}),
+        sensitive,
+    });
+    try {
+        const result = await operation();
+        const succeeded = "success" in result;
+        if (!succeeded) {
+            emitFailureEvent({
+                phase: options.lifecycleResult === "blocked" ? "risk" : "action",
+                code: options.lifecycleResult === "blocked" ? "risky_action_blocked" : "action_failed",
+                message: sensitive ? "Sensitive action failed." : "Standalone action failed.",
+            });
+        }
+        emitActionLifecycle({
+            type: "action_finished",
+            actionId,
+            ts: Date.now(),
+            action,
+            ...(options.tabId != null ? { tabId: options.tabId } : {}),
+            ...(options.targetRef ? { targetRef: options.targetRef } : {}),
+            durationMs: Date.now() - startedAt,
+            result: options.lifecycleResult ?? (succeeded ? "succeeded" : "failed"),
+            sensitive,
+        });
+        return result;
+    } catch (error) {
+        emitFailureEvent({
+            phase: "action",
+            code: "action_exception",
+            message: sensitive ? "Sensitive action failed." : "Standalone action raised an exception.",
+        });
+        emitActionLifecycle({
+            type: "action_finished",
+            actionId,
+            ts: Date.now(),
+            action,
+            ...(options.tabId != null ? { tabId: options.tabId } : {}),
+            ...(options.targetRef ? { targetRef: options.targetRef } : {}),
+            durationMs: Date.now() - startedAt,
+            result: "failed",
+            sensitive,
+        });
+        throw error;
+    }
+}
+
+async function getRiskBlock(
+    target: chrome.debugger.Debuggee,
+    backendNodeId: number | undefined,
+    confirmRisky: boolean | undefined,
+): Promise<Record<string, unknown> | null> {
+    if (backendNodeId == null || confirmRisky) return null;
+    const axInfo = await getAxInfoForNode(target, backendNodeId).catch(() => null);
+    if (!axInfo || !isRiskyTarget(axInfo)) return null;
+    return {
+        error: "risky_action_blocked",
+        hint: `This target (${axInfo.role ?? "element"} "${axInfo.name ?? ""}") looks potentially destructive or irreversible. Confirm it with the user, then retry with confirmRisky:true.`,
+    };
 }
 
 /** Finds an attachable tab in the most recently focused window or across tabs. */
@@ -74,17 +170,44 @@ async function handleNavigate(
     let reuseExistingTab: boolean;
     const active = !opts.background;
 
-    if (opts.tabId != null) {
+    if (opts.tabId != null && opts.tabId > 0) {
+        let tabFound = false;
         try {
             await chrome.tabs.get(opts.tabId);
+            tabFound = true;
         } catch {
-            return {
-                error: `No tab with id ${opts.tabId}`,
-                hint: 'Call browser_session({action:"list_tabs"}) to see currently open tabs, or omit tabId to open a new one.',
-            };
+            console.log(`Requested tabId ${opts.tabId} does not exist — falling back.`);
         }
-        tabId = opts.tabId;
-        reuseExistingTab = true;
+        if (tabFound) {
+            tabId = opts.tabId;
+            reuseExistingTab = true;
+        } else {
+            const lastActiveTabId = ctx.getLastActiveTabId();
+            let existingTabIsValid = false;
+            if (lastActiveTabId) {
+                try {
+                    await chrome.tabs.get(lastActiveTabId);
+                    existingTabIsValid = true;
+                } catch {
+                    console.log(`Stale lastActiveTabId ${lastActiveTabId} (tab no longer exists).`);
+                }
+            }
+            if (existingTabIsValid) {
+                tabId = lastActiveTabId!;
+                reuseExistingTab = true;
+            } else {
+                const fallbackTab = await findAttachableFallbackTab();
+                if (fallbackTab != null) {
+                    tabId = fallbackTab;
+                    reuseExistingTab = true;
+                } else {
+                    const newTab = await chrome.tabs.create({ url, active });
+                    tabId = newTab.id!;
+                    windowId = newTab.windowId;
+                    reuseExistingTab = false;
+                }
+            }
+        }
     } else if (opts.newTab) {
         const newTab = await chrome.tabs.create({ url, active });
         tabId = newTab.id!;
@@ -166,12 +289,14 @@ export async function dispatchCommand(
     ctx: DispatchCtx,
 ): Promise<Record<string, unknown>> {
     const cmd = data.cmd;
+    const effectiveTabId = typeof data.tabId === "number" && data.tabId > 0 ? data.tabId : undefined;
+    if (data.sessionId) setEvidenceSession(data.sessionId);
 
     if (cmd === "navigate") {
         return await handleNavigate(
             data.url,
             {
-                tabId: data.tabId,
+                tabId: effectiveTabId,
                 newTab: data.newTab,
                 background: data.background,
             },
@@ -181,7 +306,7 @@ export async function dispatchCommand(
 
     if (cmd === "peek_screen") {
         return await handlePeekScreenCommand({
-            tabId: data.tabId,
+            tabId: effectiveTabId,
             screenshot: data.screenshot,
             maxChars: data.maxChars,
             includeSelection: data.includeSelection,
@@ -192,24 +317,57 @@ export async function dispatchCommand(
         return await handleListTabsCommand(ctx.getLastActiveTabId(), { scope: data.scope });
     }
     if (cmd === "switch_tab") {
-        const result = await handleSwitchTabCommand(data.tabId);
+        if (!effectiveTabId) {
+            return {
+                error: `Invalid or missing tabId: ${data.tabId}`,
+                hint: 'Call browser_session({action:"list_tabs"}) to see currently open tabs and their real tab IDs.',
+            };
+        }
+        const result = await handleSwitchTabCommand(effectiveTabId);
         if ("success" in result) ctx.setLastActiveTabId(result.newActiveTabId);
         return result;
     }
 
+    if (cmd === "evidence") {
+        return queryEvidence(data.sessionId ?? "extension-session", data.mode, data.after, data.limit, data.profile);
+    }
+
     if (cmd === "close_tab") {
+        if (!effectiveTabId) {
+            return {
+                error: `Invalid or missing tabId: ${data.tabId}`,
+                hint: 'Call browser_session({action:"list_tabs"}) to see currently open tabs and their real tab IDs.',
+            };
+        }
         try {
-            await chrome.tabs.remove(data.tabId);
-            return { success: true, message: `Closed tab ${data.tabId}` };
+            await chrome.tabs.remove(effectiveTabId);
+            return { success: true, message: `Closed tab ${effectiveTabId}` };
         } catch (e) {
             return {
-                error: `Failed to close tab ${data.tabId}`,
+                error: `Failed to close tab ${effectiveTabId}`,
                 hint: errorMessage(e),
             };
         }
     }
 
-    let targetTabId = data.tabId ?? ctx.getLastActiveTabId();
+    let targetTabId: number | null = null;
+    if (effectiveTabId) {
+        try {
+            await chrome.tabs.get(effectiveTabId);
+            targetTabId = effectiveTabId;
+        } catch {
+            console.log(`Target tabId ${effectiveTabId} not found; falling back to active tab.`);
+        }
+    }
+    if (!targetTabId) {
+        const lastActive = ctx.getLastActiveTabId();
+        if (lastActive) {
+            try {
+                await chrome.tabs.get(lastActive);
+                targetTabId = lastActive;
+            } catch {}
+        }
+    }
     if (!targetTabId) {
         const fallbackTab = await findAttachableFallbackTab();
         if (fallbackTab != null) {
@@ -243,11 +401,13 @@ export async function dispatchCommand(
     const target = { tabId: targetTabId };
     const animated = getSettingsSync().animationsEnabled;
 
-    if (cmd === "snapshot")
+    if (cmd === "snapshot") {
+        if (data.semantic) return await handleSemanticSnapshotCommand(target);
         return await handleSnapshotCommand(target, {
             compact: data.compact,
             format: data.format,
         });
+    }
 
     if (cmd === "query_region") return await handleQueryRegionCommand(target, data.selector);
 
@@ -266,25 +426,85 @@ export async function dispatchCommand(
         });
 
     if (cmd === "click") {
-        if (!data.nodeId)
+        const nodeId = data.ref ? resolveSemanticRef(targetTabId, data.ref, data.documentId) : data.nodeId;
+        if (nodeId == null)
             return {
-                error: "Missing nodeId",
-                hint: "Call snapshot first and pass one of the returned node ids.",
+                error: data.ref ? "Stale or invalid semantic ref" : "Missing nodeId",
+                hint: data.ref
+                    ? "Take a fresh semantic snapshot and pass its ref together with the returned documentId."
+                    : "Call snapshot first and pass one of the returned node ids.",
             };
-        return await performClick(target, data.nodeId, { fast: !animated });
+        const riskBlock = await getRiskBlock(target, nodeId, data.confirmRisky);
+        if (riskBlock) {
+            return await withActionLifecycle("click", false, () => Promise.resolve(riskBlock), {
+                tabId: targetTabId,
+                targetRef: data.ref,
+                lifecycleResult: "blocked",
+            });
+        }
+        return await withActionLifecycle("click", false, () => performClick(target, nodeId, { fast: !animated }), {
+            tabId: targetTabId,
+            targetRef: data.ref,
+        });
     }
 
     if (cmd === "type") {
         if (!data.text) return { error: "Missing text" };
-        return await performType(target, data.nodeId, data.text, {
-            fast: !animated,
-        });
+        const nodeId = data.ref
+            ? (resolveSemanticRef(targetTabId, data.ref, data.documentId) ?? undefined)
+            : data.nodeId;
+        if (data.ref && nodeId == null) {
+            return {
+                error: "Stale or invalid semantic ref",
+                hint: "Take a fresh semantic snapshot and pass its ref together with the returned documentId.",
+            };
+        }
+        const riskBlock = await getRiskBlock(target, nodeId, data.confirmRisky);
+        if (riskBlock) {
+            return await withActionLifecycle("type", true, () => Promise.resolve(riskBlock), {
+                tabId: targetTabId,
+                targetRef: data.ref,
+                lifecycleResult: "blocked",
+            });
+        }
+        return await withActionLifecycle(
+            "type",
+            true,
+            () =>
+                performType(target, nodeId, data.text, {
+                    fast: !animated,
+                }),
+            { tabId: targetTabId, targetRef: data.ref },
+        );
     }
 
     if (cmd === "press_key") {
-        return await performPressKey(target, data.key, data.nodeId, {
-            fast: !animated,
-        });
+        const nodeId = data.ref
+            ? (resolveSemanticRef(targetTabId, data.ref, data.documentId) ?? undefined)
+            : data.nodeId;
+        if (data.ref && nodeId == null) {
+            return {
+                error: "Stale or invalid semantic ref",
+                hint: "Take a fresh semantic snapshot and pass its ref together with the returned documentId.",
+            };
+        }
+        const riskBlock = await getRiskBlock(target, nodeId, data.confirmRisky);
+        if (riskBlock) {
+            return await withActionLifecycle("press_key", false, () => Promise.resolve(riskBlock), {
+                tabId: targetTabId,
+                targetRef: data.ref,
+                lifecycleResult: "blocked",
+            });
+        }
+        return await withActionLifecycle(
+            "press_key",
+            false,
+            () =>
+                performPressKey(target, data.key, nodeId, {
+                    fast: !animated,
+                }),
+            { tabId: targetTabId, targetRef: data.ref },
+        );
     }
 
     if (cmd === "run_flow" || cmd === "explore_flow") {
@@ -318,22 +538,34 @@ export async function dispatchCommand(
     }
 
     if (cmd === "scroll") {
-        return await performScroll(target, data.deltaX || 0, data.deltaY || 0, {
-            fast: !animated,
-        });
+        return await withActionLifecycle(
+            "scroll",
+            false,
+            () =>
+                performScroll(target, data.deltaX || 0, data.deltaY || 0, {
+                    fast: !animated,
+                }),
+            { tabId: targetTabId },
+        );
     }
 
     if (cmd === "drag") {
-        return await performDrag(target, data.fromX, data.fromY, data.toX, data.toY, {
-            fast: !animated,
-            points: data.points,
-            shape: data.shape,
-            shapeParams: data.shapeParams,
-            path: data.path,
-            stepsCount: data.stepsCount,
-            easing: data.easing,
-            button: data.button,
-        });
+        return await withActionLifecycle(
+            "drag",
+            false,
+            () =>
+                performDrag(target, data.fromX, data.fromY, data.toX, data.toY, {
+                    fast: !animated,
+                    points: data.points,
+                    shape: data.shape,
+                    shapeParams: data.shapeParams,
+                    path: data.path,
+                    stepsCount: data.stepsCount,
+                    easing: data.easing,
+                    button: data.button,
+                }),
+            { tabId: targetTabId },
+        );
     }
 
     if (cmd === "screenshot") {
@@ -345,12 +577,15 @@ export async function dispatchCommand(
     }
 
     if (cmd === "inspect_element") {
-        if (!data.nodeId)
+        const nodeId = data.ref ? resolveSemanticRef(targetTabId, data.ref, data.documentId) : data.nodeId;
+        if (nodeId == null)
             return {
-                error: "Missing nodeId",
-                hint: "Call snapshot or visual_snapshot first and pass one of the returned node ids.",
+                error: data.ref ? "Stale or invalid semantic ref" : "Missing nodeId",
+                hint: data.ref
+                    ? "Take a fresh semantic snapshot and pass its ref together with the returned documentId."
+                    : "Call snapshot or visual_snapshot first and pass one of the returned node ids.",
             };
-        return await inspectElement(target, data.nodeId);
+        return await inspectElement(target, nodeId);
     }
 
     if (cmd === "network_requests") {
@@ -369,7 +604,7 @@ export async function dispatchCommand(
                 error: "Missing requestId",
                 hint: "Call network_requests first and pass one of the returned request ids.",
             };
-        return await getNetworkRequestDetail(target, data.requestId);
+        return await getNetworkRequestDetail(target, data.requestId, data.includeBody === true);
     }
 
     if (cmd === "network_clear") {
@@ -391,7 +626,16 @@ export async function dispatchCommand(
     }
 
     if (cmd === "dev_layout") {
-        return await handleDebugLayout(target, { selector: data.selector, nodeId: data.nodeId, focus: data.focus });
+        const nodeId = data.ref
+            ? (resolveSemanticRef(targetTabId, data.ref, data.documentId) ?? undefined)
+            : data.nodeId;
+        if (data.ref && nodeId == null) {
+            return {
+                error: "Stale or invalid semantic ref",
+                hint: "Take a fresh semantic snapshot and pass its ref together with the returned documentId.",
+            };
+        }
+        return await handleDebugLayout(target, { selector: data.selector, nodeId, focus: data.focus });
     }
 
     if (cmd === "dev_emulate") {

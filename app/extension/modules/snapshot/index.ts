@@ -5,6 +5,7 @@ import type { Protocol } from "devtools-protocol";
 import { quadToBox, sendCommand } from "../../libs/cdp.js";
 import { captureAnnotatedScreenshot } from "../screenshot/index.js";
 import { INTERACTIVE_ROLES, MAX_ANNOTATED, MAX_REGION_NODES } from "./constants.js";
+import { type SemanticCandidate, SemanticState } from "./semanticState.js";
 import type { SnapshotEntry } from "./types.js";
 
 export type { SnapshotEntry } from "./types.js";
@@ -53,6 +54,64 @@ function toCompactEntry(node: AXNode): SnapshotEntry {
         n: node.name?.value,
         ...(node.value?.value ? { v: String(node.value.value) } : {}),
     };
+}
+
+const MAX_SEMANTIC_TEXT = 200;
+
+function boundedSemanticText(value: string | undefined): string | undefined {
+    const normalized = value?.replace(/\\s+/g, " ").trim();
+    if (!normalized) return undefined;
+    return normalized.length > MAX_SEMANTIC_TEXT ? `${normalized.slice(0, MAX_SEMANTIC_TEXT - 1)}…` : normalized;
+}
+
+function semanticSegment(node: AXNode, ordinal: number): string {
+    const role = boundedSemanticText(node.role?.value) ?? "node";
+    const name = boundedSemanticText(node.name?.value) ?? "";
+    return `${role}:${name}:${ordinal}`;
+}
+
+/** Builds bounded semantic candidates with structural context, without exposing credential-like values. */
+export function buildSemanticCandidates(nodes: readonly AXNode[]): SemanticCandidate[] {
+    const byAxId = new Map(nodes.map((node) => [node.nodeId, node]));
+    const referencedAsChild = new Set<string>();
+    for (const node of nodes) for (const childId of node.childIds ?? []) referencedAsChild.add(childId);
+    const roots = nodes.filter((node) => !referencedAsChild.has(node.nodeId));
+    const rootNodes = roots.length > 0 ? roots : nodes.slice(0, 1);
+    const visited = new Set<string>();
+    const candidates: SemanticCandidate[] = [];
+
+    function visit(nodeId: string, parentStructuralKey: string | undefined, structuralKey: string): void {
+        if (visited.has(nodeId)) return;
+        const node = byAxId.get(nodeId);
+        if (!node) return;
+        visited.add(nodeId);
+
+        const meaningful = isMeaningfulAxNode(node);
+        if (meaningful) {
+            candidates.push({
+                role: boundedSemanticText(node.role?.value),
+                name: boundedSemanticText(node.name?.value),
+                backendNodeId: node.backendDOMNodeId,
+                structuralKey,
+                ...(parentStructuralKey ? { parentStructuralKey } : {}),
+            });
+        }
+
+        const childParentKey = meaningful ? structuralKey : parentStructuralKey;
+        const siblingOrdinals = new Map<string, number>();
+        const childBaseKey = childParentKey ?? structuralKey;
+        for (const childId of node.childIds ?? []) {
+            const child = byAxId.get(childId);
+            if (!child) continue;
+            const childIdentity = `${child.role?.value ?? ""}|${child.name?.value ?? ""}`;
+            const ordinal = siblingOrdinals.get(childIdentity) ?? 0;
+            siblingOrdinals.set(childIdentity, ordinal + 1);
+            visit(childId, childParentKey, `${childBaseKey}/${semanticSegment(child, ordinal)}`);
+        }
+    }
+
+    rootNodes.forEach((root, index) => visit(root.nodeId, undefined, `root/${semanticSegment(root, index)}`));
+    return candidates;
 }
 
 export function buildSnapshotNodes(nodes: AXNode[]): SnapshotEntry[] {
@@ -135,6 +194,58 @@ export async function getFullSnapshot(target: chrome.debugger.Debuggee): Promise
     return buildSnapshotNodes(axTreeResult?.nodes || []);
 }
 
+const semanticStates = new Map<number, SemanticState>();
+
+function getSemanticState(tabId: number, frameId: string, loaderId: string | undefined): SemanticState {
+    const existing = semanticStates.get(tabId);
+    if (existing) return existing;
+    const state = new SemanticState({ tabId, frameId, ...(loaderId ? { loaderId } : {}) });
+    semanticStates.set(tabId, state);
+    return state;
+}
+
+/** Drops the in-memory semantic index when its tab is gone. */
+export function clearSemanticState(tabId: number): void {
+    semanticStates.delete(tabId);
+}
+
+/** Resolves a document-scoped runtime ref only when the caller supplies the current document epoch. */
+export function resolveSemanticRef(tabId: number, ref: string, documentId: string | undefined): number | null {
+    if (!documentId) return null;
+    const state = semanticStates.get(tabId);
+    if (!state) return null;
+    const scope = state.getScope();
+    if (scope.documentId !== documentId) return null;
+    return state.resolve(ref, scope)?.backendNodeId ?? null;
+}
+
+/** Returns a versioned semantic snapshot and bounded delta for the target document. */
+export async function handleSemanticSnapshotCommand(
+    target: chrome.debugger.Debuggee,
+): Promise<Record<string, unknown>> {
+    if (target.tabId == null) return { error: "Semantic snapshot requires a tab target" };
+
+    const [axTreeResult, frameTreeResult] = await Promise.all([
+        sendCommand(target, "Accessibility.getFullAXTree", {}),
+        sendCommand(target, "Page.getFrameTree"),
+    ]);
+    const frame = frameTreeResult?.frameTree?.frame;
+    const frameId = frame?.id ?? "main";
+    const loaderId = frame?.loaderId;
+    const state = getSemanticState(target.tabId, frameId, loaderId);
+    const update = state.update(
+        { frameId, ...(loaderId ? { loaderId } : {}) },
+        buildSemanticCandidates(axTreeResult?.nodes ?? []),
+        { url: frame?.url },
+    );
+
+    return {
+        message: "Extracted semantic accessibility state",
+        snapshot: update.snapshot,
+        delta: update.delta,
+    };
+}
+
 export function formatCompactSnapshot(nodes: SnapshotEntry[]): string {
     return nodes
         .map((node) => {
@@ -151,7 +262,7 @@ export async function handleSnapshotCommand(
     target: chrome.debugger.Debuggee,
     opts: { compact?: boolean; format?: string } = {},
 ): Promise<Record<string, unknown>> {
-    const axTreeResult = await sendCommand(target, "Accessibility.getFullAXTree", {});
+    const axTreeResult = await sendCommand(target, "Accessibility.getFullAXTree", {}, { retryOnTimeout: true });
     const nodes = axTreeResult?.nodes || [];
     const filteredNodes = buildSnapshotNodes(nodes);
     const isCompact = opts.compact === true || opts.format === "compact";
@@ -222,7 +333,7 @@ export async function handleQueryRegionCommand(
 
 /** Generates a filtered accessibility tree snapshot alongside an annotated visual screenshot. */
 export async function handleVisualSnapshotCommand(target: chrome.debugger.Debuggee): Promise<Record<string, unknown>> {
-    const axTreeResult = await sendCommand(target, "Accessibility.getFullAXTree", {});
+    const axTreeResult = await sendCommand(target, "Accessibility.getFullAXTree", {}, { retryOnTimeout: true });
     const nodes = axTreeResult?.nodes || [];
     const filteredNodes = buildSnapshotNodes(nodes);
 

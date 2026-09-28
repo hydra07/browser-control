@@ -20,6 +20,8 @@
         "lint:fix": "biome lint --write .",
         "format": "biome format --write .",
         "format:check": "biome format .",
+        "test": "turbo run test",
+        "test:integration": "bun run --cwd app/server test:integration",
         "check:all": "turbo run check && biome check ."
     },
     "bin": {

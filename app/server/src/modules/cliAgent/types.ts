@@ -1,10 +1,14 @@
+export type AgentId = "claude" | "agy";
+export type AgentEffort = "low" | "medium" | "high";
+
 export interface AgentQueryParams {
   prompt: string;
   url?: string;
   title?: string;
   selectionText?: string;
   compactContext?: string;
-  customCommand?: string;
+  agentId?: AgentId;
+  effort?: AgentEffort;
   timeoutMs?: number;
   /** Resume the given `claude` session instead of starting a fresh one (multi-turn continuity + prompt caching). */
   sessionId?: string;

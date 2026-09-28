@@ -71,12 +71,25 @@ export function attachFlowTrackerInPage(): void {
         (e) => {
             const target = e.target as HTMLInputElement | HTMLTextAreaElement | HTMLElement | null;
             if (!target) return;
-            const inputType = (target as HTMLInputElement).type?.toLowerCase();
-            if (["checkbox", "radio", "button", "submit", "reset", "file"].includes(inputType)) return;
+            const inputElement = target as HTMLInputElement;
+            const inputType = inputElement.type?.toLowerCase();
+            if (["checkbox", "radio", "button", "submit", "reset", "file", "password"].includes(inputType)) return;
+
+            const fieldHint = [
+                inputElement.name,
+                inputElement.id,
+                inputElement.autocomplete,
+                inputElement.getAttribute("aria-label"),
+                inputElement.getAttribute("placeholder"),
+            ]
+                .filter(Boolean)
+                .join(" ")
+                .toLowerCase();
+            if (/password|passcode|pin|token|secret|api[-_ ]?key|credential|auth/.test(fieldHint)) return;
 
             const selector = getBestSelector(target);
             const { role, name } = getAccessibleInfo(target);
-            const text = (target as HTMLInputElement).value ?? target.textContent ?? "";
+            const text = inputElement.value ?? target.textContent ?? "";
 
             chrome.runtime
                 .sendMessage({

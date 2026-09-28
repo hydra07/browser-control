@@ -24,7 +24,7 @@ const pkg = JSON.parse(readFileSync(PACKAGE_PATH, "utf8"));
 const current = String(pkg.version);
 
 function bump(version: string, kind: string): string {
-    const [major, minor, patch] = version.split(".").map((n) => parseInt(n, 10) || 0);
+    const [major = 0, minor = 0, patch = 0] = version.split(".").map((n) => parseInt(n, 10) || 0);
     if (kind === "major") return `${major + 1}.0.0`;
     if (kind === "minor") return `${major}.${minor + 1}.0`;
     if (kind === "patch") return `${major}.${minor}.${patch + 1}`;

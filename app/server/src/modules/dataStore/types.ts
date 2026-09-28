@@ -1,10 +1,16 @@
-import type { FlowStep } from "@browsercontrol/shared";
+import type { ArtifactRef, EvidenceProfile, FlowStepV2 } from "@browsercontrol/shared";
 
 export interface RecordArtifactInput {
   sessionId: string;
-  kind: "log" | "image" | "video";
+  kind: "log" | "image" | "video" | "trace";
   path: string;
   source?: string;
+  profile?: EvidenceProfile;
+  mimeType?: string;
+  redacted?: boolean;
+  retentionDeadline?: number;
+  actionId?: string;
+  flowId?: string;
   /**
    * Omit for 'log' — that file is appended to for the whole session, so a
    * cached size would go stale immediately; callers stat it live instead
@@ -69,7 +75,24 @@ export interface ArtifactRow {
   kind: string;
   path: string;
   source: string | null;
+  profile: EvidenceProfile | null;
+  mimeType: string | null;
+  redacted: boolean;
+  retentionDeadline: number | null;
+  actionId: string | null;
+  flowId: string | null;
   sizeBytes: number | null;
+  createdAt: number;
+}
+
+export interface ArtifactMeta {
+  ref: ArtifactRef;
+  source: string | null;
+  profile: EvidenceProfile | null;
+  mimeType: string | null;
+  retentionDeadline: number | null;
+  actionId: string | null;
+  flowId: string | null;
   createdAt: number;
 }
 
@@ -97,7 +120,8 @@ export interface FlowMeta {
 }
 
 export interface FlowFull extends FlowMeta {
-  steps: FlowStep[];
+  schemaVersion: 1 | 2;
+  steps: FlowStepV2[];
 }
 
 export interface FlowRow {
@@ -106,6 +130,7 @@ export interface FlowRow {
   description: string | null;
   domain: string | null;
   steps_json: string;
+  schema_version: number;
   created_at: number;
   updated_at: number;
 }

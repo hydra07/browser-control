@@ -1,0 +1,2 @@
+export const MAX_CAPTURE_DURATION_MS = 10 * 60_000;
+export const MAX_CAPTURE_BYTES = 256 * 1024 * 1024;

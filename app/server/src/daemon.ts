@@ -12,14 +12,23 @@
 
 import { existsSync, mkdirSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { BinaryOpcode, decodeBinaryPacket, type ExtensionResponse, type FlowStep } from "@browsercontrol/shared";
+import {
+  BinaryOpcode,
+  BROWSER_COMMAND_NAMES,
+  decodeBinaryPacket,
+  type EvidenceRun,
+  type EvidenceTimelineEvent,
+  type ExtensionResponse,
+  type FlowStep,
+} from "@browsercontrol/shared";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { ServerWebSocket } from "bun";
 import { serve } from "bun";
-import { IMAGES_DIR, LEGACY_LOGS_DIR, LOGS_DIR, VIDEOS_DIR } from "./configs/paths.js";
+import { extractBearerToken, isAuthTokenValid, loadAuthToken } from "./configs/auth.js";
+import { EVIDENCE_DIR, IMAGES_DIR, LEGACY_LOGS_DIR, LOGS_DIR, VIDEOS_DIR } from "./configs/paths.js";
 import { HOSTNAME, INLINE_IMAGES, PACKAGE_VERSION, PORT } from "./configs/server.js";
 import { errorMessage } from "./libs/errorMessage.js";
 import { Gateway } from "./libs/gateways.js";
@@ -35,8 +44,10 @@ import {
 import * as dataStore from "./modules/dataStore/index.js";
 import { recordAndCheckFlow } from "./modules/sessionFlow/index.js";
 import * as streamSink from "./modules/streamSink/index.js";
+import { filterTools, parseCapabilityProfile, profileInstructions } from "./modules/tools/capabilities.js";
 import { handleToolCall } from "./modules/tools/handlers.js";
 import { INSTRUCTIONS, TOOLS } from "./modules/tools/schemas.js";
+import type { StoredArtifact } from "./modules/tools/types.js";
 
 // One id for the whole process: the log filename, dataStore's sessions row, and every docs block written.
 const SESSION_ID = String(Date.now());
@@ -45,11 +56,19 @@ const SESSION_ID = String(Date.now());
 console.log = console.error;
 console.info = console.error;
 
-for (const dir of [IMAGES_DIR, VIDEOS_DIR, LOGS_DIR]) {
+for (const dir of [IMAGES_DIR, VIDEOS_DIR, LOGS_DIR, EVIDENCE_DIR]) {
   try {
     mkdirSync(dir, { recursive: true });
   } catch {}
 }
+
+const DAEMON_AUTH_TOKEN = loadAuthToken();
+const CAPABILITY_PROFILE = parseCapabilityProfile(process.env.BROWSERCONTROL_PROFILE);
+const WS_PROTOCOL_VERSION = 2;
+const WS_AUTH_TIMEOUT_MS = 3000;
+const MAX_HTTP_BODY_BYTES = 2 * 1024 * 1024;
+const MAX_WS_MESSAGE_BYTES = 8 * 1024 * 1024;
+const HTTP_COMMANDS: ReadonlySet<string> = new Set(BROWSER_COMMAND_NAMES);
 
 // One-time best-effort migration: an older checkout may have a top-level logs/ dir from before it moved under data/.
 try {
@@ -79,118 +98,183 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
 }
 process.on("exit", () => abortActiveAgentQuery());
 
-function saveScreenshotToFile(dataBase64: string, format: string): string {
+function saveScreenshotToFile(dataBase64: string, format: string): StoredArtifact {
   const ext = format === "png" ? "png" : "jpg";
   const filePath = join(IMAGES_DIR, `screenshot-${Date.now()}.${ext}`);
   const buf = Buffer.from(dataBase64, "base64");
   writeFileSync(filePath, buf);
-  dataStore.recordArtifact({
+  const rowId = dataStore.recordArtifact({
     sessionId: SESSION_ID,
     kind: "image",
     path: filePath,
     source: "screenshot",
+    profile: "step",
+    mimeType: format === "png" ? "image/png" : "image/jpeg",
+    redacted: false,
     sizeBytes: buf.length,
   });
   if (typeof Bun !== "undefined" && typeof Bun.gc === "function") {
     Bun.gc(true);
   }
-  return filePath;
+  return { path: filePath, ref: dataStore.artifactRefFor(rowId, "image", buf.length) };
 }
 
-function saveVideoToFile(dataBase64: string, format: string): string {
+function saveVideoToFile(dataBase64: string, format: string): StoredArtifact {
   const filePath = join(VIDEOS_DIR, `recording-${Date.now()}.${format}`);
   const buf = Buffer.from(dataBase64, "base64");
   writeFileSync(filePath, buf);
-  dataStore.recordArtifact({
+  const rowId = dataStore.recordArtifact({
     sessionId: SESSION_ID,
     kind: "video",
     path: filePath,
     source: "recording",
+    profile: "flow",
+    mimeType: "video/webm",
+    redacted: false,
     sizeBytes: buf.length,
   });
   if (typeof Bun !== "undefined" && typeof Bun.gc === "function") {
     Bun.gc(true);
   }
-  return filePath;
+  return { path: filePath, ref: dataStore.artifactRefFor(rowId, "video", buf.length) };
+}
+
+function saveEvidenceTrack(input: { overview: EvidenceRun; events: EvidenceTimelineEvent[] }): StoredArtifact {
+  const filePath = join(EVIDENCE_DIR, `timeline-${Date.now()}.json`);
+  const body = JSON.stringify(input);
+  const byteSize = Buffer.byteLength(body, "utf8");
+  writeFileSync(filePath, body, "utf8");
+  const rowId = dataStore.recordArtifact({
+    sessionId: SESSION_ID,
+    kind: "trace",
+    path: filePath,
+    source: "evidence_timeline",
+    profile: input.overview.profile,
+    mimeType: "application/json",
+    redacted: true,
+    sizeBytes: byteSize,
+    flowId: input.overview.flowId,
+  });
+  return { path: filePath, ref: dataStore.artifactRefFor(rowId, "trace", byteSize, true) };
 }
 
 // --- WebSocket/HTTP bridge to the Chrome extension ---
 
 let extensionSocket: ServerWebSocket<unknown> | null = null;
 const pendingRequests = new Map<string, (val: ExtensionResponse) => void>();
+type SocketPhase = "AUTHENTICATING" | "READY";
+type SocketState = { phase: SocketPhase; authTimer: ReturnType<typeof setTimeout> };
+const socketStates = new Map<ServerWebSocket<unknown>, SocketState>();
+
+const configuredExtensionOrigin = process.env.BROWSERCONTROL_EXTENSION_ORIGIN?.trim();
+
+function isAllowedOrigin(origin: string | null): boolean {
+  if (!origin) return true;
+  if (configuredExtensionOrigin) return origin === configuredExtensionOrigin;
+  return origin.startsWith("chrome-extension://");
+}
+
+function corsHeaders(req: Request, includeContentType = false): Headers {
+  const headers = new Headers();
+  if (includeContentType) headers.set("Content-Type", "application/json");
+  const origin = req.headers.get("origin");
+  if (origin && isAllowedOrigin(origin)) headers.set("Access-Control-Allow-Origin", origin);
+  if (origin) headers.set("Vary", "Origin");
+  headers.set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+  headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  return headers;
+}
+
+function isAuthorized(req: Request): boolean {
+  return isAuthTokenValid(DAEMON_AUTH_TOKEN, extractBearerToken(req));
+}
+
+function jsonError(req: Request, status: number, error: string): Response {
+  return new Response(JSON.stringify({ error }), { status, headers: corsHeaders(req, true) });
+}
+
+class RequestBodyError extends Error {
+  public readonly status: 400 | 413;
+
+  constructor(message: string, status: 400 | 413) {
+    super(message);
+    this.name = "RequestBodyError";
+    this.status = status;
+  }
+}
+
+async function readJsonBody<T>(req: Request): Promise<T> {
+  if (!req.body) throw new RequestBodyError("Request body must not be empty", 400);
+
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    totalBytes += value.byteLength;
+    if (totalBytes > MAX_HTTP_BODY_BYTES) {
+      await reader.cancel();
+      throw new RequestBodyError(`Request body exceeds ${MAX_HTTP_BODY_BYTES} bytes`, 413);
+    }
+    chunks.push(value);
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return JSON.parse(new TextDecoder().decode(bytes)) as T;
+  } catch {
+    throw new RequestBodyError("Request body must be valid JSON", 400);
+  }
+}
+
+function requestErrorStatus(error: unknown, fallback: number): number {
+  return error instanceof RequestBodyError ? error.status : fallback;
+}
+
+function validateAgentSelection(agentId: unknown, effort: unknown): string | null {
+  if (agentId !== undefined && agentId !== "claude" && agentId !== "agy") return "Unsupported CLI agent";
+  if (effort !== undefined && effort !== "low" && effort !== "medium" && effort !== "high") {
+    return "Unsupported CLI effort; expected low, medium, or high";
+  }
+  if (effort !== undefined && agentId !== "agy") return "CLI effort is only supported for agy";
+  return null;
+}
+
+function requestBodyLimit(req: Request): Response | null {
+  if (!["POST", "PUT", "PATCH"].includes(req.method)) return null;
+  const contentLength = req.headers.get("content-length");
+  if (!contentLength) return null;
+  const bytes = Number(contentLength);
+  return Number.isFinite(bytes) && bytes > MAX_HTTP_BODY_BYTES
+    ? jsonError(req, 413, `Request body exceeds ${MAX_HTTP_BODY_BYTES} bytes`)
+    : null;
+}
 
 const httpServer = serve({
   port: PORT,
   hostname: HOSTNAME,
   async fetch(req, server) {
-    if (server.upgrade(req)) return;
-
     const url = new URL(req.url);
-    if (req.method === "POST" && url.pathname === "/execute") {
-      if (!extensionSocket) {
-        return new Response(
-          JSON.stringify({
-            error: "Extension not connected",
-            hint: "Open chrome://extensions, make sure BrowserControl Agent is enabled, and reload it.",
-          }),
-          { status: 503 },
-        );
-      }
-
-      let body: { cmd?: string } & Record<string, unknown>;
-      try {
-        body = (await req.json()) as { cmd?: string } & Record<string, unknown>;
-      } catch {
-        return new Response("Invalid Request", { status: 400 });
-      }
-
-      const start = Date.now();
-      const timeoutBudget = typeof body?.timeoutMs === "number" ? body.timeoutMs : 30000;
-      return new Promise<Response>((resolve) => {
-        const reqId = crypto.randomUUID();
-        const timeout = setTimeout(() => {
-          if (pendingRequests.has(reqId)) {
-            pendingRequests.delete(reqId);
-            const timeoutBody = {
-              error: "Timeout",
-              hint: "The page may be stuck on a slow load or an unhandled dialog. Try again or navigate to a simpler page.",
-            };
-            logDirectCall(LOG_FILE, body?.cmd, body, timeoutBody, Date.now() - start);
-            resolve(new Response(JSON.stringify(timeoutBody), { status: 504 }));
-          }
-        }, timeoutBudget);
-
-        pendingRequests.set(reqId, (extResponse) => {
-          clearTimeout(timeout);
-          logDirectCall(
-            LOG_FILE,
-            body?.cmd,
-            body,
-            extResponse as unknown as Record<string, unknown>,
-            Date.now() - start,
-          );
-          resolve(new Response(JSON.stringify(extResponse), { headers: { "Content-Type": "application/json" } }));
-        });
-
-        extensionSocket!.send(JSON.stringify({ id: reqId, ...body }));
-      });
+    const upgrade = req.headers.get("upgrade")?.toLowerCase();
+    if (upgrade === "websocket" && url.pathname === "/") {
+      if (!isAllowedOrigin(req.headers.get("origin"))) return jsonError(req, 403, "Origin not allowed");
+      if (server.upgrade(req)) return;
+      return jsonError(req, 400, "WebSocket upgrade failed");
     }
 
-    // Talked to directly by the side panel (a browser page, not an MCP client) — same pattern as /execute.
-    const CORS_HEADERS = {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    };
-    const JSON_CORS_HEADERS = {
-      "Content-Type": "application/json",
-      ...CORS_HEADERS,
-    };
+    if (!isAllowedOrigin(req.headers.get("origin"))) return jsonError(req, 403, "Origin not allowed");
+    if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(req) });
+    if (!isAuthorized(req)) return jsonError(req, 401, "Unauthorized");
+    const bodyLimitResponse = requestBodyLimit(req);
+    if (bodyLimitResponse) return bodyLimitResponse;
 
-    if (req.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: CORS_HEADERS });
-    }
-
+    const JSON_CORS_HEADERS = corsHeaders(req, true);
     // Read-only MCP endpoint for the chat's own CLI agent (handleChatMcpRequest below), wired via cliAgent's --mcp-config.
     if (url.pathname === "/mcp") {
       return handleChatMcpRequest(req);
@@ -213,13 +297,13 @@ const httpServer = serve({
 
     if (req.method === "POST" && url.pathname === "/flows") {
       try {
-        const body = (await req.json()) as {
+        const body = await readJsonBody<{
           id?: string;
           name: string;
           description?: string;
           domain?: string;
           steps: FlowStep[];
-        };
+        }>(req);
         if (!body.name || !Array.isArray(body.steps) || body.steps.length === 0) {
           return new Response(JSON.stringify({ error: "Missing name or steps array" }), {
             status: 400,
@@ -233,29 +317,36 @@ const httpServer = serve({
         });
       } catch (e) {
         return new Response(JSON.stringify({ error: errorMessage(e) }), {
-          status: 500,
+          status: requestErrorStatus(e, 500),
           headers: JSON_CORS_HEADERS,
         });
       }
     }
 
     if (req.method === "POST" && url.pathname === "/execute") {
+      if (!extensionSocket) {
+        return jsonError(req, 503, "Extension not connected");
+      }
+      const start = Date.now();
       try {
-        const body = (await req.json()) as { cmd: string; [key: string]: unknown };
-        if (!body.cmd) {
-          return new Response(JSON.stringify({ error: "Missing cmd" }), {
-            status: 400,
-            headers: JSON_CORS_HEADERS,
-          });
+        const body = await readJsonBody<{ cmd?: string; timeoutMs?: unknown } & Record<string, unknown>>(req);
+        if (typeof body.cmd !== "string" || body.cmd.length === 0) {
+          return jsonError(req, 400, "Missing cmd");
         }
-        const { cmd, ...args } = body;
-        const res = await executeCommand(cmd, args);
-        return new Response(JSON.stringify({ success: true, result: res }), {
-          headers: JSON_CORS_HEADERS,
-        });
+        if (!HTTP_COMMANDS.has(body.cmd)) return jsonError(req, 400, "Unsupported command");
+        const { cmd, timeoutMs: requestedTimeout, ...args } = body;
+        const timeoutMs =
+          typeof requestedTimeout === "number" && Number.isFinite(requestedTimeout)
+            ? Math.min(Math.max(Math.round(requestedTimeout), 1000), 120000)
+            : 30000;
+        const result = await executeCommand(cmd, args, timeoutMs);
+        logDirectCall(LOG_FILE, cmd, body, result, Date.now() - start);
+        return new Response(JSON.stringify({ success: true, result }), { headers: JSON_CORS_HEADERS });
       } catch (e) {
-        return new Response(JSON.stringify({ error: errorMessage(e) }), {
-          status: 500,
+        const error = { error: errorMessage(e) };
+        logDirectCall(LOG_FILE, undefined, {}, error, Date.now() - start);
+        return new Response(JSON.stringify(error), {
+          status: requestErrorStatus(e, 500),
           headers: JSON_CORS_HEADERS,
         });
       }
@@ -310,48 +401,59 @@ const httpServer = serve({
     // Sandboxed CLI Agent Query Endpoint (user-configured custom CLI command or agy/claude)
     if (req.method === "POST" && url.pathname === "/cli-agent/query") {
       try {
-        const body = (await req.json()) as {
+        const body = await readJsonBody<{
           prompt: string;
           url?: string;
           title?: string;
           selectionText?: string;
           compactContext?: string;
-          customCommand?: string;
+          agentId?: "claude" | "agy";
+          effort?: "low" | "medium" | "high";
           sessionId?: string;
-        };
+        }>(req);
+        const selectionError = validateAgentSelection(body.agentId, body.effort);
+        if (selectionError) return jsonError(req, 400, selectionError);
         const res = await executeCliAgentQuery({
           prompt: body.prompt,
           url: body.url,
           title: body.title,
           selectionText: body.selectionText,
           compactContext: body.compactContext,
-          customCommand: body.customCommand,
+          agentId: body.agentId,
+          effort: body.effort,
           sessionId: body.sessionId,
         });
         return new Response(JSON.stringify(res), { headers: JSON_CORS_HEADERS });
       } catch (e) {
-        return new Response(JSON.stringify({ error: errorMessage(e) }), { status: 400, headers: JSON_CORS_HEADERS });
+        return new Response(JSON.stringify({ error: errorMessage(e) }), {
+          status: requestErrorStatus(e, 400),
+          headers: JSON_CORS_HEADERS,
+        });
       }
     }
 
     if (req.method === "POST" && url.pathname === "/cli-agent/stream") {
       try {
-        const body = (await req.json()) as {
+        const body = await readJsonBody<{
           prompt: string;
           url?: string;
           title?: string;
           selectionText?: string;
           compactContext?: string;
-          customCommand?: string;
+          agentId?: "claude" | "agy";
+          effort?: "low" | "medium" | "high";
           sessionId?: string;
-        };
+        }>(req);
+        const selectionError = validateAgentSelection(body.agentId, body.effort);
+        if (selectionError) return jsonError(req, 400, selectionError);
         const stream = streamCliAgentQuery({
           prompt: body.prompt,
           url: body.url,
           title: body.title,
           selectionText: body.selectionText,
           compactContext: body.compactContext,
-          customCommand: body.customCommand,
+          agentId: body.agentId,
+          effort: body.effort,
           sessionId: body.sessionId,
         });
         return new Response(stream, {
@@ -363,7 +465,10 @@ const httpServer = serve({
           },
         });
       } catch (e) {
-        return new Response(JSON.stringify({ error: errorMessage(e) }), { status: 400, headers: JSON_CORS_HEADERS });
+        return new Response(JSON.stringify({ error: errorMessage(e) }), {
+          status: requestErrorStatus(e, 400),
+          headers: JSON_CORS_HEADERS,
+        });
       }
     }
 
@@ -433,22 +538,82 @@ const httpServer = serve({
       }
     }
 
-    return new Response("BrowserControl Daemon is running.\n");
+    return new Response("Not found\n", { status: 404, headers: corsHeaders(req) });
   },
   websocket: {
     open(ws) {
-      console.error("[daemon] Chrome extension connected");
-      extensionSocket = ws;
+      const authTimer = setTimeout(() => {
+        const state = socketStates.get(ws);
+        if (state?.phase !== "AUTHENTICATING") return;
+        socketStates.delete(ws);
+        ws.close(1008, "Authentication timeout");
+      }, WS_AUTH_TIMEOUT_MS);
+      socketStates.set(ws, { phase: "AUTHENTICATING", authTimer });
+      console.error("[daemon] Chrome extension socket opened; awaiting hello");
     },
-    message(_ws, message) {
+    message(ws, message) {
+      const messageBytes =
+        typeof message === "string" ? new TextEncoder().encode(message).byteLength : message.byteLength;
+      if (messageBytes > MAX_WS_MESSAGE_BYTES) {
+        ws.close(1009, "WebSocket message too large");
+        return;
+      }
+
+      const state = socketStates.get(ws);
+      if (!state) return;
+
+      if (state.phase !== "READY") {
+        if (typeof message !== "string") {
+          socketStates.delete(ws);
+          clearTimeout(state.authTimer);
+          ws.close(1008, "Authentication required");
+          return;
+        }
+
+        let hello: Record<string, unknown>;
+        try {
+          const parsed: unknown = JSON.parse(message);
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+            throw new Error("hello must be an object");
+          hello = parsed as Record<string, unknown>;
+        } catch {
+          socketStates.delete(ws);
+          clearTimeout(state.authTimer);
+          ws.close(1008, "Invalid hello");
+          return;
+        }
+
+        const authenticated =
+          hello.type === "hello" &&
+          hello.protocolVersion === WS_PROTOCOL_VERSION &&
+          hello.role === "extension" &&
+          typeof hello.token === "string" &&
+          isAuthTokenValid(DAEMON_AUTH_TOKEN, hello.token);
+        if (!authenticated) {
+          socketStates.delete(ws);
+          clearTimeout(state.authTimer);
+          ws.close(1008, "Authentication failed");
+          return;
+        }
+
+        clearTimeout(state.authTimer);
+        state.phase = "READY";
+        const previousSocket = extensionSocket;
+        extensionSocket = ws;
+        ws.send(
+          JSON.stringify({ type: "hello_ack", protocolVersion: WS_PROTOCOL_VERSION, serverVersion: PACKAGE_VERSION }),
+        );
+        console.error("[daemon] Chrome extension authenticated");
+        if (previousSocket && previousSocket !== ws)
+          previousSocket.close(4001, "Replaced by a newer extension connection");
+        return;
+      }
+
       if (typeof message !== "string") {
         const rawBytes = new Uint8Array(message.buffer, message.byteOffset, message.byteLength);
         const packet = decodeBinaryPacket(rawBytes);
-        if (packet) {
-          if (packet.opcode === BinaryOpcode.VIDEO_CHUNK) {
-            streamSink.appendVideoChunk(packet.payload);
-            return;
-          }
+        if (packet?.opcode === BinaryOpcode.VIDEO_CHUNK) {
+          streamSink.appendVideoChunk(packet.payload);
         }
         return;
       }
@@ -465,6 +630,11 @@ const httpServer = serve({
       }
     },
     close(ws) {
+      const state = socketStates.get(ws);
+      if (state) {
+        clearTimeout(state.authTimer);
+        socketStates.delete(ws);
+      }
       console.error("[daemon] Chrome extension disconnected");
       if (extensionSocket === ws) extensionSocket = null;
     },
@@ -504,7 +674,7 @@ async function executeCommand(
       }
     });
 
-    extensionSocket!.send(JSON.stringify({ id: reqId, cmd, ...args }));
+    extensionSocket!.send(JSON.stringify({ id: reqId, cmd, ...args, sessionId: SESSION_ID }));
   });
 }
 
@@ -512,10 +682,10 @@ async function executeCommand(
 
 const mcpServer = new Server(
   { name: "browsercontrol", version: PACKAGE_VERSION },
-  { capabilities: { tools: {} }, instructions: INSTRUCTIONS },
+  { capabilities: { tools: {} }, instructions: profileInstructions(INSTRUCTIONS, CAPABILITY_PROFILE) },
 );
 
-mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
+mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: filterTools(TOOLS, CAPABILITY_PROFILE) }));
 
 mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
   const start = Date.now();
@@ -526,6 +696,8 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
     inlineImages: INLINE_IMAGES,
     saveScreenshotToFile,
     saveVideoToFile,
+    saveEvidenceTrack,
+    capabilityProfile: CAPABILITY_PROFILE,
   });
 
   // Logged by the internal action that ran, not the gateway tool name — falls back to the tool name if `action` is missing.
@@ -535,20 +707,36 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
   return response;
 });
 
-async function runMcp() {
+async function runMcp(): Promise<void> {
   const transport = new StdioServerTransport();
   await mcpServer.connect(transport);
   console.error("[daemon] MCP server connected to stdio");
 }
 
-runMcp().catch((e) => console.error("MCP Server failed", e));
+let shuttingDown = false;
+
+/** Releases the fixed loopback port when an MCP client closes its stdio transport. */
+function shutdown(): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  httpServer.stop(true);
+}
+
+process.stdin.once("end", shutdown);
+process.once("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);
+
+runMcp().catch((e) => {
+  console.error("MCP Server failed", e);
+  shutdown();
+});
 
 /**
  * Read-only MCP server over HTTP, for the sidepanel chat's own CLI agent
  * (cliAgent) to attach to via --mcp-config. Only browser_inspect is
  * exposed — the chat agent should never click/type/navigate on its own.
  */
-const CHAT_TOOLS = TOOLS.filter((t) => t.name === Gateway.Inspect);
+const CHAT_TOOLS = filterTools(TOOLS, CAPABILITY_PROFILE).filter((t) => t.name === Gateway.Inspect);
 
 /**
  * A stateless WebStandardStreamableHTTPServerTransport can only ever
@@ -566,6 +754,8 @@ function handleChatMcpRequest(req: Request): Promise<Response> {
       inlineImages: INLINE_IMAGES,
       saveScreenshotToFile,
       saveVideoToFile,
+      saveEvidenceTrack,
+      capabilityProfile: CAPABILITY_PROFILE,
     });
     const { action: loggedAction, ...restArgs } = (request.params.arguments ?? {}) as Record<string, unknown>;
     const logCmd = typeof loggedAction === "string" && loggedAction ? loggedAction : request.params.name;

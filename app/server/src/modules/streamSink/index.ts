@@ -1,5 +1,6 @@
 import { createWriteStream, type WriteStream } from "node:fs";
 import { join } from "node:path";
+import type { ArtifactRef, EvidenceProfile } from "@browsercontrol/shared";
 import { VIDEOS_DIR } from "../../configs/paths.js";
 import * as dataStore from "../dataStore/index.js";
 
@@ -8,6 +9,7 @@ interface ActiveStream {
   sessionId: string;
   filePath: string;
   format: string;
+  profile: EvidenceProfile;
   writeStream: WriteStream;
   startedAt: number;
   totalBytesWritten: number;
@@ -20,7 +22,11 @@ let currentStream: ActiveStream | null = null;
  * Initializes a real-time disk-append stream sink for screen recording video.
  * Chunks are written incrementally to disk with O(1) memory overhead.
  */
-export function startRecordingStream(sessionId: string, format = "webm"): { streamId: string; filePath: string } {
+export function startRecordingStream(
+  sessionId: string,
+  format = "webm",
+  profile: EvidenceProfile = "flow",
+): { streamId: string; filePath: string } {
   if (currentStream) {
     stopRecordingStream();
   }
@@ -34,6 +40,7 @@ export function startRecordingStream(sessionId: string, format = "webm"): { stre
     sessionId,
     filePath,
     format,
+    profile,
     writeStream,
     startedAt: Date.now(),
     totalBytesWritten: 0,
@@ -64,20 +71,24 @@ export function stopRecordingStream(): {
   durationMs: number;
   sizeBytes: number;
   chunkCount: number;
+  artifactRef: ArtifactRef;
 } | null {
   if (!currentStream) return null;
 
-  const { sessionId, filePath, writeStream, startedAt, totalBytesWritten, chunkCount } = currentStream;
+  const { sessionId, filePath, profile, writeStream, startedAt, totalBytesWritten, chunkCount } = currentStream;
   const durationMs = Date.now() - startedAt;
 
   writeStream.end();
   currentStream = null;
 
-  dataStore.recordArtifact({
+  const artifactId = dataStore.recordArtifact({
     sessionId,
     kind: "video",
     path: filePath,
     source: "recording",
+    profile,
+    mimeType: "video/webm",
+    redacted: false,
     sizeBytes: totalBytesWritten,
   });
 
@@ -87,6 +98,7 @@ export function stopRecordingStream(): {
     durationMs,
     sizeBytes: totalBytesWritten,
     chunkCount,
+    artifactRef: dataStore.artifactRefFor(artifactId, "video", totalBytesWritten),
   };
 }
 
