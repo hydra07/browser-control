@@ -10,7 +10,7 @@ export type { SearchResult } from "./types.js";
 
 // DuckDuckGo's HTML result links are usually a redirect through
 // /l/?uddg=<encoded real URL>&rut=..., not the destination directly —
-// unwrap that so callers (browser_deep_crawl's frontier, in particular)
+// unwrap that so callers (crawl, in particular)
 // get a URL actually worth fetching.
 function resolveResultUrl(href: string): string | null {
     try {
@@ -75,7 +75,7 @@ export async function handleWebSearchCommand(opts: {
             message:
                 results.length > 0
                     ? `Found ${results.length} result(s) for "${query}".`
-                    : `No results parsed for "${query}" — DuckDuckGo may have changed its result markup, or blocked this request. Try browser_session({action:"navigate"}) to a search URL and browser_inspect({action:"snapshot"}) as a fallback.`,
+                    : `No results parsed for "${query}" — DuckDuckGo may have changed its result markup, or blocked this request. Try 'browsercontrol open <url>' to a search URL and 'browsercontrol snapshot' as a fallback.`,
             query,
             results,
         };

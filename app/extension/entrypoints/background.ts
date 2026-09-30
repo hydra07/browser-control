@@ -132,6 +132,9 @@ export default defineBackground(() => {
             sendCommand(target, "Overlay.enable"),
             sendCommand(target, "Accessibility.enable"),
         ]);
+        // Agent tabs are often not the focused window: without this, document.hasFocus() is false, so
+        // autocomplete dropdowns, focus-gated menus and caret/focus rings never appear to the agent.
+        await sendCommand(target, "Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => {});
 
         // Restore Fetch interception if tab was previously sandboxed
         if (isSandboxed(tabId)) {
@@ -209,7 +212,7 @@ export default defineBackground(() => {
         if (!lastActiveTabId) {
             port.postMessage({
                 error: "No active tab",
-                hint: 'Call browser_session({action:"navigate"}) or browser_session({action:"switch_tab"}) first to establish which tab to record.',
+                hint: "Call `browsercontrol open <url>` or `browsercontrol tabs switch <id>` first to establish which tab to record.",
             });
             port.disconnect();
             return;

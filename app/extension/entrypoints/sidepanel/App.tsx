@@ -1,21 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { getSettings, type Settings } from "../../configs/settings.js";
-import { BenchmarkTab } from "./components/BenchmarkTab";
-import { ChatTab } from "./components/ChatTab";
 import { FlowList } from "./components/FlowList";
-import {
-  AppLogo,
-  ChartBarIcon,
-  ChatIcon,
-  CrossIcon,
-  RefreshIcon,
-  SettingsIcon,
-  WorkflowIcon,
-} from "./components/Icons";
+import { AppLogo, CrossIcon, RefreshIcon, SettingsIcon, WorkflowIcon } from "./components/Icons";
 import { SettingsTab } from "./components/SettingsTab";
-import { type DaemonStatus, type FlowMeta, getStatus, listFlows } from "./lib/api";
+import { type BridgeStatus, type FlowMeta, getStatus, listFlows } from "./lib/api";
 
-type TabKey = "flows" | "benchmark" | "chat" | "settings";
+type TabKey = "flows" | "settings";
 
 type LoadState =
   | { status: "loading" }
@@ -27,22 +16,20 @@ const POLL_MS = 5000;
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabKey>("flows");
   const [state, setState] = useState<LoadState>({ status: "loading" });
-  const [daemonStatus, setDaemonStatus] = useState<DaemonStatus | null>(null);
-  const [settings, setSettings] = useState<Settings | null>(null);
+  const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [flows, status, currentSettings] = await Promise.all([listFlows(), getStatus(), getSettings()]);
+      const [flows, status] = await Promise.all([listFlows(), getStatus()]);
       setState({ status: "loaded", flows });
-      setDaemonStatus(status);
-      setSettings(currentSettings);
+      setBridgeStatus(status);
     } catch (e) {
       setState({
         status: "unreachable",
         message: e instanceof Error ? e.message : String(e),
       });
-      setDaemonStatus(null);
+      setBridgeStatus(null);
     }
   }, []);
 
@@ -51,14 +38,6 @@ export default function App() {
     const timer = setInterval(() => void load(), POLL_MS);
     return () => clearInterval(timer);
   }, [load]);
-
-  const isChatEnabled = settings?.chatEnabled ?? false;
-
-  useEffect(() => {
-    if (!isChatEnabled && activeTab === "chat") {
-      setActiveTab("flows");
-    }
-  }, [isChatEnabled, activeTab]);
 
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
@@ -75,10 +54,6 @@ export default function App() {
       if (e.key === "1") {
         setActiveTab("flows");
       } else if (e.key === "2") {
-        setActiveTab("benchmark");
-      } else if (e.key === "3" && isChatEnabled) {
-        setActiveTab("chat");
-      } else if (e.key === "4" || (e.key === "3" && !isChatEnabled)) {
         setActiveTab("settings");
       } else if (e.key === "r" || e.key === "R") {
         void handleRefresh();
@@ -89,9 +64,9 @@ export default function App() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isChatEnabled, handleRefresh]);
+  }, [handleRefresh]);
 
-  const isConnected = daemonStatus?.extensionConnected ?? false;
+  const isConnected = bridgeStatus?.extensionConnected ?? false;
   const flowCount = state.status === "loaded" ? state.flows.length : 0;
 
   return (
@@ -126,42 +101,8 @@ export default function App() {
 
             <button
               type="button"
-              onClick={() => setActiveTab("benchmark")}
-              title="Token Telemetry & Metrics [2]"
-              className={`group relative flex h-8 w-8 items-center justify-center rounded-lg transition-all duration-200 active:scale-95 ${
-                activeTab === "benchmark"
-                  ? "bg-zinc-800 text-white shadow-sm ring-1 ring-zinc-700/60"
-                  : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
-              }`}
-            >
-              {activeTab === "benchmark" && (
-                <span className="absolute -left-1 top-2 bottom-2 w-[2.5px] bg-indigo-400 rounded-r shadow-[0_0_6px_rgba(129,140,248,0.7)]" />
-              )}
-              <ChartBarIcon className="w-4 h-4 transition-transform group-hover:scale-110" />
-            </button>
-
-            {isChatEnabled && (
-              <button
-                type="button"
-                onClick={() => setActiveTab("chat")}
-                title="CLI Agent Chat [3]"
-                className={`group relative flex h-8 w-8 items-center justify-center rounded-lg transition-all duration-200 active:scale-95 ${
-                  activeTab === "chat"
-                    ? "bg-zinc-800 text-white shadow-sm ring-1 ring-zinc-700/60"
-                    : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
-                }`}
-              >
-                {activeTab === "chat" && (
-                  <span className="absolute -left-1 top-2 bottom-2 w-[2.5px] bg-indigo-400 rounded-r shadow-[0_0_6px_rgba(129,140,248,0.7)]" />
-                )}
-                <ChatIcon className="w-4 h-4 transition-transform group-hover:scale-110" />
-              </button>
-            )}
-
-            <button
-              type="button"
               onClick={() => setActiveTab("settings")}
-              title="Settings & Diagnostics"
+              title="Settings & Diagnostics [2]"
               className={`group relative flex h-8 w-8 items-center justify-center rounded-lg transition-all duration-200 active:scale-95 ${
                 activeTab === "settings"
                   ? "bg-zinc-800 text-white shadow-sm ring-1 ring-zinc-700/60"
@@ -187,7 +128,7 @@ export default function App() {
           </button>
 
           <div
-            title={isConnected ? "Daemon Paired (Live CDP Bridge Active)" : "Daemon Offline / Unpaired"}
+            title={isConnected ? "Bridge paired (extension connected)" : "Bridge offline / unpaired"}
             className="flex h-5 w-5 items-center justify-center cursor-pointer group"
             onClick={() => setActiveTab("settings")}
           >
@@ -206,13 +147,7 @@ export default function App() {
         <header className="flex flex-none items-center justify-between border-b border-zinc-800/80 px-3.5 py-2.5 glass-header z-10">
           <div className="flex items-center gap-2">
             <h2 className="text-[12px] font-semibold tracking-tight text-zinc-100 flex items-center gap-1.5">
-              {activeTab === "flows"
-                ? "Automated Flows"
-                : activeTab === "benchmark"
-                  ? "Token Telemetry & Metrics"
-                  : activeTab === "chat"
-                    ? "CLI Agent Chat"
-                    : "Settings & Setup"}
+              {activeTab === "flows" ? "Automated Flows" : "Settings & Setup"}
             </h2>
             {activeTab === "flows" && flowCount > 0 && (
               <span className="rounded-full bg-zinc-800/80 px-2 py-0.2 font-mono text-[10px] text-zinc-400 border border-zinc-700/40">
@@ -250,14 +185,14 @@ export default function App() {
                 <div className="flex flex-1 items-center justify-center p-6 text-zinc-500 font-mono text-[11px]">
                   <div className="flex items-center gap-2">
                     <div className="h-3 w-3 animate-spin rounded-full border border-indigo-400 border-t-transparent" />
-                    <span>Connecting to daemon...</span>
+                    <span>Connecting to bridge...</span>
                   </div>
                 </div>
               )}
 
               {state.status === "unreachable" && (
                 <div className="flex flex-1 flex-col items-center justify-center p-6 text-center animate-fade-in">
-                  <div className="font-semibold text-zinc-200 text-xs">Daemon Unreachable</div>
+                  <div className="font-semibold text-zinc-200 text-xs">Bridge Unreachable</div>
                   <p className="mt-1 text-[11px] text-zinc-500 max-w-[220px] leading-relaxed">{state.message}</p>
                   <button
                     type="button"
@@ -278,12 +213,8 @@ export default function App() {
                 />
               )}
             </>
-          ) : activeTab === "benchmark" ? (
-            <BenchmarkTab onRefresh={() => void handleRefresh()} />
-          ) : activeTab === "chat" && isChatEnabled ? (
-            <ChatTab />
           ) : (
-            <SettingsTab daemonStatus={daemonStatus} onRefresh={() => void handleRefresh()} />
+            <SettingsTab bridgeStatus={bridgeStatus} onRefresh={() => void handleRefresh()} />
           )}
         </div>
       </main>

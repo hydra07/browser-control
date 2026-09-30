@@ -111,7 +111,60 @@ export function buildSemanticCandidates(nodes: readonly AXNode[]): SemanticCandi
     }
 
     rootNodes.forEach((root, index) => visit(root.nodeId, undefined, `root/${semanticSegment(root, index)}`));
-    return candidates;
+    return mergeTextRuns(
+        candidates,
+        (c) => c.role === "StaticText" && !!c.name,
+        (c) => c.backendNodeId,
+        (c) => c.name ?? "",
+        (c, name) => ({ ...c, name: boundedSemanticText(name) }),
+        (prev, next) => prev.parentStructuralKey === next.parentStructuralKey,
+    );
+}
+
+const MAX_MERGED_TEXT = 500;
+
+/**
+ * Collapses each run of consecutive StaticText entries into its first entry.
+ * Pages that wrap every glyph or word in its own span otherwise emit one node per
+ * character, burning both the snapshot's node cap and the caller's tokens. A gap in
+ * backend node ids means a filtered whitespace node sat between two pieces, so that
+ * is where a space goes back in.
+ */
+function mergeTextRuns<T>(
+    items: readonly T[],
+    isText: (item: T) => boolean,
+    idOf: (item: T) => number | undefined,
+    textOf: (item: T) => string,
+    withText: (first: T, text: string) => T,
+    canJoin: (prev: T, next: T) => boolean = () => true,
+): T[] {
+    const out: T[] = [];
+    let run: { first: T; text: string; lastId: number | undefined; last: T } | null = null;
+    const flush = () => {
+        if (!run) return;
+        const text = run.text.length > MAX_MERGED_TEXT ? `${run.text.slice(0, MAX_MERGED_TEXT - 1)}…` : run.text;
+        out.push(run.first === run.last ? run.first : withText(run.first, text));
+        run = null;
+    };
+    for (const item of items) {
+        if (!isText(item)) {
+            flush();
+            out.push(item);
+            continue;
+        }
+        if (run && canJoin(run.last, item)) {
+            const id = idOf(item);
+            const adjacent = id != null && run.lastId != null && id - run.lastId === 1;
+            run.text += (adjacent ? "" : " ") + textOf(item);
+            run.lastId = id;
+            run.last = item;
+            continue;
+        }
+        flush();
+        run = { first: item, text: textOf(item), lastId: idOf(item), last: item };
+    }
+    flush();
+    return out;
 }
 
 export function buildSnapshotNodes(nodes: AXNode[]): SnapshotEntry[] {
@@ -119,9 +172,16 @@ export function buildSnapshotNodes(nodes: AXNode[]): SnapshotEntry[] {
     const byAxId = new Map<string, AXNode>(nodes.map((n) => [n.nodeId, n]));
     const redundantTextAxIds = computeRedundantTextAxIds(byAxId, new Set(kept.map((n) => n.nodeId)));
 
-    return kept
+    const entries = kept
         .filter((node) => node.role?.value !== "StaticText" || !redundantTextAxIds.has(node.nodeId))
         .map(toCompactEntry);
+    return mergeTextRuns(
+        entries,
+        (e) => e.r === "StaticText" && !!e.n,
+        (e) => e.i,
+        (e) => e.n ?? "",
+        (e, n) => ({ ...e, n }),
+    );
 }
 
 export function buildRegionTree(nodes: AXNode[]): {
@@ -301,7 +361,7 @@ export async function handleQueryRegionCommand(
     if (!queryResult?.nodeId) {
         return {
             error: `No element matched selector "${selector}"`,
-            hint: 'Check the selector against the page source, or use browser_inspect({action:"snapshot"}) first to find a container to scope into.',
+            hint: "Check the selector against the page source, or use `browsercontrol snapshot` first to find a container to scope into.",
         };
     }
 
@@ -324,7 +384,7 @@ export async function handleQueryRegionCommand(
     const nodeCount = countTreeNodes(tree);
 
     return {
-        message: `Scoped to "${selector}" (${describeResult.node.nodeName}): ${nodeCount} element(s), nested by DOM structure — a field's label is its sibling in the same "children" array.${truncated ? ` Truncated at ${MAX_REGION_NODES} elements; use a narrower selector to see the rest.` : ""} Use these ids with browser_act's click/type or browser_inspect's inspect_element.`,
+        message: `Scoped to "${selector}" (${describeResult.node.nodeName}): ${nodeCount} element(s), nested by DOM structure — a field's label is its sibling in the same "children" array.${truncated ? ` Truncated at ${MAX_REGION_NODES} elements; use a narrower selector to see the rest.` : ""} Use these ids with click/type/inspect.`,
         selector,
         truncated,
         tree,
@@ -333,32 +393,42 @@ export async function handleQueryRegionCommand(
 
 /** Generates a filtered accessibility tree snapshot alongside an annotated visual screenshot. */
 export async function handleVisualSnapshotCommand(target: chrome.debugger.Debuggee): Promise<Record<string, unknown>> {
-    const axTreeResult = await sendCommand(target, "Accessibility.getFullAXTree", {}, { retryOnTimeout: true });
-    const nodes = axTreeResult?.nodes || [];
-    const filteredNodes = buildSnapshotNodes(nodes);
+    const [axTreeResult, layout] = await Promise.all([
+        sendCommand(target, "Accessibility.getFullAXTree", {}, { retryOnTimeout: true }),
+        sendCommand(target, "Page.getLayoutMetrics").catch(() => null),
+    ]);
+    const filteredNodes = buildSnapshotNodes(axTreeResult?.nodes || []);
+    const viewportWidth = layout?.cssLayoutViewport?.clientWidth ?? Number.POSITIVE_INFINITY;
+    const viewportHeight = layout?.cssLayoutViewport?.clientHeight ?? Number.POSITIVE_INFINITY;
 
-    const toAnnotate = filteredNodes.filter((n) => n.i != null).slice(0, MAX_ANNOTATED);
-
-    const boxes: Array<{ id: number; x: number; y: number; w: number; h: number }> = [];
-    await Promise.all(
-        toAnnotate.map(async (node) => {
-            const boxModel = await sendCommand(target, "DOM.getBoxModel", {
-                backendNodeId: node.i,
-            });
+    // Only controls get a numbered box (text runs would bury them), and only those actually on screen:
+    // the old "first N nodes of the document" pick missed everything below the fold's worth of DOM.
+    const candidates = filteredNodes.filter((n) => n.i != null && n.r !== "StaticText");
+    const measured = await Promise.all(
+        candidates.map(async (node) => {
+            const boxModel = await sendCommand(target, "DOM.getBoxModel", { backendNodeId: node.i }).catch(() => null);
             const quad = boxModel?.model?.content;
-            if (quad) {
-                const box = quadToBox(quad);
-                if (box.w > 0 && box.h > 0) boxes.push({ id: node.i!, ...box });
-            }
+            if (!quad) return null;
+            const box = quadToBox(quad);
+            const onScreen =
+                box.w > 0 &&
+                box.h > 0 &&
+                box.x < viewportWidth &&
+                box.y < viewportHeight &&
+                box.x + box.w > 0 &&
+                box.y + box.h > 0;
+            return onScreen ? { id: node.i as number, ...box } : null;
         }),
     );
+    const boxes = measured.filter((b): b is NonNullable<typeof b> => b !== null).slice(0, MAX_ANNOTATED);
+    const annotated = new Set(boxes.map((b) => b.id));
 
     const shot = await captureAnnotatedScreenshot(target, boxes);
     if ("error" in shot) return shot;
 
     return {
-        message: `Annotated ${boxes.length} interactive element(s) on screen. Each numbered box in the screenshot is a node id you can pass to browser_act's click/type.`,
-        nodes: filteredNodes,
+        message: `Annotated ${boxes.length} on-screen element(s). Each numbered box in the screenshot is a node id you can pass to click/type.`,
+        nodes: filteredNodes.filter((n) => n.i != null && annotated.has(n.i)),
         format: shot.format,
         dataBase64: shot.dataBase64,
     };

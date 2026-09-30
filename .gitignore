@@ -12,3 +12,10 @@ cli/browsercontrol
 .DS_Store
 .vscode/
 .zed/
+
+# JS workspace build/tool output
+node_modules/
+.turbo/
+.output/
+.wxt/
+.codegraph/

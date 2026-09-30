@@ -96,12 +96,6 @@
     },
     "overrides": [
         {
-            "includes": ["app/server/**/*"],
-            "formatter": {
-                "indentWidth": 2
-            }
-        },
-        {
             "includes": ["app/extension/entrypoints/sidepanel/**/*"],
             "formatter": {
                 "indentWidth": 2

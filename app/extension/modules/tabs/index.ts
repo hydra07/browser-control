@@ -130,13 +130,13 @@ export class TabManager {
                 } else {
                     return {
                         error: `No tab with id ${tabId}`,
-                        hint: 'Call browser_session({action:"list_tabs"}) again — it may have been closed.',
+                        hint: "Call `browsercontrol tabs` again — it may have been closed.",
                     };
                 }
             } else {
                 return {
                     error: `No tab with id ${tabId}`,
-                    hint: 'Call browser_session({action:"list_tabs"}) again — it may have been closed.',
+                    hint: "Call `browsercontrol tabs` again — it may have been closed.",
                 };
             }
         }

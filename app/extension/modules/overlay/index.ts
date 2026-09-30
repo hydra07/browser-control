@@ -174,6 +174,8 @@ export function moveCursorTo(x: number, y: number, fast?: boolean): Promise<void
         if (!cursor) {
             cursor = document.createElement("div");
             cursor.id = "__bc_cursor__";
+            // aria-hidden keeps these overlays out of the accessibility tree that snapshots read.
+            cursor.setAttribute("aria-hidden", "true");
             cursor.innerHTML = "<span data-bc-halo></span><span data-bc-dot></span>";
             document.documentElement.appendChild(cursor);
         }
@@ -250,6 +252,7 @@ export function showClickRipple(x: number, y: number, kind: "click" | "type", fa
     const color = kind === "type" ? "#3b82f6" : "#4f46e5";
     const shadow = kind === "type" ? "rgba(59,130,246,.45)" : "rgba(79,70,229,.45)";
     const wrap = document.createElement("div");
+    wrap.setAttribute("aria-hidden", "true");
     wrap.style.cssText = `all:initial;--bc-ripple-color:${color};--bc-ripple-shadow:${shadow};position:fixed;left:${Math.round(x)}px;top:${Math.round(y)}px;width:1px;height:1px;z-index:2147483647;pointer-events:none;`;
     const ring = document.createElement("span");
     ring.className = "__bc_ripple_ring__";
@@ -356,6 +359,7 @@ export function showScrollIndicator(deltaX: number, deltaY: number, fast?: boole
     const direction = isVertical ? (deltaY >= 0 ? "down" : "up") : deltaX >= 0 ? "right" : "left";
     const badge = document.createElement("div");
     badge.id = "__bc_transient_badge__";
+    badge.setAttribute("aria-hidden", "true");
     badge.className = "__bc_transient_badge__";
     const mouse = document.createElement("span");
     mouse.style.cssText =
@@ -446,6 +450,7 @@ export function showKeyBadge(key: string, fast?: boolean): void {
     label.textContent = glyphs[key] || key.slice(0, 16);
     const badge = document.createElement("div");
     badge.id = "__bc_transient_badge__";
+    badge.setAttribute("aria-hidden", "true");
     badge.className = "__bc_transient_badge__";
     badge.appendChild(label);
     document.documentElement.appendChild(badge);
@@ -547,6 +552,7 @@ export function showPillCaption(
 
     const badge = document.createElement("div");
     badge.id = "__bc_status_pill__";
+    badge.setAttribute("aria-hidden", "true");
     badge.className = "__bc_pill_badge__";
     badge.style.setProperty("--bc-pill-color", safeColor);
     badge.style.setProperty("--bc-pill-glow", `${safeGlow}88`);

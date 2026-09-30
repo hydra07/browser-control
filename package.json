@@ -2,10 +2,9 @@
     "name": "browsercontrol",
     "version": "0.0.0",
     "private": true,
-    "description": "Chrome extension + local MCP server for driving your everyday Chrome browser via CDP — monorepo root, holds no runtime deps of its own.",
+    "description": "Go CLI + Chrome extension for driving your everyday Chrome via CDP — monorepo root for the extension workspaces.",
     "workspaces": [
         "app/extension",
-        "app/server",
         "packages/*"
     ],
     "packageManager": "bun@1.3.14",
@@ -21,14 +20,7 @@
         "format": "biome format --write .",
         "format:check": "biome format .",
         "test": "turbo run test",
-        "test:integration": "bun run --cwd app/server test:integration",
         "check:all": "turbo run check && biome check ."
-    },
-    "bin": {
-        "browsercontrol": "app/server/src/daemon.ts"
-    },
-    "dependencies": {
-        "@modelcontextprotocol/sdk": "^1.30.0"
     },
     "devDependencies": {
         "@biomejs/biome": "^2.5.9",

@@ -18,6 +18,11 @@ export const KEY_DEFS: Record<string, { key: string; code: string; keyCode: numb
     End: { key: "End", code: "End", keyCode: 35 },
     PageUp: { key: "PageUp", code: "PageUp", keyCode: 33 },
     PageDown: { key: "PageDown", code: "PageDown", keyCode: 34 },
+    Insert: { key: "Insert", code: "Insert", keyCode: 45 },
+    ContextMenu: { key: "ContextMenu", code: "ContextMenu", keyCode: 93 },
+    ...Object.fromEntries(
+        Array.from({ length: 12 }, (_, i) => [`F${i + 1}`, { key: `F${i + 1}`, code: `F${i + 1}`, keyCode: 112 + i }]),
+    ),
 };
 export const SUPPORTED_KEYS = Object.keys(KEY_DEFS);
 

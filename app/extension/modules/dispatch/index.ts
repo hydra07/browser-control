@@ -320,7 +320,7 @@ export async function dispatchCommand(
         if (!effectiveTabId) {
             return {
                 error: `Invalid or missing tabId: ${data.tabId}`,
-                hint: 'Call browser_session({action:"list_tabs"}) to see currently open tabs and their real tab IDs.',
+                hint: "Call `browsercontrol tabs` to see currently open tabs and their real tab IDs.",
             };
         }
         const result = await handleSwitchTabCommand(effectiveTabId);
@@ -336,7 +336,7 @@ export async function dispatchCommand(
         if (!effectiveTabId) {
             return {
                 error: `Invalid or missing tabId: ${data.tabId}`,
-                hint: 'Call browser_session({action:"list_tabs"}) to see currently open tabs and their real tab IDs.',
+                hint: "Call `browsercontrol tabs` to see currently open tabs and their real tab IDs.",
             };
         }
         try {
@@ -378,7 +378,7 @@ export async function dispatchCommand(
     if (!targetTabId) {
         return {
             error: "No active session. Call navigate first.",
-            hint: "No tabId was given and no attachable browser tab could be found to fall back to (chrome://, the extension's own pages, and similar internal URLs can't be debugged). Open a normal web page tab, or call browser_navigate first.",
+            hint: "No tabId was given and no attachable browser tab could be found to fall back to (chrome://, the extension's own pages, and similar internal URLs can't be debugged). Open a normal web page tab, or run 'browsercontrol open <url>' first.",
         };
     }
 
@@ -442,14 +442,21 @@ export async function dispatchCommand(
                 lifecycleResult: "blocked",
             });
         }
-        return await withActionLifecycle("click", false, () => performClick(target, nodeId, { fast: !animated }), {
-            tabId: targetTabId,
-            targetRef: data.ref,
-        });
+        return await withActionLifecycle(
+            "click",
+            false,
+            () => performClick(target, nodeId, { fast: !animated, force: data.force === true }),
+            {
+                tabId: targetTabId,
+                targetRef: data.ref,
+            },
+        );
     }
 
     if (cmd === "type") {
-        if (!data.text) return { error: "Missing text" };
+        if (typeof data.text !== "string" || (!data.text && !data.clear)) {
+            return { error: "Missing text", hint: "Pass the text to type (or --clear to empty the field)." };
+        }
         const nodeId = data.ref
             ? (resolveSemanticRef(targetTabId, data.ref, data.documentId) ?? undefined)
             : data.nodeId;
@@ -473,6 +480,7 @@ export async function dispatchCommand(
             () =>
                 performType(target, nodeId, data.text, {
                     fast: !animated,
+                    clear: data.clear === true,
                 }),
             { tabId: targetTabId, targetRef: data.ref },
         );
@@ -538,12 +546,20 @@ export async function dispatchCommand(
     }
 
     if (cmd === "scroll") {
+        const scrollNodeId = data.ref ? resolveSemanticRef(targetTabId, data.ref, data.documentId) : data.nodeId;
+        if (data.ref && scrollNodeId == null) {
+            return {
+                error: "Stale or invalid semantic ref",
+                hint: "Take a fresh semantic snapshot and pass its ref together with the returned documentId.",
+            };
+        }
         return await withActionLifecycle(
             "scroll",
             false,
             () =>
-                performScroll(target, data.deltaX || 0, data.deltaY || 0, {
+                performScroll(target, Number(data.deltaX) || 0, Number(data.deltaY) || 0, {
                     fast: !animated,
+                    ...(scrollNodeId != null ? { backendNodeId: scrollNodeId } : {}),
                 }),
             { tabId: targetTabId },
         );
@@ -569,10 +585,22 @@ export async function dispatchCommand(
     }
 
     if (cmd === "screenshot") {
+        const nodeId = data.ref ? resolveSemanticRef(targetTabId, data.ref, data.documentId) : data.nodeId;
+        if (data.ref && nodeId == null) {
+            return {
+                error: "Stale or invalid semantic ref",
+                hint: "Take a fresh semantic snapshot and pass its ref together with the returned documentId.",
+            };
+        }
         return await captureScreenshot(target, {
-            format: data.format === "png" ? "png" : "jpeg",
+            format: data.format,
             quality: data.quality,
             fullPage: data.fullPage,
+            ...(nodeId != null ? { nodeId } : {}),
+            clip: data.clip,
+            padding: data.padding,
+            zoom: data.zoom,
+            maxDimension: data.maxDimension,
         });
     }
 
@@ -711,6 +739,6 @@ export async function dispatchCommand(
 
     return {
         error: `Unknown command: ${cmd}`,
-        hint: `This loaded extension is v${ctx.extensionVersion}. If "${cmd}" is a real browsercontrol command, the extension in chrome://extensions is running an older build than the daemon — reload it there (MV3 extensions never pick up source changes automatically). Do not work around this by installing other automation libraries; it's a stale-extension issue, not a missing capability.`,
+        hint: `This loaded extension is v${ctx.extensionVersion}. If "${cmd}" is a real browsercontrol command, the extension in chrome://extensions is running an older build than the CLI — reload it there (MV3 extensions never pick up source changes automatically). Do not work around this by installing other automation libraries; it's a stale-extension issue, not a missing capability.`,
     };
 }

@@ -4,7 +4,7 @@
  */
 
 import type { Point } from "@browsercontrol/shared";
-import { evalOnPage, quadToBox, sendCommand } from "../../libs/cdp.js";
+import { evalOnPage, evalOnPageWithResult, quadToBox, sendCommand } from "../../libs/cdp.js";
 import { errorMessage } from "../../libs/errorMessage.js";
 import {
     hideNativeHighlight,
@@ -73,6 +73,70 @@ async function scrollIntoViewWithRetry(target: chrome.debugger.Debuggee, backend
     }
 }
 
+const SETTLE_WARNING =
+    "The page was still changing when the settle window closed (animation, live content, or a slow navigation). The action itself was dispatched — check the page before repeating it.";
+
+/**
+ * A settle timeout only means the page kept mutating afterwards; the input
+ * events were already delivered. Reporting it as an error made agents retry,
+ * i.e. click or type twice, so it becomes a warning on a successful result.
+ */
+function settled<T extends Extract<ActionResult, { success: true }>>(result: T): ActionResult {
+    if (result.settleReason === "timeout") result.warning = SETTLE_WARNING;
+    return result;
+}
+
+/**
+ * Picks the point to click: the centre of the part of the element that is
+ * inside the viewport (a tall element's full-box centre can be off screen),
+ * then hit-tests it so a cookie banner or modal sitting on top is reported
+ * instead of silently receiving the click. Returns null coordinates plus a
+ * description of the covering element when blocked.
+ */
+async function clickPoint(
+    target: chrome.debugger.Debuggee,
+    backendNodeId: number,
+    box: { x: number; y: number; w: number; h: number },
+): Promise<{ x: number; y: number; coveredBy?: string }> {
+    const layout = await sendCommand(target, "Page.getLayoutMetrics").catch(() => null);
+    const vw = layout?.cssLayoutViewport?.clientWidth ?? box.x + box.w;
+    const vh = layout?.cssLayoutViewport?.clientHeight ?? box.y + box.h;
+    const left = Math.max(box.x, 0);
+    const top = Math.max(box.y, 0);
+    const right = Math.min(box.x + box.w, vw);
+    const bottom = Math.min(box.y + box.h, vh);
+    const x = right > left ? (left + right) / 2 : box.x + box.w / 2;
+    const y = bottom > top ? (top + bottom) / 2 : box.y + box.h / 2;
+    try {
+        const resolved = await sendCommand(target, "DOM.resolveNode", { backendNodeId });
+        const objectId = resolved?.object?.objectId;
+        if (!objectId) return { x, y };
+        const res = await sendCommand(target, "Runtime.callFunctionOn", {
+            objectId,
+            arguments: [{ value: x }, { value: y }],
+            returnByValue: true,
+            functionDeclaration: `function (x, y) {
+                if (this.ownerDocument !== document) return null;
+                const hit = document.elementFromPoint(x, y);
+                if (!hit || hit === this || this.contains(hit) || hit.contains(this)) return null;
+                const label = hit.closest("label");
+                if (label && (label.control === this || label.contains(this))) return null;
+                const ownLabel = this.closest && this.closest("label");
+                if (ownLabel && ownLabel.contains(hit)) return null;
+                if (hit.closest('[id^="__bc_"], [class^="__bc_"]')) return null;
+                const cls = typeof hit.className === "string" && hit.className.trim() ? "." + hit.className.trim().split(/\\s+/).slice(0, 2).join(".") : "";
+                const text = (hit.innerText || hit.getAttribute("aria-label") || "").trim().replace(/\\s+/g, " ").slice(0, 60);
+                return "<" + hit.tagName.toLowerCase() + (hit.id ? "#" + hit.id : "") + cls + ">" + (text ? ' "' + text + '"' : "");
+            }`,
+        });
+        void sendCommand(target, "Runtime.releaseObject", { objectId }).catch(() => {});
+        const coveredBy = res?.result?.value;
+        return typeof coveredBy === "string" ? { x, y, coveredBy } : { x, y };
+    } catch {
+        return { x, y };
+    }
+}
+
 export function isRiskyTarget(axInfo: AxInfo): boolean {
     return !!axInfo.name && RISKY_NAME_PATTERN.test(axInfo.name);
 }
@@ -88,29 +152,36 @@ export function withRiskWarning(result: ActionResult, axInfo: AxInfo, verb: stri
 export async function performClick(
     target: chrome.debugger.Debuggee,
     backendNodeId: number,
-    opts: { fast: boolean },
+    opts: { fast: boolean; force?: boolean },
 ): Promise<ActionResult> {
     await scrollIntoViewWithRetry(target, backendNodeId);
     const boxModel = await sendCommand(target, "DOM.getBoxModel", {
         backendNodeId,
-    });
+    }).catch(() => null);
     if (!boxModel?.model) {
         return {
             error: "Failed to resolve node bounds",
-            hint: "The node id may be stale (page navigated/re-rendered since the last snapshot). Take a fresh snapshot and retry.",
+            hint: "The node id may be stale (page navigated/re-rendered since the last snapshot), or the element is not rendered. Take a fresh snapshot and retry.",
         };
     }
     const box = quadToBox(boxModel.model.content);
-    const x = box.x + box.w / 2;
-    const y = box.y + box.h / 2;
+    const { x, y, coveredBy } = await clickPoint(target, backendNodeId, box);
+    if (coveredBy && !opts.force) {
+        return {
+            error: `Click target is covered by ${coveredBy}`,
+            hint: "Dismiss the overlay first (cookie banner, modal, sticky header), scroll, or retry with --force if the covering element is meant to receive the click.",
+        };
+    }
 
     const [, axInfo] = await Promise.all([
         evalOnPage(target, `(${moveCursorTo.toString()})(${x}, ${y}, ${opts.fast})`, true),
-        getAxInfoForNode(target, backendNodeId),
+        getAxInfoForNode(target, backendNodeId).catch((): AxInfo => ({})),
     ]);
     await showNativeHighlight(target, box, KIND_COLORS.click.rgb);
     if (!opts.fast) await pageDelay(target, 350);
 
+    // A real pointer arrives before it presses: hover menus, tooltips and pointerenter-gated buttons need this move.
+    await sendCommand(target, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none" });
     void evalOnPage(target, `(${pulseCursorPress.toString()})(true)`);
     await sendCommand(target, "Input.dispatchMouseEvent", {
         type: "mousePressed",
@@ -131,25 +202,39 @@ export async function performClick(
     });
     const settleResult = await waitForStableDom(target);
     setTimeout(() => hideNativeHighlight(target), opts.fast ? 350 : 1200);
-    if (settleResult.reason === "timeout") {
-        return {
-            error: "Click did not reach DOM quiet before the settle timeout",
-            hint: "The page is still changing; inspect the current page before retrying.",
-            settleReason: settleResult.reason,
-        };
-    }
 
     return withRiskWarning(
-        {
+        settled({
             success: true,
-            message: `Clicked at (${x}, ${y})`,
+            message: `Clicked at (${Math.round(x)}, ${Math.round(y)})`,
             role: axInfo.role,
             name: axInfo.name,
             settleReason: settleResult.reason,
-        },
+        }),
         axInfo,
         "clicked",
     );
+}
+
+/** Selects the element's current content so the next insertText replaces it instead of appending. */
+async function selectElementContents(target: chrome.debugger.Debuggee, backendNodeId: number): Promise<void> {
+    const resolved = await sendCommand(target, "DOM.resolveNode", { backendNodeId });
+    const objectId = resolved?.object?.objectId;
+    if (!objectId) return;
+    await sendCommand(target, "Runtime.callFunctionOn", {
+        objectId,
+        functionDeclaration: `function () {
+            if (typeof this.select === "function" && "value" in this) { this.select(); return; }
+            if (this.isContentEditable) {
+                const range = document.createRange();
+                range.selectNodeContents(this);
+                const sel = getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+            }
+        }`,
+    });
+    void sendCommand(target, "Runtime.releaseObject", { objectId }).catch(() => {});
 }
 
 /** Types text into a targeted element (or currently focused input) with cursor glide and highlight. */
@@ -157,7 +242,7 @@ export async function performType(
     target: chrome.debugger.Debuggee,
     backendNodeId: number | undefined,
     text: string,
-    opts: { fast: boolean },
+    opts: { fast: boolean; clear?: boolean },
 ): Promise<ActionResult> {
     let axInfo: AxInfo = {};
     if (backendNodeId != null) {
@@ -168,13 +253,14 @@ export async function performType(
         } catch (e) {
             return {
                 error: `Failed to focus node: ${errorMessage(e)}`,
-                hint: "The node id may be stale, or the element isn't focusable (e.g. a div, not an input). Take a fresh snapshot and confirm it's an input/textbox node.",
+                hint: "The node id may be stale, or the element isn't focusable (e.g. a label or div, not an input). Take a fresh snapshot and pass the textbox's id.",
             };
         }
+        if (opts.clear) await selectElementContents(target, backendNodeId).catch(() => {});
 
         const [boxModel, resolvedAxInfo] = await Promise.all([
-            sendCommand(target, "DOM.getBoxModel", { backendNodeId }),
-            getAxInfoForNode(target, backendNodeId),
+            sendCommand(target, "DOM.getBoxModel", { backendNodeId }).catch(() => null),
+            getAxInfoForNode(target, backendNodeId).catch((): AxInfo => ({})),
         ]);
         axInfo = resolvedAxInfo;
         if (boxModel?.model?.content) {
@@ -189,7 +275,9 @@ export async function performType(
         }
     }
 
-    if (opts.fast) {
+    if (opts.clear && text === "") {
+        await dispatchKey(target, KEY_DEFS.Delete, 0);
+    } else if (opts.fast) {
         await sendCommand(target, "Input.insertText", { text });
     } else {
         const chars = Array.from(text);
@@ -216,66 +304,110 @@ export async function performType(
 
             if (landed == null || !landed.includes(text)) {
                 return {
-                    error: `Typed "${text}" but it didn't land in the target element`,
+                    error: `Typed ${text.length} chars but they didn't land in the target element`,
                     hint: "The element likely lost focus mid-type (a re-render replaced it, or something else grabbed focus). Take a fresh snapshot and retry, ideally right after the element becomes visible/interactive rather than immediately after the action that revealed it.",
                     settleReason,
                 };
             }
         }
     }
-    if (settleReason === "timeout") {
-        return {
-            error: "Type action did not reach DOM quiet before the settle timeout",
-            hint: "The page is still changing; inspect the current page before retrying.",
-            settleReason,
-        };
-    }
-
+    // The typed text is deliberately not echoed back: it may be a password, and the caller already has it.
     return withRiskWarning(
-        {
+        settled({
             success: true,
-            message: `Typed "${text}"`,
+            message: `${opts.clear ? "Replaced value with" : "Typed"} ${text.length} chars`,
             role: axInfo.role,
             name: axInfo.name,
             settleReason,
-        },
+        }),
         axInfo,
         "typed into",
     );
 }
 
-function computeSingleCharKeyDef(
-    ch: string,
-): { key: string; code: string; keyCode: number; text?: string } | undefined {
+type KeyDef = { key: string; code: string; keyCode: number; text?: string };
+
+/** CDP modifier bitmask: Alt=1, Control=2, Meta=4, Shift=8. */
+const MODIFIER_BITS: Record<string, number> = {
+    alt: 1,
+    option: 1,
+    control: 2,
+    ctrl: 2,
+    meta: 4,
+    cmd: 4,
+    command: 4,
+    shift: 8,
+};
+
+async function dispatchKey(target: chrome.debugger.Debuggee, def: KeyDef, modifiers: number): Promise<void> {
+    // Text is only produced without Control/Alt/Meta: "Control+a" must select-all, not insert "a".
+    const text = modifiers & 0b111 ? undefined : def.text;
+    await sendCommand(target, "Input.dispatchKeyEvent", {
+        type: text ? "keyDown" : "rawKeyDown",
+        modifiers,
+        windowsVirtualKeyCode: def.keyCode,
+        nativeVirtualKeyCode: def.keyCode,
+        key: def.key,
+        code: def.code,
+        ...(text ? { text, unmodifiedText: text } : {}),
+    });
+    await sendCommand(target, "Input.dispatchKeyEvent", {
+        type: "keyUp",
+        modifiers,
+        windowsVirtualKeyCode: def.keyCode,
+        nativeVirtualKeyCode: def.keyCode,
+        key: def.key,
+        code: def.code,
+    });
+}
+
+/** Parses "Enter", "a", "Control+Shift+K", "Meta+Enter" into a key definition plus modifier bits. */
+export function parseKeyCombo(combo: string): { def: KeyDef; modifiers: number } | null {
+    const parts = combo.split("+");
+    const keyName = parts.length > 1 && parts[parts.length - 1] === "" ? "+" : (parts.pop() ?? "");
+    let modifiers = 0;
+    for (const part of parts) {
+        if (part === "") continue;
+        const bit = MODIFIER_BITS[part.toLowerCase()];
+        if (bit == null) return null;
+        modifiers |= bit;
+    }
+    let def: KeyDef | undefined =
+        KEY_DEFS[keyName] ?? (Array.from(keyName).length === 1 ? computeSingleCharKeyDef(keyName) : undefined);
+    if (!def) return null;
+    if (modifiers & MODIFIER_BITS.shift && def.text && /^[a-z]$/.test(def.text)) {
+        def = { ...def, key: def.text.toUpperCase(), text: def.text.toUpperCase() };
+    }
+    return { def, modifiers };
+}
+
+function computeSingleCharKeyDef(ch: string): KeyDef | undefined {
     if (/[a-zA-Z]/.test(ch)) {
-        return {
-            key: ch,
-            code: `Key${ch.toUpperCase()}`,
-            keyCode: ch.toUpperCase().charCodeAt(0),
-        };
+        return { key: ch, code: `Key${ch.toUpperCase()}`, keyCode: ch.toUpperCase().charCodeAt(0), text: ch };
     }
     if (/[0-9]/.test(ch)) {
-        return { key: ch, code: `Digit${ch}`, keyCode: ch.charCodeAt(0) };
+        return { key: ch, code: `Digit${ch}`, keyCode: ch.charCodeAt(0), text: ch };
     }
     const symbolCode = SINGLE_CHAR_SYMBOL_CODES[ch];
     if (symbolCode) {
-        return { key: ch, code: symbolCode, keyCode: ch.charCodeAt(0) };
+        return { key: ch, code: symbolCode, keyCode: ch.charCodeAt(0), text: ch };
     }
-    return undefined;
+    // Any other printable character (shifted symbols, non-Latin letters): no physical key code, just its text.
+    return /\S/u.test(ch) ? { key: ch, code: "", keyCode: 0, text: ch } : undefined;
 }
 
-/** Dispatches a single key press (keydown/keyup sequence) to focused or targeted element. */
+/** Dispatches a key or key combo ("Control+a", "Shift+Tab") to the focused or targeted element. */
 export async function performPressKey(
     target: chrome.debugger.Debuggee,
     key: string,
     backendNodeId: number | undefined,
     opts: { fast: boolean },
 ): Promise<ActionResult> {
-    const def = KEY_DEFS[key] ?? (key.length === 1 ? computeSingleCharKeyDef(key) : undefined);
-    if (!def)
+    const parsed = parseKeyCombo(key);
+    if (!parsed)
         return {
             error: `Unsupported key: "${key}"`,
-            hint: `Supported named keys: ${SUPPORTED_KEYS.join(", ")}. A single character (letter, digit, or common symbol) also works directly.`,
+            hint: `Supported named keys: ${SUPPORTED_KEYS.join(", ")}, any single character, optionally prefixed with Control+/Shift+/Alt+/Meta+ (e.g. "Control+a").`,
         };
 
     let axInfo: AxInfo = {};
@@ -290,8 +422,8 @@ export async function performPressKey(
             };
         }
         const [boxModel, resolvedAxInfo] = await Promise.all([
-            sendCommand(target, "DOM.getBoxModel", { backendNodeId }),
-            getAxInfoForNode(target, backendNodeId),
+            sendCommand(target, "DOM.getBoxModel", { backendNodeId }).catch(() => null),
+            getAxInfoForNode(target, backendNodeId).catch((): AxInfo => ({})),
         ]);
         axInfo = resolvedAxInfo;
         if (boxModel?.model?.content) {
@@ -305,70 +437,75 @@ export async function performPressKey(
             setTimeout(() => hideNativeHighlight(target), opts.fast ? 350 : 1200);
         }
     } else {
-        void evalOnPage(target, `(${showKeyBadge.toString()})(${JSON.stringify(def.key)}, ${opts.fast})`);
+        void evalOnPage(target, `(${showKeyBadge.toString()})(${JSON.stringify(key)}, ${opts.fast})`);
     }
 
-    await sendCommand(target, "Input.dispatchKeyEvent", {
-        type: "rawKeyDown",
-        windowsVirtualKeyCode: def.keyCode,
-        nativeVirtualKeyCode: def.keyCode,
-        key: def.key,
-        code: def.code,
-    });
-    if (def.text) {
-        await sendCommand(target, "Input.dispatchKeyEvent", {
-            type: "char",
-            text: def.text,
-            unmodifiedText: def.text,
-        });
-    }
-    await sendCommand(target, "Input.dispatchKeyEvent", {
-        type: "keyUp",
-        windowsVirtualKeyCode: def.keyCode,
-        nativeVirtualKeyCode: def.keyCode,
-        key: def.key,
-        code: def.code,
-    });
+    await dispatchKey(target, parsed.def, parsed.modifiers);
     const settleResult = await waitForStableDom(target);
-    if (settleResult.reason === "timeout") {
-        return {
-            error: "Key action did not reach DOM quiet before the settle timeout",
-            hint: "The page is still changing; inspect the current page before retrying.",
-            settleReason: settleResult.reason,
-        };
-    }
-    return {
+    return settled({
         success: true,
         message: `Pressed ${key}`,
         role: axInfo.role,
         name: axInfo.name,
         settleReason: settleResult.reason,
-    };
+    });
 }
 
-/** Dispatches a mouse wheel scroll on the target tab. */
+/**
+ * Dispatches a mouse wheel. Without a node it lands on the viewport centre (a
+ * fixed (500,500) missed small viewports and often hit a non-scrolling overlay);
+ * with a node it lands on that element, which is how inner scroll containers
+ * (chat logs, sidebars, virtualised lists) are scrolled. Reports the resulting
+ * window position so a caller can tell when it hit the end.
+ */
 export async function performScroll(
     target: chrome.debugger.Debuggee,
     deltaX: number,
     deltaY: number,
-    opts: { fast: boolean },
+    opts: { fast: boolean; backendNodeId?: number },
 ): Promise<ActionResult> {
+    let x: number;
+    let y: number;
+    if (opts.backendNodeId != null) {
+        const model = await sendCommand(target, "DOM.getBoxModel", { backendNodeId: opts.backendNodeId }).catch(
+            () => null,
+        );
+        if (!model?.model) {
+            return {
+                error: "Failed to resolve the scroll container's bounds",
+                hint: "Take a fresh snapshot and pass the id of the scrollable element (list, panel, chat log).",
+            };
+        }
+        const box = quadToBox(model.model.content);
+        x = box.x + box.w / 2;
+        y = box.y + box.h / 2;
+    } else {
+        const layout = await sendCommand(target, "Page.getLayoutMetrics").catch(() => null);
+        x = (layout?.cssLayoutViewport?.clientWidth ?? 1000) / 2;
+        y = (layout?.cssLayoutViewport?.clientHeight ?? 1000) / 2;
+    }
     void evalOnPage(target, `(${showScrollIndicator.toString()})(${deltaX}, ${deltaY}, ${opts.fast})`);
+    await sendCommand(target, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none" });
     await sendCommand(
         target,
         "Input.dispatchMouseEvent",
-        { type: "mouseWheel", x: 500, y: 500, deltaX, deltaY },
+        { type: "mouseWheel", x, y, deltaX, deltaY },
         { retryOnTimeout: true },
     );
     const settleResult = await waitForStableDom(target);
-    if (settleResult.reason === "timeout") {
-        return {
-            error: "Scroll action did not reach DOM quiet before the settle timeout",
-            hint: "The page is still changing; inspect the current page before retrying.",
-            settleReason: settleResult.reason,
-        };
-    }
-    return { success: true, message: `Scrolled by (${deltaX}, ${deltaY})`, settleReason: settleResult.reason };
+    const position = await evalOnPageWithResult<{ y: number; max: number }>(
+        target,
+        "({ y: Math.round(window.scrollY), max: Math.max(0, Math.round(document.documentElement.scrollHeight - window.innerHeight)) })",
+    );
+    const where =
+        position && opts.backendNodeId == null
+            ? `; page at y=${position.y}/${position.max}${position.y >= position.max - 2 ? " (bottom)" : ""}`
+            : "";
+    return settled({
+        success: true,
+        message: `Scrolled by (${deltaX}, ${deltaY})${where}`,
+        settleReason: settleResult.reason,
+    });
 }
 
 let lastCursorPosition: Point = { x: 400, y: 300 };
@@ -423,7 +560,13 @@ export async function performDrag(
     await evalOnPage(target, `(${moveCursorTo.toString()})(${start.x}, ${start.y}, ${opts.fast})`, true);
     void evalOnPage(target, `(${pulseCursorPress.toString()})(true)`);
 
-    // 2. Mouse Press
+    // 2. Hover the start point, then press (drag sources often arm on pointerenter/mousemove)
+    await sendCommand(target, "Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x: start.x,
+        y: start.y,
+        button: "none",
+    });
     await sendCommand(target, "Input.dispatchMouseEvent", {
         type: "mousePressed",
         x: start.x,
@@ -462,19 +605,11 @@ export async function performDrag(
     });
     setLastCursorPosition(end.x, end.y);
     const settleResult = await waitForStableDom(target);
-    if (settleResult.reason === "timeout") {
-        return {
-            error: "Drag action did not reach DOM quiet before the settle timeout",
-            hint: "The page is still changing; inspect the current page before retrying.",
-            settleReason: settleResult.reason,
-        };
-    }
-
     const shapeNote =
         opts.shape && opts.shape !== "straight" ? ` (${opts.shape} trajectory, ${points.length} points)` : "";
-    return {
+    return settled({
         success: true,
         message: `Dragged from (${start.x}, ${start.y}) to (${end.x}, ${end.y})${shapeNote}`,
         settleReason: settleResult.reason,
-    };
+    });
 }

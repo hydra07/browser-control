@@ -56,7 +56,19 @@ export async function waitForStableDom(
                 clearTimeout(hardTimer);
                 resolve(reason);
             };
-            const observer = new MutationObserver(() => {
+            // BrowserControl's own cursor/ripple/badge overlays animate right after every action;
+            // counting those would keep the page "busy" until the hard timeout on every call.
+            const ours = (node) => {
+                const el = node && (node.nodeType === 1 ? node : node.parentElement);
+                return !!el && !!el.closest && !!el.closest('[id^="__bc_"], [class^="__bc_"]');
+            };
+            const external = (record) => {
+                if (record.type !== "childList") return !ours(record.target);
+                const changed = [...record.addedNodes, ...record.removedNodes];
+                return changed.length === 0 ? !ours(record.target) : changed.some((n) => !ours(n));
+            };
+            const observer = new MutationObserver((records) => {
+                if (!records.some(external)) return;
                 clearTimeout(settleTimer);
                 settleTimer = setTimeout(() => finish("dom_quiet"), ${quietMs});
             });

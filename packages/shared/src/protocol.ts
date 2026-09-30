@@ -395,10 +395,18 @@ export type BrowserCommand = WithTabId<
     | { cmd: "snapshot"; compact?: boolean; format?: "compact" | "json"; semantic?: boolean }
     | { cmd: "query_region"; selector: string; compact?: boolean }
     | { cmd: "visual_snapshot" }
-    | { cmd: "click"; nodeId?: number; ref?: string; documentId?: string; confirmRisky?: boolean }
-    | { cmd: "type"; text: string; nodeId?: number; ref?: string; documentId?: string; confirmRisky?: boolean }
+    | { cmd: "click"; nodeId?: number; ref?: string; documentId?: string; confirmRisky?: boolean; force?: boolean }
+    | {
+          cmd: "type";
+          text: string;
+          nodeId?: number;
+          ref?: string;
+          documentId?: string;
+          confirmRisky?: boolean;
+          clear?: boolean;
+      }
     | { cmd: "press_key"; key: string; nodeId?: number; ref?: string; documentId?: string; confirmRisky?: boolean }
-    | { cmd: "scroll"; deltaX?: number; deltaY?: number }
+    | { cmd: "scroll"; deltaX?: number; deltaY?: number; nodeId?: number; ref?: string; documentId?: string }
     | {
           cmd: "drag";
           points?: Point[];
@@ -431,7 +439,19 @@ export type BrowserCommand = WithTabId<
           easing?: "linear" | "easeIn" | "easeOut" | "easeInOut";
           button?: "left" | "right" | "middle";
       }
-    | { cmd: "screenshot"; fullPage?: boolean; format?: "jpeg" | "png"; quality?: number }
+    | {
+          cmd: "screenshot";
+          fullPage?: boolean;
+          format?: "jpeg" | "png" | "webp";
+          quality?: number;
+          nodeId?: number;
+          ref?: string;
+          documentId?: string;
+          clip?: { x: number; y: number; width: number; height: number };
+          padding?: number;
+          zoom?: number;
+          maxDimension?: number;
+      }
     | { cmd: "network_requests"; resourceTypes?: string[]; filter?: string; limit?: number }
     | { cmd: "network_request_detail"; requestId: string; includeBody?: boolean }
     | { cmd: "network_clear" }

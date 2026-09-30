@@ -27,6 +27,35 @@ describe("snapshot transformations", () => {
         expect(formatCompactSnapshot(buildSnapshotNodes(nodes))).toBe('[7] button "Save"');
     });
 
+    test("collapses per-glyph text runs, restoring spaces at backend id gaps", () => {
+        const text = (id: number, value: string) =>
+            axNode({
+                nodeId: `t${id}`,
+                role: { type: "role", value: "StaticText" },
+                name: { type: "computedString", value },
+                backendDOMNodeId: id,
+            });
+        const nodes = [
+            text(10, "H"),
+            text(11, "i"),
+            text(13, "y"),
+            text(14, "o"),
+            axNode({
+                nodeId: "link",
+                role: { type: "role", value: "link" },
+                name: { type: "computedString", value: "More" },
+                backendDOMNodeId: 20,
+            }),
+            text(30, "tail"),
+        ];
+
+        expect(buildSnapshotNodes(nodes)).toEqual([
+            { i: 10, r: "StaticText", n: "Hi yo" },
+            { i: 20, r: "link", n: "More" },
+            { i: 30, r: "StaticText", n: "tail" },
+        ]);
+    });
+
     test("builds a nested region tree and reports an empty root safely", () => {
         const nodes = [
             axNode({ nodeId: "root", role: { type: "role", value: "generic" }, childIds: ["heading"] }),

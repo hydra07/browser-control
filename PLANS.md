@@ -1,5 +1,8 @@
 # BrowserControl Execution Plan
 
+> **2026-09-30:** the MCP server / Bun daemon (`app/server`) was removed. The host side is now only the Go CLI
+> (`cli/`) and its bridge; read "MCP", "daemon" and "six-gateway" below as historical context.
+
 > Canonical implementation plan derived from the repository audit on 2026-09-14.
 >
 > This file is the execution-safe companion to the product direction in the

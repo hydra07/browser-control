@@ -22,16 +22,38 @@ func NewClient(cfg Config) (*Client, TokenInfo, error) {
 	if err != nil {
 		return nil, TokenInfo{}, err
 	}
-	return &Client{cfg: cfg, token: info.Token, http: &http.Client{Timeout: cfg.Timeout}}, info, nil
+	// The bridge enforces cfg.Timeout per command; the HTTP side gets slack so the bridge's own timeout error wins.
+	return &Client{cfg: cfg, token: info.Token, http: &http.Client{Timeout: cfg.Timeout + 5*time.Second}}, info, nil
 }
+
+// Token is the bearer token this client authenticates with.
+func (c *Client) Token() string { return c.token }
+
+// BridgeError is a non-2xx reply from the bridge; Unreachable errors are transport failures instead.
+type BridgeError struct {
+	Status  int
+	Message string
+}
+
+func (e *BridgeError) Error() string { return e.Message }
+
+// NotConnected reports whether the bridge is up but no extension is paired to it.
+func (e *BridgeError) NotConnected() bool { return e.Status == http.StatusServiceUnavailable }
 
 func (c *Client) Status() ([]byte, error) {
 	return c.request(http.MethodGet, "/status", nil)
 }
 
 func (c *Client) Execute(cmd string, payload map[string]any) ([]byte, error) {
-	payload["cmd"] = cmd
-	return c.request(http.MethodPost, "/execute", payload)
+	body := make(map[string]any, len(payload)+2)
+	for k, v := range payload {
+		body[k] = v
+	}
+	body["cmd"] = cmd
+	if _, ok := body["timeoutMs"]; !ok {
+		body["timeoutMs"] = c.cfg.Timeout.Milliseconds()
+	}
+	return c.request(http.MethodPost, "/execute", body)
 }
 
 func (c *Client) request(method, path string, body any) ([]byte, error) {
@@ -61,7 +83,14 @@ func (c *Client) request(method, path string, body any) ([]byte, error) {
 		return nil, err
 	}
 	if res.StatusCode >= 400 {
-		return nil, fmt.Errorf("bridge returned %s: %s", res.Status, strings.TrimSpace(string(data)))
+		message := strings.TrimSpace(string(data))
+		var body struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(data, &body) == nil && body.Error != "" {
+			message = body.Error
+		}
+		return nil, &BridgeError{Status: res.StatusCode, Message: message}
 	}
 	return data, nil
 }
@@ -80,7 +109,7 @@ func ParsePayloadArgs(args []string) (map[string]any, error) {
 				continue
 			}
 			if hasInlineValue {
-				value, err := parseValue(raw)
+				value, err := ParseValue(raw)
 				if err != nil {
 					return nil, err
 				}
@@ -88,7 +117,7 @@ func ParsePayloadArgs(args []string) (map[string]any, error) {
 				continue
 			}
 			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "--") && !looksLikePayloadBoundary(args[i+1]) {
-				value, err := parseValue(args[i+1])
+				value, err := ParseValue(args[i+1])
 				if err != nil {
 					return nil, err
 				}
@@ -123,7 +152,7 @@ func ParsePayloadArgs(args []string) (map[string]any, error) {
 		if !ok {
 			return nil, fmt.Errorf("expected %q to be key=value, --flag value, @file.json, or inline JSON object", arg)
 		}
-		value, err := parseValue(raw)
+		value, err := ParseValue(raw)
 		if err != nil {
 			return nil, err
 		}
@@ -205,7 +234,8 @@ func readJSONObject(path string) (map[string]any, error) {
 	return object, nil
 }
 
-func parseValue(raw string) (any, error) {
+// ParseValue decodes a CLI value as JSON when it parses (numbers, bools, objects), reads @file contents, and otherwise keeps the raw string.
+func ParseValue(raw string) (any, error) {
 	value := strings.TrimSpace(raw)
 	if strings.HasPrefix(value, "@") {
 		data, err := os.ReadFile(strings.TrimPrefix(value, "@"))
@@ -238,11 +268,4 @@ func PrettyPrintJSON(data []byte) string {
 		return string(data)
 	}
 	return string(formatted)
-}
-
-func DurationFromSeconds(seconds int) time.Duration {
-	if seconds <= 0 {
-		return defaultTimeout
-	}
-	return time.Duration(seconds) * time.Second
 }

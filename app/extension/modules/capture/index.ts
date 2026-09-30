@@ -122,7 +122,7 @@ export class ScreenCaptureManager {
         if (this.recorder) {
             return {
                 error: "Already recording",
-                hint: 'Call browser_session({action:"stop_recording"}) first, or ignore if you meant to keep recording — this call was a no-op.',
+                hint: "Call `browsercontrol capture stop` first, or ignore if you meant to keep recording — this call was a no-op.",
             };
         }
 
@@ -241,7 +241,7 @@ export class ScreenCaptureManager {
         if (!this.recorder || !this.port) {
             return {
                 error: "Not recording",
-                hint: 'Call browser_session({action:"start_recording"}) first.',
+                hint: "Call `browsercontrol capture start` first.",
             };
         }
         const finishedRecorder = this.recorder;

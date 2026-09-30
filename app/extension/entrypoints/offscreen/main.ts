@@ -1,9 +1,9 @@
 /**
- * Holds the WebSocket bridge to the daemon, relaying messages to the service worker.
+ * Holds the WebSocket connection to the Go CLI bridge, relaying messages to the service worker.
  * Runs DOM-dependent operations (MediaRecorder, DOMParser) directly here.
  */
 import { BinaryOpcode, type BrowserCommand, encodeBinaryPacket } from "@browsercontrol/shared";
-import { getSettings } from "../../configs/settings.js";
+import { getSettings, saveSettings } from "../../configs/settings.js";
 import { errorMessage } from "../../libs/errorMessage.js";
 import { startCapture, stopCapture } from "../../modules/capture/index.js";
 import { handleWebSearchCommand } from "../../modules/search/index.js";
@@ -20,6 +20,8 @@ interface HelloAck {
     type: "hello_ack";
     protocolVersion: number;
     serverVersion?: string;
+    /** Sent only when the bridge auto-paired this extension (no or stale token); persisted for next time. */
+    token?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -47,7 +49,7 @@ async function getExtensionVersion(): Promise<string> {
  * Manages the persistent WebSocket lifecycle, message routing,
  * exponential-backoff reconnection, and graceful teardown for the offscreen document.
  */
-export class OffscreenDaemonBridge {
+export class OffscreenBridge {
     private ws: WebSocket | null;
     private reconnectTimer: ReturnType<typeof setTimeout> | null;
     private reconnectDelayMs: number;
@@ -89,12 +91,9 @@ export class OffscreenDaemonBridge {
                 void getSettings()
                     .then(async (settings) => {
                         if (socket !== this.ws || socket.readyState !== WebSocket.OPEN) return;
+                        // An empty or stale token is still sent: the bridge auto-pairs its trusted extension origin
+                        // and hands the real token back in hello_ack.
                         const token = settings.daemonAuthToken.trim();
-                        if (!token) {
-                            console.warn("[offscreen] Daemon token is not paired; configure it in Settings");
-                            socket.close(4003, "Daemon token is not paired");
-                            return;
-                        }
                         socket.send(
                             JSON.stringify({
                                 type: "hello",
@@ -106,8 +105,8 @@ export class OffscreenDaemonBridge {
                         );
                     })
                     .catch((err: unknown) => {
-                        console.error("[offscreen] Failed to load daemon pairing settings:", errorMessage(err));
-                        socket.close(4003, "Daemon token unavailable");
+                        console.error("[offscreen] Failed to load bridge pairing settings:", errorMessage(err));
+                        socket.close(4003, "Bridge token unavailable");
                     });
             };
 
@@ -119,7 +118,7 @@ export class OffscreenDaemonBridge {
                 if (this.isDisposed || socket !== this.ws) return;
                 this.connectionState = "DISCONNECTED";
                 this.ws = null;
-                console.log(`[offscreen] Disconnected from daemon, retrying in ${this.reconnectDelayMs}ms`);
+                console.log(`[offscreen] Disconnected from bridge, retrying in ${this.reconnectDelayMs}ms`);
                 this.scheduleReconnect();
             };
 
@@ -173,13 +172,20 @@ export class OffscreenDaemonBridge {
         if (this.connectionState === "AUTHENTICATING") {
             const ack = parsed as Partial<HelloAck>;
             if (ack.type !== "hello_ack" || ack.protocolVersion !== WS_PROTOCOL_VERSION) {
-                console.error("[offscreen] Daemon rejected the WebSocket protocol handshake");
+                console.error("[offscreen] Bridge rejected the WebSocket protocol handshake");
                 this.ws?.close(4002, "Protocol handshake failed");
                 return;
             }
             this.connectionState = "READY";
             this.reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS;
-            console.log(`[offscreen] Authenticated with daemon${ack.serverVersion ? ` v${ack.serverVersion}` : ""}`);
+            if (typeof ack.token === "string" && ack.token) {
+                void saveSettings({ daemonAuthToken: ack.token })
+                    .then(() => console.log("[offscreen] Auto-paired with bridge; token saved"))
+                    .catch((err: unknown) =>
+                        console.error("[offscreen] Failed to save paired token:", errorMessage(err)),
+                    );
+            }
+            console.log(`[offscreen] Authenticated with bridge${ack.serverVersion ? ` v${ack.serverVersion}` : ""}`);
             return;
         }
         if (this.connectionState !== "READY") return;
@@ -270,7 +276,7 @@ export class OffscreenDaemonBridge {
     }
 }
 
-export const offscreenBridge = new OffscreenDaemonBridge();
+export const offscreenBridge = new OffscreenBridge();
 offscreenBridge.connect();
 
 window.addEventListener("beforeunload", () => {

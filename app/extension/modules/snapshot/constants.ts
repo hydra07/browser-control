@@ -13,7 +13,7 @@ export const INTERACTIVE_ROLES = new Set([
 ]);
 
 // Nested (not flat) so a field's label ends up as its sibling in the same
-// `children` array — only worth the extra shape for browser_query_region,
+// `children` array — only worth the extra shape for query_region,
 // where scope is already small, not for a full-page snapshot.
 export const MAX_REGION_NODES = 150;
 

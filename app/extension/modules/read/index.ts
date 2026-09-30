@@ -248,7 +248,7 @@ export async function handleReadingModeCommand(
     if (!result?.text || !result.isArticle) {
         return {
             message:
-                'This page does not appear to be article-shaped (e.g. an app UI, form, dashboard, or listing). Use browser_inspect({action:"snapshot"}) instead.',
+                "This page does not appear to be article-shaped (e.g. an app UI, form, dashboard, or listing). Use `browsercontrol snapshot` instead.",
             title: result?.title ?? "",
             description: result?.description,
             text: result?.text?.slice(0, 1000) ?? "",
@@ -364,7 +364,7 @@ export async function handleFindCommand(
     }
 
     return {
-        message: `Found ${search.resultCount} match(es) for "${query}"${search.resultCount > capped ? ` (showing first ${capped})` : ""}. Use these ids with browser_act's click/type or browser_inspect's inspect_element/select_content.`,
+        message: `Found ${search.resultCount} match(es) for "${query}"${search.resultCount > capped ? ` (showing first ${capped})` : ""}. Use these ids with click/type/inspect/select.`,
         count: search.resultCount,
         matches: found,
     };
@@ -448,7 +448,7 @@ export async function handleSelectContentCommand(
     if (!opts.selector && opts.nodeId == null) {
         return {
             error: "Missing selector or nodeId",
-            hint: "Pass a CSS selector to extract from (possibly matching several elements), or a nodeId from browser_inspect's snapshot/find to extract one specific element.",
+            hint: "Pass a CSS selector to extract from (possibly matching several elements), or a nodeId from snapshot/find to extract one specific element.",
         };
     }
 
@@ -463,7 +463,7 @@ export async function handleSelectContentCommand(
         if (!objectId) {
             return {
                 error: "Failed to resolve node",
-                hint: 'The node id may be stale (page navigated/re-rendered since the last snapshot). Take a fresh snapshot or browser_inspect({action:"find"}) and retry.',
+                hint: "The node id may be stale (page navigated/re-rendered since the last snapshot). Take a fresh snapshot or `browsercontrol find <text>` and retry.",
             };
         }
         const res = await sendCommand(target, "Runtime.callFunctionOn", {

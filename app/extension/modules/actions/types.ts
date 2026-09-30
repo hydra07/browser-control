@@ -9,6 +9,7 @@ export type ActionResult =
           name?: string;
           settleReason?: SettleReason;
           _riskWarning?: string;
+          warning?: string;
       }
     | { error: string; hint?: string; settleReason?: SettleReason };
 

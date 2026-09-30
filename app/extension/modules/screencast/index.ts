@@ -46,7 +46,7 @@ export class ScreencastRelay {
         if (this.capturePort) {
             return {
                 error: "Already recording",
-                hint: 'Only one recording can run at a time — call browser_session({action:"stop_recording"}) first.',
+                hint: "Only one recording can run at a time — call `browsercontrol capture stop` first.",
             };
         }
         this.relayedFrameCount = 0;

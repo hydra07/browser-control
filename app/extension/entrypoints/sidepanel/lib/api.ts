@@ -1,11 +1,10 @@
-import type { BenchmarkMetrics } from "@browsercontrol/benchmark";
 import type { FlowStep, FlowStepV2 } from "@browsercontrol/shared";
 import { getSettingsSync } from "../../../configs/settings.js";
 
-export type { BenchmarkMetrics, FlowStep, FlowStepV2 };
+export type { FlowStep, FlowStepV2 };
 
-const DAEMON_PORT = 8765;
-const DAEMON_URL = `http://127.0.0.1:${DAEMON_PORT}`;
+/** The Go CLI bridge (`browsercontrol serve`, auto-started by any CLI command). */
+const BRIDGE_URL = "http://127.0.0.1:8765";
 
 export interface FlowMeta {
   id: string;
@@ -31,65 +30,30 @@ export interface FlowRunResult {
   hint?: string;
 }
 
-export class DaemonUnreachableError extends Error {}
+export class BridgeUnreachableError extends Error {}
 
-type AgentId = "claude" | "agy";
-type AgentEffort = "low" | "medium" | "high";
-
-type AgentSelection = { agentId?: AgentId; effort?: AgentEffort };
-
-function agentSelectionFromLegacyCommand(command?: string): AgentSelection {
-  const trimmed = command?.trim();
-  if (!trimmed) return {};
-  const [executable, ...flags] = trimmed.split(/\s+/);
-  const normalized = executable?.toLowerCase();
-  const agentId =
-    normalized === "claude" || normalized === "claude.exe"
-      ? "claude"
-      : normalized === "agy" || normalized === "agy.exe"
-        ? "agy"
-        : null;
-  if (!agentId) throw new Error("CLI agent must be `claude` or `agy`");
-
-  let effort: AgentEffort | undefined;
-  for (let index = 0; index < flags.length; index++) {
-    const flag = flags[index];
-    if (flag === "--print" || flag === "-p") continue;
-    if (flag === "--effort") {
-      const value = flags[++index];
-      if (value !== "low" && value !== "medium" && value !== "high") {
-        throw new Error("--effort must be low, medium, or high");
-      }
-      effort = value;
-      continue;
-    }
-    throw new Error(`Unsupported ${agentId} CLI flag: ${flag ?? ""}`);
-  }
-  return { agentId, ...(effort ? { effort } : {}) };
-}
-
-async function daemonFetch(path: string, init?: RequestInit): Promise<Response> {
+async function bridgeFetch(path: string, init?: RequestInit): Promise<Response> {
   try {
     const headers = new Headers(init?.headers);
     const token = getSettingsSync().daemonAuthToken.trim();
     if (token) headers.set("Authorization", `Bearer ${token}`);
-    return await fetch(`${DAEMON_URL}${path}`, { ...init, headers });
+    return await fetch(`${BRIDGE_URL}${path}`, { ...init, headers });
   } catch {
-    throw new DaemonUnreachableError(
-      "Can't reach the BrowserControl daemon at 127.0.0.1:8765 — is it running (spawned by your MCP client) with the extension connected?",
+    throw new BridgeUnreachableError(
+      "Can't reach the BrowserControl bridge at 127.0.0.1:8765 — run any `browsercontrol` command (e.g. `browsercontrol status`) to start it.",
     );
   }
 }
 
 export async function listFlows(): Promise<FlowMeta[]> {
-  const res = await daemonFetch("/flows");
+  const res = await bridgeFetch("/flows");
   if (!res.ok) throw new Error(`Failed to list flows (HTTP ${res.status})`);
   const data = (await res.json()) as { flows: FlowMeta[] };
   return data.flows;
 }
 
 export async function getFlow(id: string): Promise<FlowFull> {
-  const res = await daemonFetch(`/flows/${encodeURIComponent(id)}`);
+  const res = await bridgeFetch(`/flows/${encodeURIComponent(id)}`);
   if (!res.ok) throw new Error(`Failed to get flow (HTTP ${res.status})`);
   const data = (await res.json()) as { flow: FlowFull };
   return data.flow;
@@ -102,7 +66,7 @@ export async function saveFlow(input: {
   domain?: string;
   steps: readonly (FlowStep | FlowStepV2)[];
 }): Promise<FlowFull> {
-  const res = await daemonFetch("/flows", {
+  const res = await bridgeFetch("/flows", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
@@ -129,11 +93,11 @@ export async function executeDirect(cmd: string, args: Record<string, unknown> =
       if (response?.error) throw new Error(response.error);
       return response?.result;
     } catch {
-      // Fall through to daemonFetch fallback
+      // Fall through to bridgeFetch fallback
     }
   }
 
-  const res = await daemonFetch("/execute", {
+  const res = await bridgeFetch("/execute", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ cmd, ...args }),
@@ -177,19 +141,19 @@ export async function getFlowRecordingStatus(): Promise<{
   };
 }
 
-export interface DaemonStatus {
+export interface BridgeStatus {
   extensionConnected: boolean;
   version: string;
 }
 
-export async function getStatus(): Promise<DaemonStatus> {
-  const res = await daemonFetch("/status");
+export async function getStatus(): Promise<BridgeStatus> {
+  const res = await bridgeFetch("/status");
   if (!res.ok) throw new Error(`Failed to get status (HTTP ${res.status})`);
-  return (await res.json()) as DaemonStatus;
+  return (await res.json()) as BridgeStatus;
 }
 
 export async function deleteFlow(id: string): Promise<void> {
-  const res = await daemonFetch(`/flows/${encodeURIComponent(id)}`, {
+  const res = await bridgeFetch(`/flows/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
   if (!res.ok) {
@@ -211,10 +175,10 @@ export async function runFlow(id: string): Promise<FlowRunResult> {
       }
     }
   } catch {
-    // Fallback to daemon endpoint
+    // Fall back to the bridge endpoint
   }
 
-  const res = await daemonFetch(`/flows/${encodeURIComponent(id)}/run`, {
+  const res = await bridgeFetch(`/flows/${encodeURIComponent(id)}/run`, {
     method: "POST",
   });
   const data = (await res.json()) as Record<string, unknown>;
@@ -222,131 +186,4 @@ export async function runFlow(id: string): Promise<FlowRunResult> {
     throw new Error(typeof data.error === "string" ? data.error : `Run failed (HTTP ${res.status})`);
   }
   return data as unknown as FlowRunResult;
-}
-
-export async function getMetrics(sessionId?: string): Promise<BenchmarkMetrics> {
-  const query = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : "";
-  const res = await daemonFetch(`/metrics${query}`);
-  if (!res.ok) throw new Error(`Failed to get metrics (HTTP ${res.status})`);
-  return (await res.json()) as BenchmarkMetrics;
-}
-
-export interface CliAgentQueryResult {
-  success: boolean;
-  content: string;
-  commandUsed: string;
-  durationMs: number;
-  error?: string;
-  sessionId?: string;
-}
-
-export interface CliAgentStatusResult {
-  hasAgy: boolean;
-  hasClaude: boolean;
-  isBusy: boolean;
-}
-
-export async function getCliAgentStatus(): Promise<CliAgentStatusResult> {
-  const res = await daemonFetch("/cli-agent/status");
-  if (!res.ok) throw new Error(`Failed to get CLI agent status (HTTP ${res.status})`);
-  return (await res.json()) as CliAgentStatusResult;
-}
-
-export async function queryCliAgent(data: {
-  prompt: string;
-  url?: string;
-  title?: string;
-  selectionText?: string;
-  compactContext?: string;
-  customCommand?: string;
-  sessionId?: string;
-}): Promise<CliAgentQueryResult> {
-  const { customCommand, ...request } = data;
-  const res = await daemonFetch("/cli-agent/query", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...request, ...agentSelectionFromLegacyCommand(customCommand) }),
-  });
-  if (!res.ok) throw new Error(`Failed to query CLI agent (HTTP ${res.status})`);
-  return (await res.json()) as CliAgentQueryResult;
-}
-
-export async function abortCliAgent(): Promise<void> {
-  await daemonFetch("/cli-agent/abort", { method: "POST" });
-}
-
-export async function streamCliAgent(
-  data: {
-    prompt: string;
-    url?: string;
-    title?: string;
-    selectionText?: string;
-    compactContext?: string;
-    customCommand?: string;
-    sessionId?: string;
-  },
-  callbacks: {
-    onStart?: (commandUsed: string) => void;
-    onChunk?: (chunk: string) => void;
-    onToolUse?: (name: string) => void;
-    onToolResult?: (name: string, isError: boolean) => void;
-    onSession?: (sessionId: string) => void;
-    onDone?: (durationMs: number) => void;
-    onError?: (error: string) => void;
-  },
-): Promise<void> {
-  const { customCommand, ...request } = data;
-  const res = await daemonFetch("/cli-agent/stream", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...request, ...agentSelectionFromLegacyCommand(customCommand) }),
-  });
-
-  if (!res.ok || !res.body) {
-    throw new Error(`Failed to initiate stream (HTTP ${res.status})`);
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n\n");
-    buffer = lines.pop() ?? "";
-
-    for (const block of lines) {
-      const line = block.trim();
-      if (!line.startsWith("data: ")) continue;
-      try {
-        const payload = JSON.parse(line.slice(6));
-        switch (payload.type) {
-          case "start":
-            callbacks.onStart?.(payload.commandUsed);
-            break;
-          case "chunk":
-            callbacks.onChunk?.(payload.text);
-            break;
-          case "tool_use":
-            callbacks.onToolUse?.(payload.name);
-            break;
-          case "tool_result":
-            callbacks.onToolResult?.(payload.name, Boolean(payload.isError));
-            break;
-          case "session":
-            if (payload.sessionId) callbacks.onSession?.(payload.sessionId);
-            break;
-          case "done":
-            callbacks.onDone?.(payload.durationMs);
-            break;
-          case "error":
-            callbacks.onError?.(payload.error);
-            break;
-        }
-      } catch {}
-    }
-  }
 }

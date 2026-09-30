@@ -20,9 +20,7 @@ export interface Settings {
     recordingQuality: number;
     recordingMaxWidth: number;
     recordingMaxHeight: number;
-    chatEnabled: boolean;
-    cliAgentCommand: string;
-    /** Bearer token paired with the local daemon; never included in normal UI output. */
+    /** Bearer token paired with the CLI bridge (key name kept so existing pairings survive); never shown in UI output. */
     daemonAuthToken: string;
 }
 
@@ -33,8 +31,6 @@ export const DEFAULT_SETTINGS: Settings = {
     recordingQuality: 50,
     recordingMaxWidth: 1280,
     recordingMaxHeight: 900,
-    chatEnabled: false,
-    cliAgentCommand: "claude --print",
     daemonAuthToken: "",
 };
 
