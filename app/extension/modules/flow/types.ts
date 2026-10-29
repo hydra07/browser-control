@@ -23,6 +23,8 @@ export type SnapshotDelta = {
 };
 
 export type FlowStepResult = {
+    actionId?: string;
+    verified?: boolean;
     index: number;
     action: string;
     matched?: { role?: string; name?: string } | { selector: string };
@@ -37,9 +39,12 @@ export type FlowStepResult = {
 };
 
 export type FlowReport = {
+    runId?: string;
+    verified?: boolean;
     success: boolean;
     stoppedAtStep?: number;
     reason?:
+        | "invalid_flow"
         | "too_many_steps"
         | "not_found"
         | "ambiguous"

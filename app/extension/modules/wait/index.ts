@@ -15,20 +15,31 @@ function isNavigationTeardownError(e: unknown): boolean {
 }
 
 /** Resolves once the given tab reaches status "complete", bounded by timeoutMs. Mirrors handleNavigate's own load wait in dispatch/index.ts. */
-function waitForTabLoadComplete(tabId: number, timeoutMs: number): Promise<void> {
-    return new Promise<void>((resolve) => {
-        const timer = setTimeout(() => {
+export function waitForTabLoadComplete(tabId: number, timeoutMs: number): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+        let finished = false;
+        function finish(loaded: boolean): void {
+            if (finished) return;
+            finished = true;
+            clearTimeout(timer);
             chrome.tabs.onUpdated.removeListener(listener);
-            resolve();
+            resolve(loaded);
+        }
+        const timer = setTimeout(() => {
+            finish(false);
         }, timeoutMs);
         function listener(updatedTabId: number, info: chrome.tabs.TabChangeInfo) {
             if (updatedTabId === tabId && info.status === "complete") {
-                clearTimeout(timer);
-                chrome.tabs.onUpdated.removeListener(listener);
-                resolve();
+                finish(true);
             }
         }
         chrome.tabs.onUpdated.addListener(listener);
+        void chrome.tabs
+            .get(tabId)
+            .then((tab) => {
+                if (tab.status === "complete") finish(true);
+            })
+            .catch(() => finish(false));
     });
 }
 
@@ -101,8 +112,8 @@ export async function waitForStableDom(
                 // settled" used to hand the next flow step a half-loaded page;
                 // wait for the browser-level load instead.
                 if (target.tabId != null && isNavigationTeardownError(e)) {
-                    await waitForTabLoadComplete(target.tabId, NAVIGATION_FALLBACK_TIMEOUT_MS);
-                    finish({ reason: "load_complete" });
+                    const loaded = await waitForTabLoadComplete(target.tabId, NAVIGATION_FALLBACK_TIMEOUT_MS);
+                    finish({ reason: loaded ? "load_complete" : "timeout" });
                     return;
                 }
                 finish({ reason: "timeout" });

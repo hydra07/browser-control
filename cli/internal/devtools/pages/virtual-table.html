@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Virtualized orders fixture</title>
+<h1>Orders</h1><div id="viewport" role="table" aria-label="Orders" aria-rowcount="1000" tabindex="0" style="height:300px;overflow:auto"><div id="spacer" style="height:30000px;position:relative"><div id="rows" style="position:absolute;top:0"></div></div></div>
+<script>
+const viewport = document.getElementById("viewport");
+function renderRows() {
+  const first = Math.floor(viewport.scrollTop / 30);
+  const rows = document.getElementById("rows");
+  rows.replaceChildren(); rows.style.top = first * 30 + "px";
+  for (let i = first; i < Math.min(first + 20, 1000); i++) {
+    const row = document.createElement("div"); row.role = "row"; row.style.height = "30px"; row.setAttribute("aria-rowindex", String(i + 1));
+    row.textContent = "ORD-" + i + " customer" + i + "@example.test ";
+    const button = document.createElement("button"); button.textContent = "Open order"; row.append(button); rows.append(row);
+  }
+}
+viewport.addEventListener("scroll", renderRows); renderRows();
+document.documentElement.dataset.fixtureReady = "true";
+</script></html>

@@ -58,6 +58,10 @@ export class ScreenCaptureManager {
     private capturedBytes: number;
     private readonly pendingChunkTasks: Set<Promise<void>>;
     private stopTimer: ReturnType<typeof setTimeout> | null;
+    private chunkQueue: Promise<void> = Promise.resolve();
+    private stopping: Promise<CaptureResult | CaptureError> | null = null;
+    private completed: CaptureResult | CaptureError | null = null;
+    private chunkError: string | null = null;
 
     constructor() {
         this.port = null;
@@ -78,10 +82,6 @@ export class ScreenCaptureManager {
 
     private async drawFrame(frame: FrameMessage): Promise<void> {
         if (!this.canvas || !this.ctx || !this.track) return;
-        // Drop intermediate frame under heavy load to prevent memory accumulation
-        if (this.pendingDrawCount > 3) return;
-
-        this.pendingDrawCount++;
         try {
             const bitmap = await createImageBitmap(base64ToBlob(frame.data, "image/jpeg"));
             this.ctx.drawImage(bitmap, 0, 0, this.canvas.width, this.canvas.height);
@@ -118,8 +118,8 @@ export class ScreenCaptureManager {
         return this.recorder !== null;
     }
 
-    public async start(onChunk?: (bytes: Uint8Array) => void): Promise<CaptureAck | CaptureError> {
-        if (this.recorder) {
+    public async start(onChunk?: (bytes: Uint8Array) => void, tabId?: number): Promise<CaptureAck | CaptureError> {
+        if (this.recorder || this.stopping) {
             return {
                 error: "Already recording",
                 hint: "Call `browsercontrol capture stop` first, or ignore if you meant to keep recording — this call was a no-op.",
@@ -157,28 +157,36 @@ export class ScreenCaptureManager {
         this.pendingChunkTasks.clear();
         this.stopTimer = null;
         this.frameQueue = Promise.resolve();
+        this.chunkQueue = Promise.resolve();
+        this.completed = null;
+        this.chunkError = null;
 
         const mimeType = pickSupportedMimeType();
         const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
         recorder.ondataavailable = (e) => {
             const callback = this.onChunk;
-            const task = (async () => {
-                if (e.data.size <= 0) return;
-                if (this.capturedBytes + e.data.size > MAX_CAPTURE_BYTES) {
-                    console.warn("[browsercontrol] Capture byte limit reached; stopping recording");
-                    setTimeout(() => void this.stop(), 0);
-                    return;
-                }
-                this.capturedBytes += e.data.size;
-                if (callback) {
-                    const buf = await e.data.arrayBuffer();
-                    callback(new Uint8Array(buf));
-                    return;
-                }
-                this.chunks.push(e.data);
-            })().catch((error: unknown) => {
-                console.error("[browsercontrol] Capture chunk processing failed:", errorMessage(error));
-            });
+            const task = this.chunkQueue
+                .then(async () => {
+                    if (e.data.size <= 0) return;
+                    if (this.capturedBytes + e.data.size > MAX_CAPTURE_BYTES) {
+                        this.chunkError = "Capture byte limit reached; file may be incomplete";
+                        console.warn("[browsercontrol] Capture byte limit reached; stopping recording");
+                        setTimeout(() => void this.stop(), 0);
+                        return;
+                    }
+                    this.capturedBytes += e.data.size;
+                    if (callback) {
+                        const buf = await e.data.arrayBuffer();
+                        callback(new Uint8Array(buf));
+                        return;
+                    }
+                    this.chunks.push(e.data);
+                })
+                .catch((error: unknown) => {
+                    this.chunkError = errorMessage(error);
+                    console.error("[browsercontrol] Capture chunk processing failed:", errorMessage(error));
+                });
+            this.chunkQueue = task;
             this.pendingChunkTasks.add(task);
             void task.finally(() => this.pendingChunkTasks.delete(task));
         };
@@ -187,9 +195,12 @@ export class ScreenCaptureManager {
         const ack = await new Promise<PortAck>((resolve) => {
             const p = chrome.runtime.connect({ name: "capture-frames" });
             this.port = p;
+            p.postMessage({ tabId });
             let settled = false;
             p.onMessage.addListener((msg: FrameMessage | PortAck) => {
                 if ("data" in msg) {
+                    if (this.pendingDrawCount >= 3 || this.stopping) return;
+                    this.pendingDrawCount++;
                     this.frameQueue = this.frameQueue
                         .then(() => this.drawFrame(msg))
                         .catch((e) => {
@@ -238,6 +249,18 @@ export class ScreenCaptureManager {
     }
 
     public async stop(): Promise<CaptureResult | CaptureError> {
+        if (this.stopping) return this.stopping;
+        if (this.completed) return this.completed;
+        this.stopping = this.finish();
+        try {
+            this.completed = await this.stopping;
+            return this.completed;
+        } finally {
+            this.stopping = null;
+        }
+    }
+
+    private async finish(): Promise<CaptureResult | CaptureError> {
         if (!this.recorder || !this.port) {
             return {
                 error: "Not recording",
@@ -249,26 +272,25 @@ export class ScreenCaptureManager {
         const finishedTrack = this.track;
         const wasStreamed = this.onChunk !== null;
         const durationMs = Date.now() - this.recordingStartedAt;
-        const frames = this.frameCount;
-        const capturedBytes = this.capturedBytes;
         if (this.stopTimer !== null) {
             clearTimeout(this.stopTimer);
             this.stopTimer = null;
         }
 
-        this.recorder = null;
         this.port = null;
-        this.track = null;
-        this.onChunk = null;
 
         finishedPort.disconnect();
         await this.frameQueue;
+        const frames = this.frameCount;
+        await this.waitForRecorderStop(finishedRecorder);
+        await this.waitForPendingChunks();
+        const capturedBytes = this.capturedBytes;
+        const chunkError = this.chunkError;
 
         if (wasStreamed) {
-            await this.waitForRecorderStop(finishedRecorder);
-            await this.waitForPendingChunks();
             finishedTrack?.stop();
             this.dispose();
+            if (chunkError) return { error: "Capture transport failed", hint: chunkError };
             return {
                 success: true,
                 format: "webm",
@@ -280,15 +302,7 @@ export class ScreenCaptureManager {
         }
 
         const mimeType = finishedRecorder.mimeType || "video/webm";
-        const blob = await new Promise<Blob>((resolve) => {
-            if (finishedRecorder.state === "inactive") {
-                resolve(new Blob(this.chunks, { type: mimeType }));
-                return;
-            }
-            finishedRecorder.onstop = () => resolve(new Blob(this.chunks, { type: mimeType }));
-            finishedRecorder.stop();
-        });
-        await this.waitForPendingChunks();
+        const blob = new Blob(this.chunks, { type: mimeType });
         finishedTrack?.stop();
 
         this.dispose();
@@ -328,8 +342,11 @@ export class ScreenCaptureManager {
 
 export const captureManager = new ScreenCaptureManager();
 
-export function startCapture(onChunk?: (bytes: Uint8Array) => void): Promise<CaptureAck | CaptureError> {
-    return captureManager.start(onChunk);
+export function startCapture(
+    onChunk?: (bytes: Uint8Array) => void,
+    tabId?: number,
+): Promise<CaptureAck | CaptureError> {
+    return captureManager.start(onChunk, tabId);
 }
 
 export function stopCapture(): Promise<CaptureResult | CaptureError> {

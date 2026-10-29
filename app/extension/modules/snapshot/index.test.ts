@@ -7,6 +7,16 @@ function axNode(input: Partial<Protocol.Accessibility.AXNode> & { nodeId: string
 }
 
 describe("snapshot transformations", () => {
+    test("normalizes multiline semantic names before bounding them", () => {
+        const node = axNode({
+            nodeId: "button",
+            role: { type: "role", value: "button" },
+            name: { type: "computedString", value: "  Sign\n\t in    now  " },
+            backendDOMNodeId: 7,
+        });
+        expect(buildSemanticCandidates([node])[0]?.name).toBe("Sign in now");
+    });
+
     test("keeps actionable nodes and removes redundant text children", () => {
         const nodes = [
             axNode({

@@ -5,27 +5,19 @@ import (
 	"os"
 )
 
+// Release builds override this with -ldflags "-X main.version=vX.Y.Z".
+var version = "dev"
+
 func main() {
-	args := os.Args[1:]
-	if len(args) > 0 {
-		switch args[0] {
-		case "cdp":
-			runCDP(args[1:])
-			return
-		case "extension", "ext":
-			// Kept so scripts written against the old `browsercontrol extension <cmd>` form keep working.
-			args = args[1:]
-		}
-	}
-	os.Exit(runExtension(args))
+	os.Exit(runCLI(os.Args[1:]))
 }
 
-const usage = `browsercontrol - drive the user's real Chrome through the BrowserControl extension
+const usage = `browsercontrol extension - legacy extension adapter (track X)
 
-Usage: browsercontrol <command> [args] [--flags]      (bridge auto-starts; no setup call needed)
+Usage: browsercontrol extension <command> [args] [--flags]
 
 Look (cheapest first):
-  snapshot [--grep txt] [--region css]   interactive nodes: "[id] role "name""
+  snapshot [--grep txt] [--region css]   interactive nodes: "[id] role "name"" (default 80; --limit 0 = all)
   snapshot --semantic [--diff]           document-scoped refs (e12); --diff = changes since last
   find <text|css|xpath> [--limit n]      matching nodes with ids + context
   read [--max-chars 12000]               article text
@@ -47,16 +39,17 @@ Tabs/network/dev:
   tabs [list [--all]|switch <id>|close <id>|new <url>]
   net [list [--filter s] [--limit n]|detail <id> [--body]|clear|har]
   dev layout|memory|process|emulate|sandbox|har [...]
-  flow run|explore <file.json|saved-id> | flow record|stop|status
+  flow run|explore|validate <file.json|saved-id> | flow record|stop|status
   search <query>      crawl <url...|@urls.txt>      capture start|stop      evidence
 Bridge:
   status [--wait 20s]    serve    token    exec <raw_cmd> [key=value|--k v|@payload.json]
   cdp <command>          direct CDP mode, bypasses the extension (debug only)
 
 Flags: --json (compact JSON) --tab <id> --timeout 30s --token-file <path>
-       --port 8765 --no-autostart
+       --port 8765 --session-id <id>
 Exit: 0 ok, 1 command/extension error (message + hint on stderr), 2 usage error.
 Run 'browsercontrol help <command>' for details.
+Run 'browsercontrol help agent' for the short observe/act/verify/recover loop.
 `
 
 func printUsage() { fmt.Print(usage) }

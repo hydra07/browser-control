@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Sequence ground truth fixture</title>
+<main id="fixture-root">
+<header id="header"><h1 data-testid="screen-title">Customer orders</h1><button data-testid="navigate" data-action="navigate">Monthly report</button></header>
+<section id="customer" data-test="customer"><h2>Customer editor</h2><label>Customer name <input data-testid="customer-name" value="Mai Nguyen"></label><button data-testid="save" data-action="save">Save customer</button></section>
+<p role="status" data-testid="status">Draft</p>
+<section data-test="editor"><button data-testid="open-editor" data-action="open-editor">Edit order</button><dialog data-testid="dialog" aria-label="Edit order"><label>Notes <textarea data-testid="notes">Leave at reception</textarea></label><button data-testid="save-order" data-action="save-order">Save order</button></dialog></section>
+<section data-test="replacement"><button data-testid="replace" data-action="replace">Replace control</button><button data-testid="replace-target" data-action="target-action">Approve order</button></section>
+<section data-test="orders"><h2>Orders</h2><table data-testid="orders-table" aria-label="Orders" aria-rowcount="2"><thead><tr><th>Order</th><th>Customer</th><th>Status</th><th>Action</th></tr></thead><tbody data-testid="rows" id="rows"></tbody></table></section>
+<nav><button data-testid="insert" data-action="insert">Insert sibling</button><button data-testid="reorder" data-action="reorder">Reorder rows</button><button data-testid="next-window" data-action="next-window">Next rows</button><button data-testid="previous-window" data-action="previous-window">Previous rows</button></nav>
+</main>
+<script>
+const fixtureDocument = crypto.randomUUID();
+const fixturePhysical = new WeakMap();
+let fixtureNextPhysical = 0;
+let fixtureRevision = 0;
+let fixtureGap = false;
+let fixtureObserver = null;
+let fixtureScope = "fixture-root";
+const fixtureHistory = [];
+
+function fixtureStatus(text) {
+  document.querySelector('[data-testid="status"]').textContent = text;
+}
+
+function fixtureRow(slot, order, name, status) {
+  const row = document.createElement("tr");
+  row.dataset.testid = "row-slot-" + slot;
+  row.innerHTML = '<td></td><td></td><td data-testid="row-slot-' + slot + '-status"></td><td><button data-testid="row-slot-' + slot + '-action">Open</button></td>';
+  fixtureUpdateRow(row, order, name, status);
+  return row;
+}
+
+function fixtureUpdateRow(row, order, name, status) {
+  row.dataset.test = order;
+  row.cells[0].textContent = order;
+  row.cells[1].textContent = name;
+  row.cells[2].textContent = status;
+}
+
+function fixtureRecord(records) {
+  if (records.length === 0) return;
+  fixtureRevision++;
+  fixtureHistory.push(document.querySelector('[data-testid="status"]').textContent);
+  if (fixtureHistory.length > 32) fixtureHistory.shift();
+}
+
+function fixtureObserve(scope = "fixture-root") {
+  if (fixtureObserver) fixtureObserver.disconnect();
+  fixtureScope = scope;
+  fixtureObserver = new MutationObserver(fixtureRecord);
+  fixtureObserver.observe(document.getElementById(scope), {subtree:true, childList:true, characterData:true, attributes:true});
+}
+
+function fixtureStopObserver() {
+  if (fixtureObserver) {
+    fixtureRecord(fixtureObserver.takeRecords());
+    fixtureObserver.disconnect();
+    fixtureObserver = null;
+  }
+  fixtureGap = true;
+}
+
+function fixtureState() {
+  if (fixtureObserver) fixtureRecord(fixtureObserver.takeRecords());
+  const nodes = Array.from(document.querySelectorAll("[data-testid]")).map((node) => {
+    if (!fixturePhysical.has(node)) fixturePhysical.set(node, "node-" + (++fixtureNextPhysical));
+    return {key:node.dataset.testid, physical:fixturePhysical.get(node), anchor:node.closest("[data-test]")?.dataset.test ?? "page"};
+  });
+  return {document:fixtureDocument, nodes, coverage:{scopes:[fixtureScope], unobservable:["programmatic_form_values", "offscreen_virtualized_rows"], complete:fixtureScope === "fixture-root", observerActive:fixtureObserver !== null, gap:fixtureGap, revision:fixtureRevision, oldestRevision:Math.max(0,fixtureRevision-32), history:fixtureHistory.slice()}};
+}
+
+function fixtureMode(mode) {
+  if (mode === "virtual") document.querySelector("table").setAttribute("aria-rowcount", "1000");
+  if (mode === "header") fixtureObserve("header");
+}
+
+function fixtureAction(action) {
+  const rows = document.getElementById("rows");
+  if (action === "save") fixtureStatus("Saved " + document.querySelector('[data-testid="customer-name"]').value);
+  if (action === "open-editor") {
+    document.querySelector("dialog").showModal();
+    fixtureStatus("Editing order");
+  }
+  if (action === "save-order") {
+    document.querySelector("dialog").close();
+    fixtureStatus("Order saved");
+  }
+  if (action === "replace") {
+    const node = document.querySelector('[data-testid="replace-target"]');
+    node.replaceWith(node.cloneNode(true));
+  }
+  if (action === "target-action") fixtureStatus("Replacement clicked");
+  if (action === "insert" && !document.querySelector('[data-testid="extra"]')) {
+    const button = document.createElement("button");
+    button.dataset.testid = "extra";
+    button.textContent = "Extra action";
+    document.getElementById("customer").insertBefore(button, document.querySelector('[data-testid="save"]'));
+  }
+  if (action === "reorder") rows.append(rows.firstElementChild);
+  if (action === "next-window") {
+    fixtureUpdateRow(rows.children[0], "ORD-44", "Grace Hopper", "Queued");
+    fixtureUpdateRow(rows.children[1], "ORD-45", "Linh Tran", "Paid");
+  }
+  if (action === "previous-window") {
+    fixtureUpdateRow(rows.children[0], "ORD-42", "Mai Nguyen", "Pending");
+    fixtureUpdateRow(rows.children[1], "ORD-43", "Ada Lovelace", "Pending");
+  }
+  if (action === "table-update") {
+    fixtureUpdateRow(rows.children[0], "ORD-42", "Mai Nguyen", "Paid");
+    rows.children[1].remove();
+    rows.append(fixtureRow(2, "ORD-44", "Grace Hopper", "Queued"));
+  }
+  if (action === "navigate") location.href = "/sequence.html?screen=report";
+}
+
+function fixtureIdle(mode, signal) {
+  if (mode !== "warm" && mode !== "header") fixtureStopObserver();
+  fetch("/__sequence_arm?name=" + encodeURIComponent(signal), {method:"POST"}).then(() => setTimeout(() => {
+    fixtureStatus("Intermediate update");
+    setTimeout(() => {
+      if (mode === "table") fixtureAction("table-update");
+      fixtureStatus("Updated while idle");
+      setTimeout(() => fetch("/__sequence_signal?name=" + encodeURIComponent(signal), {method:"POST"}), 0);
+    }, 20);
+  }, 20));
+}
+
+const fixtureRows = document.getElementById("rows");
+fixtureRows.append(fixtureRow(0, "ORD-42", "Mai Nguyen", "Pending"), fixtureRow(1, "ORD-43", "Ada Lovelace", "Pending"));
+document.getElementById("fixture-root").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-action]");
+  if (button) fixtureAction(button.dataset.action);
+});
+document.querySelector('[data-testid="customer-name"]').addEventListener("input", (event) => fixtureStatus("Editing " + event.target.value));
+if (new URLSearchParams(location.search).get("screen") === "report") {
+  document.getElementById("customer").remove();
+  document.querySelector('[data-testid="screen-title"]').textContent = "Monthly report";
+  fixtureStatus("Report ready");
+}
+fixtureObserve();
+document.documentElement.dataset.fixtureReady = "true";
+</script></html>

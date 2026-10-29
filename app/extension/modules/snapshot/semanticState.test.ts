@@ -27,6 +27,28 @@ function scopeWith(scope: DocumentScope, patch: Partial<DocumentScope>): Documen
 }
 
 describe("SemanticState", () => {
+    test("resolves raw structural parent keys to parent refs", () => {
+        const state = createState();
+        const update = state.update({}, [candidate(1, "form"), candidate(2, "form/save", "form")]);
+        expect(update.snapshot.nodes[1]?.parentRef).toBe(update.snapshot.nodes[0]?.ref);
+    });
+    test("never swaps refs when identically named siblings reorder", () => {
+        const state = createState();
+        state.update({}, [candidate(101, "form/button:Save:0", "form"), candidate(102, "form/button:Save:1", "form")]);
+        const update = state.update({}, [
+            candidate(102, "form/button:Save:0", "form"),
+            candidate(101, "form/button:Save:1", "form"),
+        ]);
+        expect(update.snapshot.nodes.map((node) => node.ref)).toEqual(["e2", "e1"]);
+        expect(state.resolve("e1", update.snapshot.scope)?.backendNodeId).toBe(101);
+    });
+    test("bounds stale ref retention over thousands of updates", () => {
+        const state = createState({ maxNodes: 2 });
+        const first = state.update({}, [candidate(1, "one")]);
+        for (let i = 0; i < 1000; i++) state.update({}, [{ ...candidate(i + 2, String(i)), name: String(i) }]);
+        expect(state.getRef(first.snapshot.nodes[0]?.ref ?? "")).toBeNull();
+        expect((state as unknown as { entries: Map<string, unknown> }).entries.size).toBeLessThanOrEqual(4);
+    });
     test("preserves a ref when a same-document rerender changes its backend node id", () => {
         const state = createState();
         const first = state.update({}, [candidate(101, "form/save")]);

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -8,42 +9,80 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
 	extbridge "github.com/hydra07/browsercontrol/cli/internal/extension"
+	sessionstore "github.com/hydra07/browsercontrol/cli/internal/session"
 )
 
 type session struct {
-	g      globalOpts
-	client *extbridge.Client
-	state  *cliState
+	g           globalOpts
+	client      *extbridge.Client
+	state       *cliState
+	sessionID   string
+	lock        *sessionstore.Lock
+	bridgeClose func() error
 }
 
 /** Small cross-invocation memory so agents can pass `e12` without repeating --document-id. */
 type cliState struct {
 	DocumentID string `json:"documentId,omitempty"`
-	path       string
+	TabID      int    `json:"tabId,omitempty"`
+	store      *sessionstore.Store
+	sessionID  string
+	metadata   sessionstore.State
 }
 
-func newSession(g globalOpts) *session {
-	st := &cliState{path: filepath.Join(extbridge.HomeDir(), "cli-state.json")}
-	if data, err := os.ReadFile(st.path); err == nil {
-		_ = json.Unmarshal(data, st)
+func newSession(g globalOpts) (*session, error) {
+	id := g.sessionID
+	if id == "" {
+		id = os.Getenv("BROWSERCONTROL_SESSION_ID")
 	}
-	return &session{g: g, state: st}
-}
-
-func (st *cliState) save() {
-	data, err := json.Marshal(st)
+	if id == "" {
+		id = "go-cli"
+	}
+	store, err := sessionstore.NewStore(extbridge.HomeDir(), id)
 	if err != nil {
-		return
+		return nil, usagef("invalid session: %v", err)
 	}
-	_ = os.MkdirAll(filepath.Dir(st.path), 0o700)
-	_ = os.WriteFile(st.path, data, 0o600)
+	ctx, cancel := context.WithTimeout(context.Background(), extbridge.NormalizeConfig(g.cfg).Timeout)
+	lock, err := store.Acquire(ctx)
+	cancel()
+	if err != nil {
+		return nil, fmt.Errorf("acquire session %q: %w", id, err)
+	}
+	saved, err := store.Load()
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		_ = lock.Close()
+		return nil, err
+	}
+	// The legacy global file has no owner, so importing it could target another agent's document.
+	st := &cliState{store: store, sessionID: id, DocumentID: saved.LastTarget.DocumentID, TabID: saved.LastTarget.TabID, metadata: saved}
+	return &session{g: g, state: st, sessionID: id, lock: lock}, nil
+}
+
+func (s *session) close() error {
+	var err error
+	if s.bridgeClose != nil {
+		err = s.bridgeClose()
+	}
+	if s.lock != nil {
+		return errors.Join(err, s.lock.Close())
+	}
+	return err
+}
+
+func (st *cliState) save() error {
+	if st.store == nil {
+		return errors.New("session state store is not configured")
+	}
+	state := st.metadata
+	state.SchemaVersion, state.ID = sessionstore.SchemaVersion, st.sessionID
+	state.LastTarget = sessionstore.Target{DocumentID: st.DocumentID, TabID: st.TabID}
+	return st.store.Save(state)
 }
 
 func (s *session) bridge() (*extbridge.Client, error) {
@@ -54,37 +93,64 @@ func (s *session) bridge() (*extbridge.Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	if s.g.commandBridge && !s.g.noAutostart {
+		if err := s.ensureCommandBridge(client); err != nil {
+			return nil, err
+		}
+	}
 	s.client = client
 	return client, nil
 }
 
 // call runs one extension command and returns its result object, turning an in-band {error, hint} into a *cmdError.
 func (s *session) call(cmd string, payload map[string]any) (map[string]any, error) {
-	if s.g.tabID != nil {
+	if s.g.tabID != nil && payload["newTab"] != true {
 		if _, ok := payload["tabId"]; !ok {
 			payload["tabId"] = s.g.tabID
 		}
+	}
+	if s.sessionID != "" {
+		if id := payload["sessionId"]; id != nil && id != s.sessionID {
+			return nil, usagef("payload sessionId differs from the selected session; select --session-id on the command instead")
+		}
+		payload["sessionId"] = s.sessionID
 	}
 	raw, err := s.execute(cmd, payload)
 	if err != nil {
 		return nil, err
 	}
 	var reply struct {
-		Result json.RawMessage `json:"result"`
+		Result  json.RawMessage `json:"result"`
+		Error   string          `json:"error"`
+		Hint    string          `json:"hint"`
+		Success *bool           `json:"success"`
 	}
 	if err := json.Unmarshal(raw, &reply); err != nil {
-		return nil, fmt.Errorf("bridge sent invalid JSON: %w", err)
+		return nil, unknownOutcome("bridge sent invalid JSON")
+	}
+	if reply.Error != "" || reply.Success != nil && !*reply.Success {
+		return nil, &cmdError{Message: firstNonEmptyString(reply.Error, "bridge command failed"), Hint: cliHint(reply.Hint)}
 	}
 	var result map[string]any
-	if err := json.Unmarshal(reply.Result, &result); err != nil || result == nil {
-		// Non-object results (rare) are wrapped so every caller sees the same shape.
-		var value any
-		_ = json.Unmarshal(reply.Result, &value)
-		return map[string]any{"value": value}, nil
+	if err := json.Unmarshal(reply.Result, &result); err != nil || len(result) == 0 {
+		return nil, unknownOutcome("bridge reply has no valid result object")
 	}
-	if msg, ok := result["error"].(string); ok && msg != "" {
+	if value, exists := result["error"]; exists && value != nil {
+		msg, ok := value.(string)
+		if !ok || msg == "" {
+			return nil, unknownOutcome("extension reply has an invalid error field")
+		}
 		hint, _ := result["hint"].(string)
-		return nil, &cmdError{Message: msg, Hint: cliHint(hint)}
+		return result, &cmdError{Message: msg, Hint: cliHint(hint), Result: result}
+	}
+	if value, exists := result["success"]; exists {
+		if _, valid := value.(bool); !valid {
+			return nil, unknownOutcome("extension reply has an invalid success field")
+		}
+	}
+	if result["success"] == false {
+		msg := firstNonEmptyString(str(result["message"]), str(result["reason"]), "extension command failed")
+		return result, &cmdError{Message: msg, Hint: cliHint(str(result["hint"])), Result: result}
 	}
 	return result, nil
 }
@@ -98,13 +164,35 @@ func (s *session) execute(cmd string, payload map[string]any) ([]byte, error) {
 	if err == nil {
 		return data, nil
 	}
+	var be *extbridge.BridgeError
+	var op *net.OpError
+	safeToRetry := errors.As(err, &be) && be.NotConnected() || errors.As(err, &op) && op.Op == "dial"
+	if !safeToRetry {
+		return nil, executionError(err)
+	}
 	if err := s.recover(err); err != nil {
 		return nil, err
 	}
-	return client.Execute(cmd, payload)
+	data, err = client.Execute(cmd, payload)
+	return data, executionError(err)
 }
 
-/** Handles the two recoverable startup states — bridge not running, extension not yet connected — then lets the caller retry once. */
+func executionError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var be *extbridge.BridgeError
+	if errors.As(err, &be) && (be.Status < 500 || be.NotConnected()) {
+		return err
+	}
+	return unknownOutcome(err.Error())
+}
+
+func unknownOutcome(message string) *cmdError {
+	return &cmdError{Message: "outcome unknown: " + message, Hint: "The request may have executed. Run 'browsercontrol snapshot --semantic --diff' or 'browsercontrol evidence' before deciding whether to retry; no automatic replay was performed."}
+}
+
+/** Only an explicitly running bridge with no connected extension can be waited for safely. */
 func (s *session) recover(err error) error {
 	var be *extbridge.BridgeError
 	switch {
@@ -112,13 +200,8 @@ func (s *session) recover(err error) error {
 		return s.waitForExtension()
 	case errors.As(err, &be):
 		return err
-	case s.g.noAutostart || !s.isLocalBridge():
-		return notRunningError(err)
 	}
-	if err := s.startBridge(); err != nil {
-		return err
-	}
-	return s.waitForExtension()
+	return notRunningError(err)
 }
 
 func (s *session) statusMap() (map[string]any, error) {
@@ -150,7 +233,7 @@ func (s *session) waitForExtension() error {
 			}
 			return &cmdError{
 				Message: fmt.Sprintf("extension not connected to the bridge after %s", s.g.wait),
-				Hint:    "Open Chrome with the BrowserControl extension loaded, then pair it in the side panel's Settings with the token from 'browsercontrol token'. MV3 reconnect backoff can take up to 15s; raise --wait if needed.",
+				Hint:    "Load/reload BrowserControl in chrome://extensions and configure its local token through the service worker console as described in docs/LEGACY_EXTENSION.md. Use 'browsercontrol extension token' to obtain it. MV3 reconnect backoff can take up to 15s; raise --wait if needed.",
 			}
 		}
 		time.Sleep(300 * time.Millisecond)
@@ -171,47 +254,10 @@ func (s *session) isLocalBridge() bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-/** Spawns `browsercontrol serve` detached, logging to <home>/bridge.log, and waits for it to answer. */
-func (s *session) startBridge() error {
-	client, err := s.bridge()
-	if err != nil {
-		return err
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	cfg := extbridge.NormalizeConfig(s.g.cfg)
-	logPath := filepath.Join(extbridge.HomeDir(), "bridge.log")
-	_ = os.MkdirAll(filepath.Dir(logPath), 0o700)
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
-		return err
-	}
-	defer logFile.Close()
-	cmd := exec.Command(exe, "serve", "--host", cfg.Host, "--port", fmt.Sprint(cfg.Port))
-	// Hand the already-resolved token over so the child can't pick a different one from its own lookup.
-	cmd.Env = append(os.Environ(), "BROWSERCONTROL_AUTH_TOKEN="+client.Token())
-	cmd.Stdout, cmd.Stderr = logFile, logFile
-	detach(cmd)
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("auto-start bridge: %w", err)
-	}
-	_ = cmd.Process.Release()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := s.statusMap(); err == nil {
-			return nil
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return &cmdError{Message: "auto-started bridge did not come up", Hint: "See " + logPath + " (port busy? another bridge with a different token?)"}
-}
-
 func notRunningError(err error) error {
 	return &cmdError{
 		Message: fmt.Sprintf("bridge not reachable: %v", err),
-		Hint:    "Run 'browsercontrol serve' (or drop --no-autostart so commands start it automatically).",
+		Hint:    "Legacy adapter only: run 'browsercontrol extension serve' explicitly in a separate foreground terminal, then retry; direct CDP never uses this bridge.",
 	}
 }
 
@@ -253,15 +299,25 @@ func extractBinary(result map[string]any, dir, prefix, explicitPath string) (str
 		path := explicitPath
 		if path == "" || saved != "" {
 			ext := fileExt(result, data)
-			path = filepath.Join(dir, fmt.Sprintf("%s-%s%s", prefix, time.Now().Format("20060102-150405.000"), ext))
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				return "", err
+			}
+			file, err := os.CreateTemp(dir, prefix+"-*"+ext)
+			if err != nil {
+				return "", err
+			}
+			path = file.Name()
+			if err := file.Close(); err != nil {
+				return "", err
+			}
 		}
 		if abs, err := filepath.Abs(path); err == nil {
 			path = abs
 		}
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			return "", err
 		}
-		if err := os.WriteFile(path, data, 0o644); err != nil {
+		if err := os.WriteFile(path, data, 0o600); err != nil {
 			return "", err
 		}
 		result[strings.TrimSuffix(key, "Base64")+"Path"] = path
@@ -291,7 +347,7 @@ func fileExt(result map[string]any, data []byte) string {
 
 func artifactDir() string { return filepath.Join(extbridge.HomeDir(), "artifacts") }
 
-const pairingHint = "Reload the extension in chrome://extensions: current builds auto-pair with this bridge on connect. Older builds need the output of 'browsercontrol token' pasted into side panel → Settings → Bridge pairing token."
+const pairingHint = "Reload BrowserControl in chrome://extensions and configure its local pairing token through the service worker console as described in docs/LEGACY_EXTENSION.md. Use 'browsercontrol extension token' to obtain it; automatic token disclosure is disabled by default."
 
 /** Turns the bridge's lastRejection into an actionable message; "" when the extension simply hasn't dialled in. */
 func unpairedReason(status map[string]any) string {

@@ -1,0 +1,404 @@
+{
+  "arch": "amd64",
+  "chrome": "Chrome/155.0.8059.79",
+  "go": "go1.26.3",
+  "limitations": [
+    "startup includes Go test harness",
+    "tiny sentinel handshake, not production pagecore",
+    "no bridge comparison or user-profile consent",
+    "observed latency, not a performance budget"
+  ],
+  "logicalCPUs": 12,
+  "os": "windows",
+  "samples": [
+    {
+      "mode": "cold-discovery",
+      "milliseconds": {
+        "attach": 0,
+        "endpointRead": 0,
+        "processStartupAndTestHarness": 481.4889,
+        "processToFirstCDPResponse": 483.6514,
+        "processToHandshake": 487.4878,
+        "sentinelHandshake": 3.3116,
+        "targetDiscovery": 0.5248,
+        "websocketConnect": 2.1625
+      },
+      "cdpCalls": 6,
+      "heavyDomainsEnabled": 0
+    },
+    {
+      "mode": "warm-target",
+      "milliseconds": {
+        "attach": 0.528,
+        "endpointRead": 0.5204,
+        "processStartupAndTestHarness": 9.599,
+        "processToFirstCDPResponse": 11.6753,
+        "processToHandshake": 13.25,
+        "sentinelHandshake": 1.0467,
+        "targetDiscovery": 0,
+        "websocketConnect": 1.5559
+      },
+      "cdpCalls": 5,
+      "heavyDomainsEnabled": 0
+    },
+    {
+      "mode": "cold-discovery",
+      "milliseconds": {
+        "attach": 0.7946,
+        "endpointRead": 0,
+        "processStartupAndTestHarness": 9.6343,
+        "processToFirstCDPResponse": 11.168,
+        "processToHandshake": 14.0723,
+        "sentinelHandshake": 1.5879,
+        "targetDiscovery": 0.5218,
+        "websocketConnect": 1.5337
+      },
+      "cdpCalls": 6,
+      "heavyDomainsEnabled": 0
+    },
+    {
+      "mode": "warm-target",
+      "milliseconds": {
+        "attach": 0,
+        "endpointRead": 0,
+        "processStartupAndTestHarness": 9.4944,
+        "processToFirstCDPResponse": 11.5433,
+        "processToHandshake": 13.1053,
+        "sentinelHandshake": 1.562,
+        "targetDiscovery": 0,
+        "websocketConnect": 1.5363
+      },
+      "cdpCalls": 5,
+      "heavyDomainsEnabled": 0
+    },
+    {
+      "mode": "cold-discovery",
+      "milliseconds": {
+        "attach": 0.5142,
+        "endpointRead": 0,
+        "processStartupAndTestHarness": 10.6901,
+        "processToFirstCDPResponse": 12.2298,
+        "processToHandshake": 13.7906,
+        "sentinelHandshake": 1.0466,
+        "targetDiscovery": 0,
+        "websocketConnect": 1.025
+      },
+      "cdpCalls": 6,
+      "heavyDomainsEnabled": 0
+    },
+    {
+      "mode": "warm-target",
+      "milliseconds": {
+        "attach": 0.5086,
+        "endpointRead": 0,
+        "processStartupAndTestHarness": 11.5874,
+        "processToFirstCDPResponse": 13.3132,
+        "processToHandshake": 14.8714,
+        "sentinelHandshake": 1.0496,
+        "targetDiscovery": 0,
+        "websocketConnect": 1.7258
+      },
+      "cdpCalls": 5,
+      "heavyDomainsEnabled": 0
+    },
+    {
+      "mode": "cold-discovery",
+      "milliseconds": {
+        "attach": 0.5031,
+        "endpointRead": 0.5147,
+        "processStartupAndTestHarness": 9.9203,
+        "processToFirstCDPResponse": 11.9791,
+        "processToHandshake": 14.6915,
+        "sentinelHandshake": 1.646,
+        "targetDiscovery": 0.5633,
+        "websocketConnect": 1.5441
+      },
+      "cdpCalls": 6,
+      "heavyDomainsEnabled": 0
+    },
+    {
+      "mode": "warm-target",
+      "milliseconds": {
+        "attach": 0.5172,
+        "endpointRead": 0.6411,
+        "processStartupAndTestHarness": 9.4758,
+        "processToFirstCDPResponse": 12.1835,
+        "processToHandshake": 14.2537,
+        "sentinelHandshake": 1.553,
+        "targetDiscovery": 0,
+        "websocketConnect": 1.5412
+      },
+      "cdpCalls": 5,
+      "heavyDomainsEnabled": 0
+    },
+    {
+      "mode": "cold-discovery",
+      "milliseconds": {
+        "attach": 0.5131,
+        "endpointRead": 0,
+        "processStartupAndTestHarness": 9.0142,
+        "processToFirstCDPResponse": 11.0846,
+        "processToHandshake": 12.6266,
+        "sentinelHandshake": 1.0289,
+        "targetDiscovery": 0,
+        "websocketConnect": 1.5511
+      },
+      "cdpCalls": 6,
+      "heavyDomainsEnabled": 0
+    },
+    {
+      "mode": "warm-target",
+      "milliseconds": {
+        "attach": 0.518,
+        "endpointRead": 0,
+        "processStartupAndTestHarness": 8.4092,
+        "processToFirstCDPResponse": 10.4592,
+        "processToHandshake": 12.5268,
+        "sentinelHandshake": 1.5496,
+        "targetDiscovery": 0,
+        "websocketConnect": 2.05
+      },
+      "cdpCalls": 5,
+      "heavyDomainsEnabled": 0
+    },
+    {
+      "mode": "cold-discovery",
+      "milliseconds": {
+        "attach": 0.5136,
+        "endpointRead": 0.6279,
+        "processStartupAndTestHarness": 8.4983,
+        "processToFirstCDPResponse": 10.6833,
+        "processToHandshake": 12.2274,
+        "sentinelHandshake": 1.0305,
+        "targetDiscovery": 0,
+        "websocketConnect": 1.0382
+      },
+      "cdpCalls": 6,
+      "heavyDomainsEnabled": 0
+    },
+    {
+      "mode": "warm-target",
+      "milliseconds": {
+        "attach": 0.5185,
+        "endpointRead": 0.5116,
+        "processStartupAndTestHarness": 8.3408,
+        "processToFirstCDPResponse": 10.9663,
+        "processToHandshake": 13.8091,
+        "sentinelHandshake": 2.3243,
+        "targetDiscovery": 0,
+        "websocketConnect": 1.5913
+      },
+      "cdpCalls": 5,
+      "heavyDomainsEnabled": 0
+    },
+    {
+      "mode": "cold-discovery",
+      "milliseconds": {
+        "attach": 0.5177,
+        "endpointRead": 0,
+        "processStartupAndTestHarness": 9.1975,
+        "processToFirstCDPResponse": 11.2724,
+        "processToHandshake": 13.3411,
+        "sentinelHandshake": 1.036,
+        "targetDiscovery": 0.515,
+        "websocketConnect": 2.0749
+      },
+      "cdpCalls": 6,
+      "heavyDomainsEnabled": 0
+    },
+    {
+      "mode": "warm-target",
+      "milliseconds": {
+        "attach": 0.522,
+        "endpointRead": 0,
+        "processStartupAndTestHarness": 8.5934,
+        "processToFirstCDPResponse": 10.6507,
+        "processToHandshake": 11.8878,
+        "sentinelHandshake": 0.7151,
+        "targetDiscovery": 0,
+        "websocketConnect": 1.542
+      },
+      "cdpCalls": 5,
+      "heavyDomainsEnabled": 0
+    },
+    {
+      "mode": "cold-discovery",
+      "milliseconds": {
+        "attach": 0.5148,
+        "endpointRead": 0,
+        "processStartupAndTestHarness": 10.0659,
+        "processToFirstCDPResponse": 12.6341,
+        "processToHandshake": 14.3351,
+        "sentinelHandshake": 1.1862,
+        "targetDiscovery": 0,
+        "websocketConnect": 1.5394
+      },
+      "cdpCalls": 6,
+      "heavyDomainsEnabled": 0
+    },
+    {
+      "mode": "warm-target",
+      "milliseconds": {
+        "attach": 0.5152,
+        "endpointRead": 0.5272,
+        "processStartupAndTestHarness": 9.3172,
+        "processToFirstCDPResponse": 11.4061,
+        "processToHandshake": 12.9507,
+        "sentinelHandshake": 1.0294,
+        "targetDiscovery": 0,
+        "websocketConnect": 1.5617
+      },
+      "cdpCalls": 5,
+      "heavyDomainsEnabled": 0
+    },
+    {
+      "mode": "cold-discovery",
+      "milliseconds": {
+        "attach": 0.5198,
+        "endpointRead": 0.5122,
+        "processStartupAndTestHarness": 9.5441,
+        "processToFirstCDPResponse": 11.6092,
+        "processToHandshake": 13.6882,
+        "sentinelHandshake": 1.5592,
+        "targetDiscovery": 0,
+        "websocketConnect": 1.0232
+      },
+      "cdpCalls": 6,
+      "heavyDomainsEnabled": 0
+    },
+    {
+      "mode": "warm-target",
+      "milliseconds": {
+        "attach": 0.5251,
+        "endpointRead": 0,
+        "processStartupAndTestHarness": 9.9322,
+        "processToFirstCDPResponse": 11.4759,
+        "processToHandshake": 13.0303,
+        "sentinelHandshake": 1.0293,
+        "targetDiscovery": 0,
+        "websocketConnect": 1.5437
+      },
+      "cdpCalls": 5,
+      "heavyDomainsEnabled": 0
+    },
+    {
+      "mode": "cold-discovery",
+      "milliseconds": {
+        "attach": 0.5132,
+        "endpointRead": 0.5135,
+        "processStartupAndTestHarness": 9.5412,
+        "processToFirstCDPResponse": 11.5952,
+        "processToHandshake": 13.1285,
+        "sentinelHandshake": 1.0201,
+        "targetDiscovery": 0,
+        "websocketConnect": 1.028
+      },
+      "cdpCalls": 6,
+      "heavyDomainsEnabled": 0
+    },
+    {
+      "mode": "warm-target",
+      "milliseconds": {
+        "attach": 0,
+        "endpointRead": 0.152,
+        "processStartupAndTestHarness": 8.188,
+        "processToFirstCDPResponse": 10.4079,
+        "processToHandshake": 11.9677,
+        "sentinelHandshake": 1.5598,
+        "targetDiscovery": 0,
+        "websocketConnect": 1.033
+      },
+      "cdpCalls": 5,
+      "heavyDomainsEnabled": 0
+    }
+  ],
+  "schemaVersion": 1,
+  "scope": "fresh Go test-binary processes, owned headless agent profile, cached OS/browser; cold means no target cache, not OS cold boot",
+  "spike": "R0-S4",
+  "summary": {
+    "cold-discovery": {
+      "attach": {
+        "count": 10,
+        "p50": 0.5136,
+        "p95": 0.7946
+      },
+      "endpointRead": {
+        "count": 10,
+        "p50": 0,
+        "p95": 0.6279
+      },
+      "processStartupAndTestHarness": {
+        "count": 10,
+        "p50": 9.5441,
+        "p95": 481.4889
+      },
+      "processToFirstCDPResponse": {
+        "count": 10,
+        "p50": 11.5952,
+        "p95": 483.6514
+      },
+      "processToHandshake": {
+        "count": 10,
+        "p50": 13.6882,
+        "p95": 487.4878
+      },
+      "sentinelHandshake": {
+        "count": 10,
+        "p50": 1.0466,
+        "p95": 3.3116
+      },
+      "targetDiscovery": {
+        "count": 10,
+        "p50": 0,
+        "p95": 0.5633
+      },
+      "websocketConnect": {
+        "count": 10,
+        "p50": 1.5337,
+        "p95": 2.1625
+      }
+    },
+    "warm-target": {
+      "attach": {
+        "count": 10,
+        "p50": 0.5172,
+        "p95": 0.528
+      },
+      "endpointRead": {
+        "count": 10,
+        "p50": 0,
+        "p95": 0.6411
+      },
+      "processStartupAndTestHarness": {
+        "count": 10,
+        "p50": 9.3172,
+        "p95": 11.5874
+      },
+      "processToFirstCDPResponse": {
+        "count": 10,
+        "p50": 11.4061,
+        "p95": 13.3132
+      },
+      "processToHandshake": {
+        "count": 10,
+        "p50": 13.0303,
+        "p95": 14.8714
+      },
+      "sentinelHandshake": {
+        "count": 10,
+        "p50": 1.0496,
+        "p95": 2.3243
+      },
+      "targetDiscovery": {
+        "count": 10,
+        "p50": 0,
+        "p95": 0
+      },
+      "websocketConnect": {
+        "count": 10,
+        "p50": 1.5437,
+        "p95": 2.05
+      }
+    }
+  }
+}

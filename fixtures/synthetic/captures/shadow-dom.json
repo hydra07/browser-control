@@ -1,0 +1,461 @@
+{
+  "schemaVersion": 1,
+  "classification": "synthetic",
+  "sourceURL": "fixture:shadow-dom",
+  "observation": "snapshot_at",
+  "snapshot": {
+    "epoch": "fixture_HZ7YI5HR52EDPN4EKGJUVVLLTO",
+    "url": "http://fixture.test/shadow-dom.html",
+    "browser": "Chrome/155.0.8059.79",
+    "frames": [
+      {
+        "id": "749CBD00BC1ECB44335C61B8CB0125A1",
+        "url": "http://fixture.test/shadow-dom.html"
+      }
+    ],
+    "documents": [
+      {
+        "frameId": "749CBD00BC1ECB44335C61B8CB0125A1",
+        "url": "http://fixture.test/shadow-dom.html",
+        "title": "Shadow DOM fixture",
+        "nodes": [
+          {
+            "index": 0,
+            "parent": -1,
+            "handle": 2,
+            "type": 9,
+            "name": "#document"
+          },
+          {
+            "index": 1,
+            "parent": 0,
+            "handle": 3,
+            "type": 10,
+            "name": "html"
+          },
+          {
+            "index": 2,
+            "parent": 0,
+            "handle": 4,
+            "type": 1,
+            "name": "HTML"
+          },
+          {
+            "index": 3,
+            "parent": 2,
+            "handle": 5,
+            "type": 1,
+            "name": "HEAD"
+          },
+          {
+            "index": 4,
+            "parent": 3,
+            "handle": 6,
+            "type": 1,
+            "name": "META"
+          },
+          {
+            "index": 5,
+            "parent": 3,
+            "handle": 7,
+            "type": 1,
+            "name": "TITLE"
+          },
+          {
+            "index": 6,
+            "parent": 5,
+            "handle": 8,
+            "type": 3,
+            "name": "#text",
+            "text": "Shadow DOM fixture"
+          },
+          {
+            "index": 7,
+            "parent": 2,
+            "handle": 9,
+            "type": 1,
+            "name": "BODY"
+          },
+          {
+            "index": 8,
+            "parent": 7,
+            "handle": 10,
+            "type": 1,
+            "name": "H1"
+          },
+          {
+            "index": 9,
+            "parent": 8,
+            "handle": 11,
+            "type": 3,
+            "name": "#text",
+            "text": "Shadow controls"
+          },
+          {
+            "index": 10,
+            "parent": 7,
+            "handle": 12,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "id": "open-root"
+            }
+          },
+          {
+            "index": 11,
+            "parent": 10,
+            "handle": 13,
+            "type": 1,
+            "name": "SECTION",
+            "shadowRoot": "open",
+            "attributes": {
+              "aria-label": "Open settings"
+            }
+          },
+          {
+            "index": 12,
+            "parent": 11,
+            "handle": 14,
+            "type": 1,
+            "name": "LABEL",
+            "shadowRoot": "open"
+          },
+          {
+            "index": 13,
+            "parent": 12,
+            "handle": 15,
+            "type": 3,
+            "name": "#text",
+            "shadowRoot": "open",
+            "text": "Display name "
+          },
+          {
+            "index": 14,
+            "parent": 12,
+            "handle": 1,
+            "type": 1,
+            "name": "INPUT",
+            "shadowRoot": "open",
+            "value": "Mai Nguyen",
+            "attributes": {
+              "value": "Mai Nguyen"
+            }
+          },
+          {
+            "index": 15,
+            "parent": 11,
+            "handle": 16,
+            "type": 1,
+            "name": "BUTTON",
+            "shadowRoot": "open"
+          },
+          {
+            "index": 16,
+            "parent": 15,
+            "handle": 17,
+            "type": 3,
+            "name": "#text",
+            "shadowRoot": "open",
+            "text": "Save settings"
+          },
+          {
+            "index": 17,
+            "parent": 7,
+            "handle": 18,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "id": "closed-root"
+            }
+          },
+          {
+            "index": 18,
+            "parent": 17,
+            "handle": 19,
+            "type": 1,
+            "name": "SECTION",
+            "shadowRoot": "closed",
+            "attributes": {
+              "aria-label": "Closed settings"
+            }
+          },
+          {
+            "index": 19,
+            "parent": 18,
+            "handle": 20,
+            "type": 1,
+            "name": "BUTTON",
+            "shadowRoot": "closed"
+          },
+          {
+            "index": 20,
+            "parent": 19,
+            "handle": 21,
+            "type": 3,
+            "name": "#text",
+            "shadowRoot": "closed",
+            "text": "Advanced settings"
+          },
+          {
+            "index": 21,
+            "parent": 7,
+            "handle": 22,
+            "type": 3,
+            "name": "#text",
+            "text": "\n"
+          },
+          {
+            "index": 22,
+            "parent": 7,
+            "handle": 23,
+            "type": 1,
+            "name": "SCRIPT"
+          },
+          {
+            "index": 23,
+            "parent": 22,
+            "handle": 24,
+            "type": 3,
+            "name": "#text"
+          },
+          {
+            "index": 24,
+            "parent": 7,
+            "handle": 25,
+            "type": 3,
+            "name": "#text",
+            "text": "\n"
+          }
+        ]
+      }
+    ],
+    "accessibility": [
+      {
+        "frameId": "749CBD00BC1ECB44335C61B8CB0125A1",
+        "nodes": [
+          {
+            "id": "2",
+            "children": [
+              "4"
+            ],
+            "handle": 2,
+            "role": "RootWebArea",
+            "name": "Shadow DOM fixture"
+          },
+          {
+            "id": "4",
+            "parentId": "2",
+            "children": [
+              "9"
+            ],
+            "handle": 4,
+            "role": "none",
+            "ignored": true
+          },
+          {
+            "id": "9",
+            "parentId": "4",
+            "children": [
+              "10",
+              "12",
+              "18"
+            ],
+            "handle": 9,
+            "role": "none",
+            "ignored": true
+          },
+          {
+            "id": "10",
+            "parentId": "9",
+            "children": [
+              "11"
+            ],
+            "handle": 10,
+            "role": "heading",
+            "name": "Shadow controls"
+          },
+          {
+            "id": "12",
+            "parentId": "9",
+            "children": [
+              "13"
+            ],
+            "handle": 12,
+            "role": "generic"
+          },
+          {
+            "id": "18",
+            "parentId": "9",
+            "children": [
+              "19"
+            ],
+            "handle": 18,
+            "role": "generic"
+          },
+          {
+            "id": "11",
+            "parentId": "10",
+            "children": [
+              "-1000000002"
+            ],
+            "handle": 11,
+            "role": "StaticText",
+            "name": "Shadow controls"
+          },
+          {
+            "id": "13",
+            "parentId": "12",
+            "children": [
+              "14",
+              "16"
+            ],
+            "handle": 13,
+            "role": "region",
+            "name": "Open settings"
+          },
+          {
+            "id": "19",
+            "parentId": "18",
+            "children": [
+              "20"
+            ],
+            "handle": 19,
+            "role": "region",
+            "name": "Closed settings"
+          },
+          {
+            "id": "-1000000002",
+            "parentId": "11",
+            "role": "InlineTextBox",
+            "name": "Shadow controls"
+          },
+          {
+            "id": "14",
+            "parentId": "13",
+            "children": [
+              "15",
+              "1"
+            ],
+            "handle": 14,
+            "role": "LabelText"
+          },
+          {
+            "id": "16",
+            "parentId": "13",
+            "children": [
+              "17"
+            ],
+            "handle": 16,
+            "role": "button",
+            "name": "Save settings",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "20",
+            "parentId": "19",
+            "children": [
+              "21"
+            ],
+            "handle": 20,
+            "role": "button",
+            "name": "Advanced settings",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "15",
+            "parentId": "14",
+            "children": [
+              "-1000000003"
+            ],
+            "handle": 15,
+            "role": "StaticText",
+            "name": "Display name "
+          },
+          {
+            "id": "1",
+            "parentId": "14",
+            "children": [
+              "26"
+            ],
+            "handle": 1,
+            "role": "textbox",
+            "name": "Display name",
+            "value": "Mai Nguyen",
+            "states": {
+              "invalid": "false",
+              "required": "false"
+            }
+          },
+          {
+            "id": "17",
+            "parentId": "16",
+            "children": [
+              "-1000000005"
+            ],
+            "handle": 17,
+            "role": "StaticText",
+            "name": "Save settings"
+          },
+          {
+            "id": "21",
+            "parentId": "20",
+            "children": [
+              "-1000000006"
+            ],
+            "handle": 21,
+            "role": "StaticText",
+            "name": "Advanced settings"
+          },
+          {
+            "id": "-1000000003",
+            "parentId": "15",
+            "role": "InlineTextBox",
+            "name": "Display name "
+          },
+          {
+            "id": "26",
+            "parentId": "1",
+            "children": [
+              "27"
+            ],
+            "handle": 26,
+            "role": "generic"
+          },
+          {
+            "id": "-1000000005",
+            "parentId": "17",
+            "role": "InlineTextBox",
+            "name": "Save settings"
+          },
+          {
+            "id": "-1000000006",
+            "parentId": "21",
+            "role": "InlineTextBox",
+            "name": "Advanced settings"
+          },
+          {
+            "id": "27",
+            "parentId": "26",
+            "children": [
+              "-1000000004"
+            ],
+            "handle": 27,
+            "role": "StaticText",
+            "name": "Mai Nguyen"
+          },
+          {
+            "id": "-1000000004",
+            "parentId": "27",
+            "role": "InlineTextBox",
+            "name": "Mai Nguyen"
+          }
+        ]
+      }
+    ],
+    "truncated": false
+  }
+}

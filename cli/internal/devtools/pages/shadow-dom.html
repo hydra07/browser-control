@@ -1,0 +1,7 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Shadow DOM fixture</title><h1>Shadow controls</h1><div id="open-root"></div><div id="closed-root"></div>
+<script>
+document.getElementById("open-root").attachShadow({mode:"open"}).innerHTML = '<section aria-label="Open settings"><label>Display name <input value="Mai Nguyen"></label><button>Save settings</button></section>';
+document.getElementById("closed-root").attachShadow({mode:"closed"}).innerHTML = '<section aria-label="Closed settings"><button>Advanced settings</button></section>';
+document.documentElement.dataset.fixtureReady = "true";
+</script></html>

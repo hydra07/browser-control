@@ -10,6 +10,20 @@ import type { NetworkEntry } from "./types.js";
 
 export type { NetworkEntry } from "./types.js";
 
+export function redactNetworkUrl(value: string): string {
+    try {
+        const url = new URL(value);
+        if (url.username) url.username = "REDACTED";
+        if (url.password) url.password = "REDACTED";
+        for (const key of url.searchParams.keys())
+            if (/token|secret|password|passcode|api[-_]?key|authorization|credential/i.test(key))
+                url.searchParams.set(key, "REDACTED");
+        return url.href;
+    } catch {
+        return redactBody(value);
+    }
+}
+
 function redactBody(value: string): string {
     return value
         .replace(/(Bearer\s+)[^\s,;]+/gi, "$1[REDACTED]")
@@ -36,17 +50,19 @@ export class NetworkCollector {
         }
     }
 
-    public install(getActiveTabId: () => number | null): void {
+    public install(): void {
         if (this.listener) {
             chrome.debugger.onEvent.removeListener(this.listener);
         }
         this.listener = (source, method, params) => {
-            if (!source.tabId || source.tabId !== getActiveTabId()) return;
+            if (!source.tabId) return;
+            const tabId = source.tabId;
 
             switch (method) {
                 case "Network.requestWillBeSent": {
                     const p = params as Protocol.Network.RequestWillBeSentEvent;
-                    this.entries.set(p.requestId, {
+                    this.entries.set(`${tabId}:${p.requestId}`, {
+                        tabId,
                         requestId: p.requestId,
                         url: p.request.url,
                         method: p.request.method,
@@ -59,7 +75,7 @@ export class NetworkCollector {
                 }
                 case "Network.responseReceived": {
                     const p = params as Protocol.Network.ResponseReceivedEvent;
-                    const entry = this.entries.get(p.requestId);
+                    const entry = this.entries.get(`${tabId}:${p.requestId}`);
                     if (entry) {
                         entry.status = p.response.status;
                         entry.statusText = p.response.statusText;
@@ -69,7 +85,7 @@ export class NetworkCollector {
                 }
                 case "Network.loadingFailed": {
                     const p = params as Protocol.Network.LoadingFailedEvent;
-                    const entry = this.entries.get(p.requestId);
+                    const entry = this.entries.get(`${tabId}:${p.requestId}`);
                     if (entry) {
                         entry.failed = true;
                         entry.errorText = p.errorText;
@@ -79,7 +95,7 @@ export class NetworkCollector {
                 }
                 case "Network.loadingFinished": {
                     const p = params as Protocol.Network.LoadingFinishedEvent;
-                    const entry = this.entries.get(p.requestId);
+                    const entry = this.entries.get(`${tabId}:${p.requestId}`);
                     if (entry) {
                         entry.sizeBytes = p.encodedDataLength;
                         entry.durationMs = Date.now() - entry.timestamp;
@@ -91,8 +107,9 @@ export class NetworkCollector {
         chrome.debugger.onEvent.addListener(this.listener);
     }
 
-    public clear(): void {
-        this.entries.clear();
+    public clear(tabId?: number): void {
+        if (tabId === undefined) this.entries.clear();
+        else for (const [key, entry] of this.entries) if (entry.tabId === tabId) this.entries.delete(key);
     }
 
     public size(): number {
@@ -108,20 +125,23 @@ export class NetworkCollector {
     }
 
     public list(
-        opts: { resourceTypes?: string[]; filter?: string; limit?: number } = {},
+        opts: { tabId?: number; resourceTypes?: string[]; filter?: string; limit?: number } = {},
     ): Array<Partial<NetworkEntry>> {
         const limit = opts.limit ?? 15;
         const allowed =
             opts.resourceTypes && opts.resourceTypes.length > 0 ? new Set(opts.resourceTypes) : DEFAULT_RESOURCE_TYPES;
 
         return Array.from(this.entries.values())
+            .filter((e) => opts.tabId === undefined || e.tabId === opts.tabId)
             .filter((e) => allowed.has(e.resourceType))
             .filter((e) => !opts.filter || e.url.includes(opts.filter))
             .slice(-limit)
             .map((e) => ({
+                tabId: e.tabId,
+                timestamp: e.timestamp,
                 requestId: e.requestId,
                 method: e.method,
-                url: e.url,
+                url: redactNetworkUrl(e.url),
                 status: e.status,
                 resourceType: e.resourceType,
                 mimeType: e.mimeType,
@@ -129,7 +149,7 @@ export class NetworkCollector {
                 durationMs: e.durationMs,
                 failed: e.failed,
                 errorText: e.errorText,
-                blocked: blockedRequestIds.has(e.requestId) || undefined,
+                blocked: blockedRequestIds.has(`${e.tabId}:${e.requestId}`) || undefined,
             }));
     }
 
@@ -142,10 +162,11 @@ export class NetworkCollector {
         const candidates = Array.from(this.entries.values())
             .filter(
                 (e) =>
+                    e.tabId === target.tabId &&
                     e.method === method &&
                     e.url === url &&
                     e.status !== undefined &&
-                    !blockedRequestIds.has(e.requestId),
+                    !blockedRequestIds.has(`${e.tabId}:${e.requestId}`),
             )
             .sort((a, b) => b.timestamp - a.timestamp);
 
@@ -167,7 +188,7 @@ export class NetworkCollector {
         requestId: string,
         includeBody = false,
     ): Promise<Record<string, unknown>> {
-        const entry = this.entries.get(requestId);
+        const entry = this.entries.get(`${target.tabId}:${requestId}`);
         if (!entry) {
             return {
                 error: "Unknown requestId",
@@ -178,7 +199,7 @@ export class NetworkCollector {
         if (!includeBody) {
             return {
                 requestId: entry.requestId,
-                url: entry.url,
+                url: redactNetworkUrl(entry.url),
                 method: entry.method,
                 resourceType: entry.resourceType,
                 status: entry.status,
@@ -189,7 +210,7 @@ export class NetworkCollector {
                 timestamp: entry.timestamp,
                 sizeBytes: entry.sizeBytes,
                 durationMs: entry.durationMs,
-                blocked: blockedRequestIds.has(requestId) || undefined,
+                blocked: blockedRequestIds.has(`${entry.tabId}:${requestId}`) || undefined,
                 bodyUnavailable:
                     "Body capture is disabled by default; request it explicitly from a dev-only operation.",
             };
@@ -225,7 +246,8 @@ export class NetworkCollector {
 
         return {
             ...entry,
-            blocked: blockedRequestIds.has(requestId) || undefined,
+            url: redactNetworkUrl(entry.url),
+            blocked: blockedRequestIds.has(`${entry.tabId}:${requestId}`) || undefined,
             body,
             bodyBase64Encoded: bodyResult?.base64Encoded,
             postData: requestPostData,
@@ -240,15 +262,16 @@ export class NetworkCollector {
 
 export const networkCollector = new NetworkCollector();
 
-export function installNetworkCollector(getActiveTabId: () => number | null): void {
-    networkCollector.install(getActiveTabId);
+export function installNetworkCollector(): void {
+    networkCollector.install();
 }
 
-export function clearNetworkRequests(): void {
-    networkCollector.clear();
+export function clearNetworkRequests(tabId?: number): void {
+    networkCollector.clear(tabId);
 }
 
 export function listNetworkRequests(opts?: {
+    tabId?: number;
     resourceTypes?: string[];
     filter?: string;
     limit?: number;

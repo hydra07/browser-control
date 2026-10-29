@@ -1,0 +1,2061 @@
+{
+  "schemaVersion": 1,
+  "classification": "synthetic",
+  "sourceURL": "fixture:virtual-table",
+  "observation": "snapshot_at",
+  "snapshot": {
+    "epoch": "fixture_2T4VR3FN2H3I6PHVME6TWMZDO7",
+    "url": "http://fixture.test/virtual-table.html",
+    "browser": "Chrome/155.0.8059.79",
+    "frames": [
+      {
+        "id": "CC9BB736F39439B67C6B192209FE7362",
+        "url": "http://fixture.test/virtual-table.html"
+      }
+    ],
+    "documents": [
+      {
+        "frameId": "CC9BB736F39439B67C6B192209FE7362",
+        "url": "http://fixture.test/virtual-table.html",
+        "title": "Virtualized orders fixture",
+        "nodes": [
+          {
+            "index": 0,
+            "parent": -1,
+            "handle": 1,
+            "type": 9,
+            "name": "#document"
+          },
+          {
+            "index": 1,
+            "parent": 0,
+            "handle": 2,
+            "type": 10,
+            "name": "html"
+          },
+          {
+            "index": 2,
+            "parent": 0,
+            "handle": 3,
+            "type": 1,
+            "name": "HTML"
+          },
+          {
+            "index": 3,
+            "parent": 2,
+            "handle": 4,
+            "type": 1,
+            "name": "HEAD"
+          },
+          {
+            "index": 4,
+            "parent": 3,
+            "handle": 5,
+            "type": 1,
+            "name": "META"
+          },
+          {
+            "index": 5,
+            "parent": 3,
+            "handle": 6,
+            "type": 1,
+            "name": "TITLE"
+          },
+          {
+            "index": 6,
+            "parent": 5,
+            "handle": 7,
+            "type": 3,
+            "name": "#text",
+            "text": "Virtualized orders fixture"
+          },
+          {
+            "index": 7,
+            "parent": 3,
+            "handle": 8,
+            "type": 3,
+            "name": "#text",
+            "text": "\n"
+          },
+          {
+            "index": 8,
+            "parent": 2,
+            "handle": 9,
+            "type": 1,
+            "name": "BODY"
+          },
+          {
+            "index": 9,
+            "parent": 8,
+            "handle": 10,
+            "type": 1,
+            "name": "H1"
+          },
+          {
+            "index": 10,
+            "parent": 9,
+            "handle": 11,
+            "type": 3,
+            "name": "#text",
+            "text": "Orders"
+          },
+          {
+            "index": 11,
+            "parent": 8,
+            "handle": 12,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "aria-label": "Orders",
+              "aria-rowcount": "1000",
+              "id": "viewport",
+              "role": "table",
+              "tabindex": "0"
+            }
+          },
+          {
+            "index": 12,
+            "parent": 11,
+            "handle": 13,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "id": "spacer"
+            }
+          },
+          {
+            "index": 13,
+            "parent": 12,
+            "handle": 14,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "id": "rows"
+            }
+          },
+          {
+            "index": 14,
+            "parent": 13,
+            "handle": 15,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "aria-rowindex": "1",
+              "role": "row"
+            }
+          },
+          {
+            "index": 15,
+            "parent": 14,
+            "handle": 16,
+            "type": 3,
+            "name": "#text",
+            "text": "ORD-0 customer0@example.test "
+          },
+          {
+            "index": 16,
+            "parent": 14,
+            "handle": 17,
+            "type": 1,
+            "name": "BUTTON"
+          },
+          {
+            "index": 17,
+            "parent": 16,
+            "handle": 18,
+            "type": 3,
+            "name": "#text",
+            "text": "Open order"
+          },
+          {
+            "index": 18,
+            "parent": 13,
+            "handle": 19,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "aria-rowindex": "2",
+              "role": "row"
+            }
+          },
+          {
+            "index": 19,
+            "parent": 18,
+            "handle": 20,
+            "type": 3,
+            "name": "#text",
+            "text": "ORD-1 customer1@example.test "
+          },
+          {
+            "index": 20,
+            "parent": 18,
+            "handle": 21,
+            "type": 1,
+            "name": "BUTTON"
+          },
+          {
+            "index": 21,
+            "parent": 20,
+            "handle": 22,
+            "type": 3,
+            "name": "#text",
+            "text": "Open order"
+          },
+          {
+            "index": 22,
+            "parent": 13,
+            "handle": 23,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "aria-rowindex": "3",
+              "role": "row"
+            }
+          },
+          {
+            "index": 23,
+            "parent": 22,
+            "handle": 24,
+            "type": 3,
+            "name": "#text",
+            "text": "ORD-2 customer2@example.test "
+          },
+          {
+            "index": 24,
+            "parent": 22,
+            "handle": 25,
+            "type": 1,
+            "name": "BUTTON"
+          },
+          {
+            "index": 25,
+            "parent": 24,
+            "handle": 26,
+            "type": 3,
+            "name": "#text",
+            "text": "Open order"
+          },
+          {
+            "index": 26,
+            "parent": 13,
+            "handle": 27,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "aria-rowindex": "4",
+              "role": "row"
+            }
+          },
+          {
+            "index": 27,
+            "parent": 26,
+            "handle": 28,
+            "type": 3,
+            "name": "#text",
+            "text": "ORD-3 customer3@example.test "
+          },
+          {
+            "index": 28,
+            "parent": 26,
+            "handle": 29,
+            "type": 1,
+            "name": "BUTTON"
+          },
+          {
+            "index": 29,
+            "parent": 28,
+            "handle": 30,
+            "type": 3,
+            "name": "#text",
+            "text": "Open order"
+          },
+          {
+            "index": 30,
+            "parent": 13,
+            "handle": 31,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "aria-rowindex": "5",
+              "role": "row"
+            }
+          },
+          {
+            "index": 31,
+            "parent": 30,
+            "handle": 32,
+            "type": 3,
+            "name": "#text",
+            "text": "ORD-4 customer4@example.test "
+          },
+          {
+            "index": 32,
+            "parent": 30,
+            "handle": 33,
+            "type": 1,
+            "name": "BUTTON"
+          },
+          {
+            "index": 33,
+            "parent": 32,
+            "handle": 34,
+            "type": 3,
+            "name": "#text",
+            "text": "Open order"
+          },
+          {
+            "index": 34,
+            "parent": 13,
+            "handle": 35,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "aria-rowindex": "6",
+              "role": "row"
+            }
+          },
+          {
+            "index": 35,
+            "parent": 34,
+            "handle": 36,
+            "type": 3,
+            "name": "#text",
+            "text": "ORD-5 customer5@example.test "
+          },
+          {
+            "index": 36,
+            "parent": 34,
+            "handle": 37,
+            "type": 1,
+            "name": "BUTTON"
+          },
+          {
+            "index": 37,
+            "parent": 36,
+            "handle": 38,
+            "type": 3,
+            "name": "#text",
+            "text": "Open order"
+          },
+          {
+            "index": 38,
+            "parent": 13,
+            "handle": 39,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "aria-rowindex": "7",
+              "role": "row"
+            }
+          },
+          {
+            "index": 39,
+            "parent": 38,
+            "handle": 40,
+            "type": 3,
+            "name": "#text",
+            "text": "ORD-6 customer6@example.test "
+          },
+          {
+            "index": 40,
+            "parent": 38,
+            "handle": 41,
+            "type": 1,
+            "name": "BUTTON"
+          },
+          {
+            "index": 41,
+            "parent": 40,
+            "handle": 42,
+            "type": 3,
+            "name": "#text",
+            "text": "Open order"
+          },
+          {
+            "index": 42,
+            "parent": 13,
+            "handle": 43,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "aria-rowindex": "8",
+              "role": "row"
+            }
+          },
+          {
+            "index": 43,
+            "parent": 42,
+            "handle": 44,
+            "type": 3,
+            "name": "#text",
+            "text": "ORD-7 customer7@example.test "
+          },
+          {
+            "index": 44,
+            "parent": 42,
+            "handle": 45,
+            "type": 1,
+            "name": "BUTTON"
+          },
+          {
+            "index": 45,
+            "parent": 44,
+            "handle": 46,
+            "type": 3,
+            "name": "#text",
+            "text": "Open order"
+          },
+          {
+            "index": 46,
+            "parent": 13,
+            "handle": 47,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "aria-rowindex": "9",
+              "role": "row"
+            }
+          },
+          {
+            "index": 47,
+            "parent": 46,
+            "handle": 48,
+            "type": 3,
+            "name": "#text",
+            "text": "ORD-8 customer8@example.test "
+          },
+          {
+            "index": 48,
+            "parent": 46,
+            "handle": 49,
+            "type": 1,
+            "name": "BUTTON"
+          },
+          {
+            "index": 49,
+            "parent": 48,
+            "handle": 50,
+            "type": 3,
+            "name": "#text",
+            "text": "Open order"
+          },
+          {
+            "index": 50,
+            "parent": 13,
+            "handle": 51,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "aria-rowindex": "10",
+              "role": "row"
+            }
+          },
+          {
+            "index": 51,
+            "parent": 50,
+            "handle": 52,
+            "type": 3,
+            "name": "#text",
+            "text": "ORD-9 customer9@example.test "
+          },
+          {
+            "index": 52,
+            "parent": 50,
+            "handle": 53,
+            "type": 1,
+            "name": "BUTTON"
+          },
+          {
+            "index": 53,
+            "parent": 52,
+            "handle": 54,
+            "type": 3,
+            "name": "#text",
+            "text": "Open order"
+          },
+          {
+            "index": 54,
+            "parent": 13,
+            "handle": 55,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "aria-rowindex": "11",
+              "role": "row"
+            }
+          },
+          {
+            "index": 55,
+            "parent": 54,
+            "handle": 56,
+            "type": 3,
+            "name": "#text",
+            "text": "ORD-10 customer10@example.test "
+          },
+          {
+            "index": 56,
+            "parent": 54,
+            "handle": 57,
+            "type": 1,
+            "name": "BUTTON"
+          },
+          {
+            "index": 57,
+            "parent": 56,
+            "handle": 58,
+            "type": 3,
+            "name": "#text",
+            "text": "Open order"
+          },
+          {
+            "index": 58,
+            "parent": 13,
+            "handle": 59,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "aria-rowindex": "12",
+              "role": "row"
+            }
+          },
+          {
+            "index": 59,
+            "parent": 58,
+            "handle": 60,
+            "type": 3,
+            "name": "#text",
+            "text": "ORD-11 customer11@example.test "
+          },
+          {
+            "index": 60,
+            "parent": 58,
+            "handle": 61,
+            "type": 1,
+            "name": "BUTTON"
+          },
+          {
+            "index": 61,
+            "parent": 60,
+            "handle": 62,
+            "type": 3,
+            "name": "#text",
+            "text": "Open order"
+          },
+          {
+            "index": 62,
+            "parent": 13,
+            "handle": 63,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "aria-rowindex": "13",
+              "role": "row"
+            }
+          },
+          {
+            "index": 63,
+            "parent": 62,
+            "handle": 64,
+            "type": 3,
+            "name": "#text",
+            "text": "ORD-12 customer12@example.test "
+          },
+          {
+            "index": 64,
+            "parent": 62,
+            "handle": 65,
+            "type": 1,
+            "name": "BUTTON"
+          },
+          {
+            "index": 65,
+            "parent": 64,
+            "handle": 66,
+            "type": 3,
+            "name": "#text",
+            "text": "Open order"
+          },
+          {
+            "index": 66,
+            "parent": 13,
+            "handle": 67,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "aria-rowindex": "14",
+              "role": "row"
+            }
+          },
+          {
+            "index": 67,
+            "parent": 66,
+            "handle": 68,
+            "type": 3,
+            "name": "#text",
+            "text": "ORD-13 customer13@example.test "
+          },
+          {
+            "index": 68,
+            "parent": 66,
+            "handle": 69,
+            "type": 1,
+            "name": "BUTTON"
+          },
+          {
+            "index": 69,
+            "parent": 68,
+            "handle": 70,
+            "type": 3,
+            "name": "#text",
+            "text": "Open order"
+          },
+          {
+            "index": 70,
+            "parent": 13,
+            "handle": 71,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "aria-rowindex": "15",
+              "role": "row"
+            }
+          },
+          {
+            "index": 71,
+            "parent": 70,
+            "handle": 72,
+            "type": 3,
+            "name": "#text",
+            "text": "ORD-14 customer14@example.test "
+          },
+          {
+            "index": 72,
+            "parent": 70,
+            "handle": 73,
+            "type": 1,
+            "name": "BUTTON"
+          },
+          {
+            "index": 73,
+            "parent": 72,
+            "handle": 74,
+            "type": 3,
+            "name": "#text",
+            "text": "Open order"
+          },
+          {
+            "index": 74,
+            "parent": 13,
+            "handle": 75,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "aria-rowindex": "16",
+              "role": "row"
+            }
+          },
+          {
+            "index": 75,
+            "parent": 74,
+            "handle": 76,
+            "type": 3,
+            "name": "#text",
+            "text": "ORD-15 customer15@example.test "
+          },
+          {
+            "index": 76,
+            "parent": 74,
+            "handle": 77,
+            "type": 1,
+            "name": "BUTTON"
+          },
+          {
+            "index": 77,
+            "parent": 76,
+            "handle": 78,
+            "type": 3,
+            "name": "#text",
+            "text": "Open order"
+          },
+          {
+            "index": 78,
+            "parent": 13,
+            "handle": 79,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "aria-rowindex": "17",
+              "role": "row"
+            }
+          },
+          {
+            "index": 79,
+            "parent": 78,
+            "handle": 80,
+            "type": 3,
+            "name": "#text",
+            "text": "ORD-16 customer16@example.test "
+          },
+          {
+            "index": 80,
+            "parent": 78,
+            "handle": 81,
+            "type": 1,
+            "name": "BUTTON"
+          },
+          {
+            "index": 81,
+            "parent": 80,
+            "handle": 82,
+            "type": 3,
+            "name": "#text",
+            "text": "Open order"
+          },
+          {
+            "index": 82,
+            "parent": 13,
+            "handle": 83,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "aria-rowindex": "18",
+              "role": "row"
+            }
+          },
+          {
+            "index": 83,
+            "parent": 82,
+            "handle": 84,
+            "type": 3,
+            "name": "#text",
+            "text": "ORD-17 customer17@example.test "
+          },
+          {
+            "index": 84,
+            "parent": 82,
+            "handle": 85,
+            "type": 1,
+            "name": "BUTTON"
+          },
+          {
+            "index": 85,
+            "parent": 84,
+            "handle": 86,
+            "type": 3,
+            "name": "#text",
+            "text": "Open order"
+          },
+          {
+            "index": 86,
+            "parent": 13,
+            "handle": 87,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "aria-rowindex": "19",
+              "role": "row"
+            }
+          },
+          {
+            "index": 87,
+            "parent": 86,
+            "handle": 88,
+            "type": 3,
+            "name": "#text",
+            "text": "ORD-18 customer18@example.test "
+          },
+          {
+            "index": 88,
+            "parent": 86,
+            "handle": 89,
+            "type": 1,
+            "name": "BUTTON"
+          },
+          {
+            "index": 89,
+            "parent": 88,
+            "handle": 90,
+            "type": 3,
+            "name": "#text",
+            "text": "Open order"
+          },
+          {
+            "index": 90,
+            "parent": 13,
+            "handle": 91,
+            "type": 1,
+            "name": "DIV",
+            "attributes": {
+              "aria-rowindex": "20",
+              "role": "row"
+            }
+          },
+          {
+            "index": 91,
+            "parent": 90,
+            "handle": 92,
+            "type": 3,
+            "name": "#text",
+            "text": "ORD-19 customer19@example.test "
+          },
+          {
+            "index": 92,
+            "parent": 90,
+            "handle": 93,
+            "type": 1,
+            "name": "BUTTON"
+          },
+          {
+            "index": 93,
+            "parent": 92,
+            "handle": 94,
+            "type": 3,
+            "name": "#text",
+            "text": "Open order"
+          },
+          {
+            "index": 94,
+            "parent": 8,
+            "handle": 95,
+            "type": 3,
+            "name": "#text",
+            "text": "\n"
+          },
+          {
+            "index": 95,
+            "parent": 8,
+            "handle": 96,
+            "type": 1,
+            "name": "SCRIPT"
+          },
+          {
+            "index": 96,
+            "parent": 95,
+            "handle": 97,
+            "type": 3,
+            "name": "#text"
+          },
+          {
+            "index": 97,
+            "parent": 8,
+            "handle": 98,
+            "type": 3,
+            "name": "#text",
+            "text": "\n"
+          }
+        ]
+      }
+    ],
+    "accessibility": [
+      {
+        "frameId": "CC9BB736F39439B67C6B192209FE7362",
+        "nodes": [
+          {
+            "id": "1",
+            "children": [
+              "3"
+            ],
+            "handle": 1,
+            "role": "RootWebArea",
+            "name": "Virtualized orders fixture"
+          },
+          {
+            "id": "3",
+            "parentId": "1",
+            "children": [
+              "9"
+            ],
+            "handle": 3,
+            "role": "none",
+            "ignored": true
+          },
+          {
+            "id": "9",
+            "parentId": "3",
+            "children": [
+              "10",
+              "12"
+            ],
+            "handle": 9,
+            "role": "none",
+            "ignored": true
+          },
+          {
+            "id": "10",
+            "parentId": "9",
+            "children": [
+              "11"
+            ],
+            "handle": 10,
+            "role": "heading",
+            "name": "Orders"
+          },
+          {
+            "id": "12",
+            "parentId": "9",
+            "children": [
+              "13"
+            ],
+            "handle": 12,
+            "role": "table",
+            "name": "Orders"
+          },
+          {
+            "id": "11",
+            "parentId": "10",
+            "children": [
+              "-1000000002"
+            ],
+            "handle": 11,
+            "role": "StaticText",
+            "name": "Orders"
+          },
+          {
+            "id": "13",
+            "parentId": "12",
+            "children": [
+              "14"
+            ],
+            "handle": 13,
+            "role": "generic"
+          },
+          {
+            "id": "-1000000002",
+            "parentId": "11",
+            "role": "InlineTextBox",
+            "name": "Orders"
+          },
+          {
+            "id": "14",
+            "parentId": "13",
+            "children": [
+              "15",
+              "19",
+              "23",
+              "27",
+              "31",
+              "35",
+              "39",
+              "43",
+              "47",
+              "51",
+              "55",
+              "59",
+              "63",
+              "67",
+              "71",
+              "75",
+              "79",
+              "83",
+              "87",
+              "91"
+            ],
+            "handle": 14,
+            "role": "generic"
+          },
+          {
+            "id": "15",
+            "parentId": "14",
+            "children": [
+              "16",
+              "17"
+            ],
+            "handle": 15,
+            "role": "row"
+          },
+          {
+            "id": "19",
+            "parentId": "14",
+            "children": [
+              "20",
+              "21"
+            ],
+            "handle": 19,
+            "role": "row"
+          },
+          {
+            "id": "23",
+            "parentId": "14",
+            "children": [
+              "24",
+              "25"
+            ],
+            "handle": 23,
+            "role": "row"
+          },
+          {
+            "id": "27",
+            "parentId": "14",
+            "children": [
+              "28",
+              "29"
+            ],
+            "handle": 27,
+            "role": "row"
+          },
+          {
+            "id": "31",
+            "parentId": "14",
+            "children": [
+              "32",
+              "33"
+            ],
+            "handle": 31,
+            "role": "row"
+          },
+          {
+            "id": "35",
+            "parentId": "14",
+            "children": [
+              "36",
+              "37"
+            ],
+            "handle": 35,
+            "role": "row"
+          },
+          {
+            "id": "39",
+            "parentId": "14",
+            "children": [
+              "40",
+              "41"
+            ],
+            "handle": 39,
+            "role": "row"
+          },
+          {
+            "id": "43",
+            "parentId": "14",
+            "children": [
+              "44",
+              "45"
+            ],
+            "handle": 43,
+            "role": "row"
+          },
+          {
+            "id": "47",
+            "parentId": "14",
+            "children": [
+              "48",
+              "49"
+            ],
+            "handle": 47,
+            "role": "row"
+          },
+          {
+            "id": "51",
+            "parentId": "14",
+            "children": [
+              "52",
+              "53"
+            ],
+            "handle": 51,
+            "role": "row"
+          },
+          {
+            "id": "55",
+            "parentId": "14",
+            "children": [
+              "56",
+              "57"
+            ],
+            "handle": 55,
+            "role": "row"
+          },
+          {
+            "id": "59",
+            "parentId": "14",
+            "children": [
+              "60",
+              "61"
+            ],
+            "handle": 59,
+            "role": "row"
+          },
+          {
+            "id": "63",
+            "parentId": "14",
+            "children": [
+              "64",
+              "65"
+            ],
+            "handle": 63,
+            "role": "row"
+          },
+          {
+            "id": "67",
+            "parentId": "14",
+            "children": [
+              "68",
+              "69"
+            ],
+            "handle": 67,
+            "role": "row"
+          },
+          {
+            "id": "71",
+            "parentId": "14",
+            "children": [
+              "72",
+              "73"
+            ],
+            "handle": 71,
+            "role": "row"
+          },
+          {
+            "id": "75",
+            "parentId": "14",
+            "children": [
+              "76",
+              "77"
+            ],
+            "handle": 75,
+            "role": "row"
+          },
+          {
+            "id": "79",
+            "parentId": "14",
+            "children": [
+              "80",
+              "81"
+            ],
+            "handle": 79,
+            "role": "row"
+          },
+          {
+            "id": "83",
+            "parentId": "14",
+            "children": [
+              "84",
+              "85"
+            ],
+            "handle": 83,
+            "role": "row"
+          },
+          {
+            "id": "87",
+            "parentId": "14",
+            "children": [
+              "88",
+              "89"
+            ],
+            "handle": 87,
+            "role": "row"
+          },
+          {
+            "id": "91",
+            "parentId": "14",
+            "children": [
+              "92",
+              "93"
+            ],
+            "handle": 91,
+            "role": "row"
+          },
+          {
+            "id": "16",
+            "parentId": "15",
+            "children": [
+              "-1000000003"
+            ],
+            "handle": 16,
+            "role": "StaticText",
+            "name": "ORD-0 customer0@example.test "
+          },
+          {
+            "id": "17",
+            "parentId": "15",
+            "children": [
+              "18"
+            ],
+            "handle": 17,
+            "role": "button",
+            "name": "Open order",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "20",
+            "parentId": "19",
+            "children": [
+              "-1000000005"
+            ],
+            "handle": 20,
+            "role": "StaticText",
+            "name": "ORD-1 customer1@example.test "
+          },
+          {
+            "id": "21",
+            "parentId": "19",
+            "children": [
+              "22"
+            ],
+            "handle": 21,
+            "role": "button",
+            "name": "Open order",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "24",
+            "parentId": "23",
+            "children": [
+              "-1000000007"
+            ],
+            "handle": 24,
+            "role": "StaticText",
+            "name": "ORD-2 customer2@example.test "
+          },
+          {
+            "id": "25",
+            "parentId": "23",
+            "children": [
+              "26"
+            ],
+            "handle": 25,
+            "role": "button",
+            "name": "Open order",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "28",
+            "parentId": "27",
+            "children": [
+              "-1000000009"
+            ],
+            "handle": 28,
+            "role": "StaticText",
+            "name": "ORD-3 customer3@example.test "
+          },
+          {
+            "id": "29",
+            "parentId": "27",
+            "children": [
+              "30"
+            ],
+            "handle": 29,
+            "role": "button",
+            "name": "Open order",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "32",
+            "parentId": "31",
+            "children": [
+              "-1000000011"
+            ],
+            "handle": 32,
+            "role": "StaticText",
+            "name": "ORD-4 customer4@example.test "
+          },
+          {
+            "id": "33",
+            "parentId": "31",
+            "children": [
+              "34"
+            ],
+            "handle": 33,
+            "role": "button",
+            "name": "Open order",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "36",
+            "parentId": "35",
+            "children": [
+              "-1000000013"
+            ],
+            "handle": 36,
+            "role": "StaticText",
+            "name": "ORD-5 customer5@example.test "
+          },
+          {
+            "id": "37",
+            "parentId": "35",
+            "children": [
+              "38"
+            ],
+            "handle": 37,
+            "role": "button",
+            "name": "Open order",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "40",
+            "parentId": "39",
+            "children": [
+              "-1000000015"
+            ],
+            "handle": 40,
+            "role": "StaticText",
+            "name": "ORD-6 customer6@example.test "
+          },
+          {
+            "id": "41",
+            "parentId": "39",
+            "children": [
+              "42"
+            ],
+            "handle": 41,
+            "role": "button",
+            "name": "Open order",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "44",
+            "parentId": "43",
+            "children": [
+              "-1000000017"
+            ],
+            "handle": 44,
+            "role": "StaticText",
+            "name": "ORD-7 customer7@example.test "
+          },
+          {
+            "id": "45",
+            "parentId": "43",
+            "children": [
+              "46"
+            ],
+            "handle": 45,
+            "role": "button",
+            "name": "Open order",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "48",
+            "parentId": "47",
+            "children": [
+              "-1000000019"
+            ],
+            "handle": 48,
+            "role": "StaticText",
+            "name": "ORD-8 customer8@example.test "
+          },
+          {
+            "id": "49",
+            "parentId": "47",
+            "children": [
+              "50"
+            ],
+            "handle": 49,
+            "role": "button",
+            "name": "Open order",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "52",
+            "parentId": "51",
+            "children": [
+              "-1000000021"
+            ],
+            "handle": 52,
+            "role": "StaticText",
+            "name": "ORD-9 customer9@example.test "
+          },
+          {
+            "id": "53",
+            "parentId": "51",
+            "children": [
+              "54"
+            ],
+            "handle": 53,
+            "role": "button",
+            "name": "Open order",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "56",
+            "parentId": "55",
+            "children": [
+              "-1000000023"
+            ],
+            "handle": 56,
+            "role": "StaticText",
+            "name": "ORD-10 customer10@example.test "
+          },
+          {
+            "id": "57",
+            "parentId": "55",
+            "children": [
+              "58"
+            ],
+            "handle": 57,
+            "role": "button",
+            "name": "Open order",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "60",
+            "parentId": "59",
+            "children": [
+              "-1000000025"
+            ],
+            "handle": 60,
+            "role": "StaticText",
+            "name": "ORD-11 customer11@example.test "
+          },
+          {
+            "id": "61",
+            "parentId": "59",
+            "children": [
+              "62"
+            ],
+            "handle": 61,
+            "role": "button",
+            "name": "Open order",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "64",
+            "parentId": "63",
+            "children": [
+              "-1000000027"
+            ],
+            "handle": 64,
+            "role": "StaticText",
+            "name": "ORD-12 customer12@example.test "
+          },
+          {
+            "id": "65",
+            "parentId": "63",
+            "children": [
+              "66"
+            ],
+            "handle": 65,
+            "role": "button",
+            "name": "Open order",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "68",
+            "parentId": "67",
+            "children": [
+              "-1000000029"
+            ],
+            "handle": 68,
+            "role": "StaticText",
+            "name": "ORD-13 customer13@example.test "
+          },
+          {
+            "id": "69",
+            "parentId": "67",
+            "children": [
+              "70"
+            ],
+            "handle": 69,
+            "role": "button",
+            "name": "Open order",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "72",
+            "parentId": "71",
+            "children": [
+              "-1000000031"
+            ],
+            "handle": 72,
+            "role": "StaticText",
+            "name": "ORD-14 customer14@example.test "
+          },
+          {
+            "id": "73",
+            "parentId": "71",
+            "children": [
+              "74"
+            ],
+            "handle": 73,
+            "role": "button",
+            "name": "Open order",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "76",
+            "parentId": "75",
+            "children": [
+              "-1000000033"
+            ],
+            "handle": 76,
+            "role": "StaticText",
+            "name": "ORD-15 customer15@example.test "
+          },
+          {
+            "id": "77",
+            "parentId": "75",
+            "children": [
+              "78"
+            ],
+            "handle": 77,
+            "role": "button",
+            "name": "Open order",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "80",
+            "parentId": "79",
+            "children": [
+              "-1000000035"
+            ],
+            "handle": 80,
+            "role": "StaticText",
+            "name": "ORD-16 customer16@example.test "
+          },
+          {
+            "id": "81",
+            "parentId": "79",
+            "children": [
+              "82"
+            ],
+            "handle": 81,
+            "role": "button",
+            "name": "Open order",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "84",
+            "parentId": "83",
+            "children": [
+              "-1000000037"
+            ],
+            "handle": 84,
+            "role": "StaticText",
+            "name": "ORD-17 customer17@example.test "
+          },
+          {
+            "id": "85",
+            "parentId": "83",
+            "children": [
+              "86"
+            ],
+            "handle": 85,
+            "role": "button",
+            "name": "Open order",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "88",
+            "parentId": "87",
+            "children": [
+              "-1000000039"
+            ],
+            "handle": 88,
+            "role": "StaticText",
+            "name": "ORD-18 customer18@example.test "
+          },
+          {
+            "id": "89",
+            "parentId": "87",
+            "children": [
+              "90"
+            ],
+            "handle": 89,
+            "role": "button",
+            "name": "Open order",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "92",
+            "parentId": "91",
+            "children": [
+              "-1000000041"
+            ],
+            "handle": 92,
+            "role": "StaticText",
+            "name": "ORD-19 customer19@example.test "
+          },
+          {
+            "id": "93",
+            "parentId": "91",
+            "children": [
+              "94"
+            ],
+            "handle": 93,
+            "role": "button",
+            "name": "Open order",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "-1000000003",
+            "parentId": "16",
+            "role": "InlineTextBox",
+            "name": "ORD-0 customer0@example.test "
+          },
+          {
+            "id": "18",
+            "parentId": "17",
+            "children": [
+              "-1000000004"
+            ],
+            "handle": 18,
+            "role": "StaticText",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000005",
+            "parentId": "20",
+            "role": "InlineTextBox",
+            "name": "ORD-1 customer1@example.test "
+          },
+          {
+            "id": "22",
+            "parentId": "21",
+            "children": [
+              "-1000000006"
+            ],
+            "handle": 22,
+            "role": "StaticText",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000007",
+            "parentId": "24",
+            "role": "InlineTextBox",
+            "name": "ORD-2 customer2@example.test "
+          },
+          {
+            "id": "26",
+            "parentId": "25",
+            "children": [
+              "-1000000008"
+            ],
+            "handle": 26,
+            "role": "StaticText",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000009",
+            "parentId": "28",
+            "role": "InlineTextBox",
+            "name": "ORD-3 customer3@example.test "
+          },
+          {
+            "id": "30",
+            "parentId": "29",
+            "children": [
+              "-1000000010"
+            ],
+            "handle": 30,
+            "role": "StaticText",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000011",
+            "parentId": "32",
+            "role": "InlineTextBox",
+            "name": "ORD-4 customer4@example.test "
+          },
+          {
+            "id": "34",
+            "parentId": "33",
+            "children": [
+              "-1000000012"
+            ],
+            "handle": 34,
+            "role": "StaticText",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000013",
+            "parentId": "36",
+            "role": "InlineTextBox",
+            "name": "ORD-5 customer5@example.test "
+          },
+          {
+            "id": "38",
+            "parentId": "37",
+            "children": [
+              "-1000000014"
+            ],
+            "handle": 38,
+            "role": "StaticText",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000015",
+            "parentId": "40",
+            "role": "InlineTextBox",
+            "name": "ORD-6 customer6@example.test "
+          },
+          {
+            "id": "42",
+            "parentId": "41",
+            "children": [
+              "-1000000016"
+            ],
+            "handle": 42,
+            "role": "StaticText",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000017",
+            "parentId": "44",
+            "role": "InlineTextBox",
+            "name": "ORD-7 customer7@example.test "
+          },
+          {
+            "id": "46",
+            "parentId": "45",
+            "children": [
+              "-1000000018"
+            ],
+            "handle": 46,
+            "role": "StaticText",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000019",
+            "parentId": "48",
+            "role": "InlineTextBox",
+            "name": "ORD-8 customer8@example.test "
+          },
+          {
+            "id": "50",
+            "parentId": "49",
+            "children": [
+              "-1000000020"
+            ],
+            "handle": 50,
+            "role": "StaticText",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000021",
+            "parentId": "52",
+            "role": "InlineTextBox",
+            "name": "ORD-9 customer9@example.test "
+          },
+          {
+            "id": "54",
+            "parentId": "53",
+            "children": [
+              "-1000000022"
+            ],
+            "handle": 54,
+            "role": "StaticText",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000023",
+            "parentId": "56",
+            "role": "InlineTextBox",
+            "name": "ORD-10 customer10@example.test "
+          },
+          {
+            "id": "58",
+            "parentId": "57",
+            "children": [
+              "-1000000024"
+            ],
+            "handle": 58,
+            "role": "StaticText",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000025",
+            "parentId": "60",
+            "role": "InlineTextBox",
+            "name": "ORD-11 customer11@example.test "
+          },
+          {
+            "id": "62",
+            "parentId": "61",
+            "children": [
+              "-1000000026"
+            ],
+            "handle": 62,
+            "role": "StaticText",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000027",
+            "parentId": "64",
+            "role": "InlineTextBox",
+            "name": "ORD-12 customer12@example.test "
+          },
+          {
+            "id": "66",
+            "parentId": "65",
+            "children": [
+              "-1000000028"
+            ],
+            "handle": 66,
+            "role": "StaticText",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000029",
+            "parentId": "68",
+            "role": "InlineTextBox",
+            "name": "ORD-13 customer13@example.test "
+          },
+          {
+            "id": "70",
+            "parentId": "69",
+            "children": [
+              "-1000000030"
+            ],
+            "handle": 70,
+            "role": "StaticText",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000031",
+            "parentId": "72",
+            "role": "InlineTextBox",
+            "name": "ORD-14 customer14@example.test "
+          },
+          {
+            "id": "74",
+            "parentId": "73",
+            "children": [
+              "-1000000032"
+            ],
+            "handle": 74,
+            "role": "StaticText",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000033",
+            "parentId": "76",
+            "role": "InlineTextBox",
+            "name": "ORD-15 customer15@example.test "
+          },
+          {
+            "id": "78",
+            "parentId": "77",
+            "children": [
+              "-1000000034"
+            ],
+            "handle": 78,
+            "role": "StaticText",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000035",
+            "parentId": "80",
+            "role": "InlineTextBox",
+            "name": "ORD-16 customer16@example.test "
+          },
+          {
+            "id": "82",
+            "parentId": "81",
+            "children": [
+              "-1000000036"
+            ],
+            "handle": 82,
+            "role": "StaticText",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000037",
+            "parentId": "84",
+            "role": "InlineTextBox",
+            "name": "ORD-17 customer17@example.test "
+          },
+          {
+            "id": "86",
+            "parentId": "85",
+            "children": [
+              "-1000000038"
+            ],
+            "handle": 86,
+            "role": "StaticText",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000039",
+            "parentId": "88",
+            "role": "InlineTextBox",
+            "name": "ORD-18 customer18@example.test "
+          },
+          {
+            "id": "90",
+            "parentId": "89",
+            "children": [
+              "-1000000040"
+            ],
+            "handle": 90,
+            "role": "StaticText",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000041",
+            "parentId": "92",
+            "role": "InlineTextBox",
+            "name": "ORD-19 customer19@example.test "
+          },
+          {
+            "id": "94",
+            "parentId": "93",
+            "children": [
+              "-1000000042"
+            ],
+            "handle": 94,
+            "role": "StaticText",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000004",
+            "parentId": "18",
+            "role": "InlineTextBox",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000006",
+            "parentId": "22",
+            "role": "InlineTextBox",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000008",
+            "parentId": "26",
+            "role": "InlineTextBox",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000010",
+            "parentId": "30",
+            "role": "InlineTextBox",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000012",
+            "parentId": "34",
+            "role": "InlineTextBox",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000014",
+            "parentId": "38",
+            "role": "InlineTextBox",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000016",
+            "parentId": "42",
+            "role": "InlineTextBox",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000018",
+            "parentId": "46",
+            "role": "InlineTextBox",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000020",
+            "parentId": "50",
+            "role": "InlineTextBox",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000022",
+            "parentId": "54",
+            "role": "InlineTextBox",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000024",
+            "parentId": "58",
+            "role": "InlineTextBox",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000026",
+            "parentId": "62",
+            "role": "InlineTextBox",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000028",
+            "parentId": "66",
+            "role": "InlineTextBox",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000030",
+            "parentId": "70",
+            "role": "InlineTextBox",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000032",
+            "parentId": "74",
+            "role": "InlineTextBox",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000034",
+            "parentId": "78",
+            "role": "InlineTextBox",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000036",
+            "parentId": "82",
+            "role": "InlineTextBox",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000038",
+            "parentId": "86",
+            "role": "InlineTextBox",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000040",
+            "parentId": "90",
+            "role": "InlineTextBox",
+            "name": "Open order"
+          },
+          {
+            "id": "-1000000042",
+            "parentId": "94",
+            "role": "InlineTextBox",
+            "name": "Open order"
+          }
+        ]
+      }
+    ],
+    "truncated": false
+  }
+}

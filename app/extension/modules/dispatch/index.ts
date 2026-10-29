@@ -3,6 +3,7 @@
  * Manages tab resolution, security boundaries, and CDP execution contexts.
  */
 import type { BrowserCommand, FlowAction } from "@browsercontrol/shared";
+import { validateFlowSteps } from "@browsercontrol/shared";
 import { getSettings, getSettingsSync } from "../../configs/settings.js";
 import { evalOnPage, sendCommand } from "../../libs/cdp.js";
 import { errorMessage } from "../../libs/errorMessage.js";
@@ -41,7 +42,7 @@ import {
     resolveSemanticRef,
 } from "../snapshot/index.js";
 import { addTabToWorkspaceGroup, handleListTabsCommand, handleSwitchTabCommand } from "../tabs/index.js";
-import { waitForStableDom } from "../wait/index.js";
+import { waitForStableDom, waitForTabLoadComplete } from "../wait/index.js";
 import { NAVIGATE_LOAD_TIMEOUT_MS } from "./constants.js";
 import type { DispatchCtx } from "./types.js";
 
@@ -78,7 +79,7 @@ async function withActionLifecycle<T extends object>(
     });
     try {
         const result = await operation();
-        const succeeded = "success" in result;
+        const succeeded = !("error" in result) && (!("success" in result) || result.success !== false);
         if (!succeeded) {
             emitFailureEvent({
                 phase: options.lifecycleResult === "blocked" ? "risk" : "action",
@@ -126,7 +127,9 @@ async function getRiskBlock(
 ): Promise<Record<string, unknown> | null> {
     if (backendNodeId == null || confirmRisky) return null;
     const axInfo = await getAxInfoForNode(target, backendNodeId).catch(() => null);
-    if (!axInfo || !isRiskyTarget(axInfo)) return null;
+    if (!axInfo)
+        return { error: "Risk inspection failed; action was not dispatched. Refresh the snapshot before retrying." };
+    if (!isRiskyTarget(axInfo)) return null;
     return {
         error: "risky_action_blocked",
         hint: `This target (${axInfo.role ?? "element"} "${axInfo.name ?? ""}") looks potentially destructive or irreversible. Confirm it with the user, then retry with confirmRisky:true.`,
@@ -163,51 +166,19 @@ async function handleNavigate(
     opts: { tabId?: number; newTab?: boolean; background?: boolean },
     ctx: DispatchCtx,
 ): Promise<Record<string, unknown>> {
-    clearNetworkRequests();
-
     let windowId: number | undefined;
     let tabId: number;
     let reuseExistingTab: boolean;
     const active = !opts.background;
 
     if (opts.tabId != null && opts.tabId > 0) {
-        let tabFound = false;
         try {
             await chrome.tabs.get(opts.tabId);
-            tabFound = true;
         } catch {
-            console.log(`Requested tabId ${opts.tabId} does not exist — falling back.`);
+            return { error: `Requested tabId ${opts.tabId} no longer exists; navigation was not dispatched.` };
         }
-        if (tabFound) {
-            tabId = opts.tabId;
-            reuseExistingTab = true;
-        } else {
-            const lastActiveTabId = ctx.getLastActiveTabId();
-            let existingTabIsValid = false;
-            if (lastActiveTabId) {
-                try {
-                    await chrome.tabs.get(lastActiveTabId);
-                    existingTabIsValid = true;
-                } catch {
-                    console.log(`Stale lastActiveTabId ${lastActiveTabId} (tab no longer exists).`);
-                }
-            }
-            if (existingTabIsValid) {
-                tabId = lastActiveTabId!;
-                reuseExistingTab = true;
-            } else {
-                const fallbackTab = await findAttachableFallbackTab();
-                if (fallbackTab != null) {
-                    tabId = fallbackTab;
-                    reuseExistingTab = true;
-                } else {
-                    const newTab = await chrome.tabs.create({ url, active });
-                    tabId = newTab.id!;
-                    windowId = newTab.windowId;
-                    reuseExistingTab = false;
-                }
-            }
-        }
+        tabId = opts.tabId;
+        reuseExistingTab = true;
     } else if (opts.newTab) {
         const newTab = await chrome.tabs.create({ url, active });
         tabId = newTab.id!;
@@ -236,6 +207,7 @@ async function handleNavigate(
     }
 
     if (reuseExistingTab) {
+        clearNetworkRequests(tabId);
         const updatedTab = await chrome.tabs.update(tabId, { url, active });
         windowId = updatedTab?.windowId;
     }
@@ -252,20 +224,13 @@ async function handleNavigate(
     // Wait for the browser-level load event, then let the page's own JS
     // settle (SPA hydration, redirects) instead of guessing with a sleep.
     // Bounded and always cleaned up — see NAVIGATE_LOAD_TIMEOUT_MS above.
-    await new Promise<void>((resolve) => {
-        const timer = setTimeout(() => {
-            chrome.tabs.onUpdated.removeListener(listener);
-            resolve();
-        }, NAVIGATE_LOAD_TIMEOUT_MS);
-        function listener(updatedTabId: number, info: chrome.tabs.TabChangeInfo) {
-            if (updatedTabId === tabId && info.status === "complete") {
-                clearTimeout(timer);
-                chrome.tabs.onUpdated.removeListener(listener);
-                resolve();
-            }
-        }
-        chrome.tabs.onUpdated.addListener(listener);
-    });
+    const loaded = await waitForTabLoadComplete(tabId, NAVIGATE_LOAD_TIMEOUT_MS);
+    if (!loaded)
+        return {
+            success: false,
+            error: "Navigation was requested but loading did not complete. Inspect this tab before retrying.",
+            tabId,
+        };
 
     await ctx.attachDebuggerIfNeeded(tabId);
     await waitForStableDom({ tabId }, { timeoutMs: 3000 });
@@ -287,8 +252,24 @@ async function handleNavigate(
 export async function dispatchCommand(
     data: BrowserCommand & { id?: string },
     ctx: DispatchCtx,
+    execution: { signal?: AbortSignal; deadline?: number } = {},
 ): Promise<Record<string, unknown>> {
+    if (execution.signal?.aborted || (execution.deadline !== undefined && Date.now() >= execution.deadline))
+        return { error: "Request expired before execution" };
     const cmd = data.cmd;
+    if (data.tabId !== undefined && (!Number.isInteger(data.tabId) || data.tabId <= 0))
+        return { error: "tabId must be a positive integer; no fallback was attempted." };
+    if (cmd === "validate_flow" || cmd === "run_flow" || cmd === "explore_flow") {
+        const error = validateFlowSteps(data.steps);
+        if (error) return { success: false, error };
+        if (data.steps.length > 20) return { success: false, error: "A flow call supports at most 20 steps" };
+        if (cmd === "validate_flow")
+            return {
+                success: true,
+                message: "Workflow structure valid; page state and business outcome have not been checked.",
+                stepCount: data.steps.length,
+            };
+    }
     const effectiveTabId = typeof data.tabId === "number" && data.tabId > 0 ? data.tabId : undefined;
     if (data.sessionId) setEvidenceSession(data.sessionId);
 
@@ -332,6 +313,17 @@ export async function dispatchCommand(
         return queryEvidence(data.sessionId ?? "extension-session", data.mode, data.after, data.limit, data.profile);
     }
 
+    /** Recorder state is local; polling it must not attach a debugger or keep unrelated tabs awake. */
+    if (cmd === "flow_recording_status") {
+        return {
+            isRecording: flowRecorder.isRecording(),
+            stepCount: flowRecorder.getStepCount(),
+            ...(data.summary === true ? {} : { steps: flowRecorder.getRecordedSteps() }),
+        };
+    }
+
+    if (cmd === "stop_flow_recording") return flowRecorder.stop();
+
     if (cmd === "close_tab") {
         if (!effectiveTabId) {
             return {
@@ -356,7 +348,7 @@ export async function dispatchCommand(
             await chrome.tabs.get(effectiveTabId);
             targetTabId = effectiveTabId;
         } catch {
-            console.log(`Target tabId ${effectiveTabId} not found; falling back to active tab.`);
+            return { error: `Target tabId ${effectiveTabId} no longer exists; no fallback was attempted.` };
         }
     }
     if (!targetTabId) {
@@ -380,6 +372,27 @@ export async function dispatchCommand(
             error: "No active session. Call navigate first.",
             hint: "No tabId was given and no attachable browser tab could be found to fall back to (chrome://, the extension's own pages, and similar internal URLs can't be debugged). Open a normal web page tab, or run 'browsercontrol open <url>' first.",
         };
+    }
+
+    if (cmd === "start_flow_recording") {
+        let recTabId = targetTabId;
+        try {
+            if (!effectiveTabId) {
+                const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+                if (activeTab?.id != null && isAttachableUrl(activeTab.url)) {
+                    recTabId = activeTab.id;
+                    ctx.setLastActiveTabId(recTabId);
+                }
+            }
+        } catch {}
+        let dom = data.domain;
+        if (!dom) {
+            try {
+                const tab = await chrome.tabs.get(recTabId);
+                if (tab?.url) dom = new URL(tab.url).hostname;
+            } catch {}
+        }
+        return await flowRecorder.start(recTabId, dom);
     }
 
     // Safety Guard: Ensure tab belongs to the AI Workspace group (auto-group if running interactive flow)
@@ -426,7 +439,7 @@ export async function dispatchCommand(
         });
 
     if (cmd === "click") {
-        const nodeId = data.ref ? resolveSemanticRef(targetTabId, data.ref, data.documentId) : data.nodeId;
+        const nodeId = data.ref ? await resolveSemanticRef(targetTabId, data.ref, data.documentId) : data.nodeId;
         if (nodeId == null)
             return {
                 error: data.ref ? "Stale or invalid semantic ref" : "Missing nodeId",
@@ -458,7 +471,7 @@ export async function dispatchCommand(
             return { error: "Missing text", hint: "Pass the text to type (or --clear to empty the field)." };
         }
         const nodeId = data.ref
-            ? (resolveSemanticRef(targetTabId, data.ref, data.documentId) ?? undefined)
+            ? ((await resolveSemanticRef(targetTabId, data.ref, data.documentId)) ?? undefined)
             : data.nodeId;
         if (data.ref && nodeId == null) {
             return {
@@ -487,8 +500,13 @@ export async function dispatchCommand(
     }
 
     if (cmd === "press_key") {
+        if (/(^|\+)Enter$/i.test(data.key) && !data.confirmRisky)
+            return {
+                error: "risky_action_blocked",
+                hint: "Enter can submit a form. Confirm intent and use --confirm-risky before dispatching it.",
+            };
         const nodeId = data.ref
-            ? (resolveSemanticRef(targetTabId, data.ref, data.documentId) ?? undefined)
+            ? ((await resolveSemanticRef(targetTabId, data.ref, data.documentId)) ?? undefined)
             : data.nodeId;
         if (data.ref && nodeId == null) {
             return {
@@ -522,31 +540,28 @@ export async function dispatchCommand(
                 hint: "Pass a non-empty array of flow steps, e.g. [{action:'click', role:'button', name:'Login'}].",
             };
         }
-        // Auto-navigate to target domain if not currently matching
         if (data.domain) {
             let currentHost: string | undefined;
             try {
                 currentHost = new URL((await chrome.tabs.get(targetTabId)).url ?? "").hostname;
             } catch {}
             if (currentHost !== data.domain) {
-                const navResult = await handleNavigate(
-                    `https://${data.domain}`,
-                    {
-                        tabId: targetTabId,
-                    },
-                    ctx,
-                );
-                if ("error" in navResult) return navResult;
+                return {
+                    error: `Workflow domain mismatch: expected ${data.domain}, got ${currentHost ?? "unknown"}.`,
+                    hint: "Navigate explicitly to the workflow entry URL before running it; no implicit navigation was performed.",
+                };
             }
         }
         return await runFlowSteps(target, data.steps, {
             captureEachStep: cmd === "explore_flow",
             returnSnapshot: data.returnSnapshot,
+            ...execution,
+            runId: data.id,
         });
     }
 
     if (cmd === "scroll") {
-        const scrollNodeId = data.ref ? resolveSemanticRef(targetTabId, data.ref, data.documentId) : data.nodeId;
+        const scrollNodeId = data.ref ? await resolveSemanticRef(targetTabId, data.ref, data.documentId) : data.nodeId;
         if (data.ref && scrollNodeId == null) {
             return {
                 error: "Stale or invalid semantic ref",
@@ -585,7 +600,7 @@ export async function dispatchCommand(
     }
 
     if (cmd === "screenshot") {
-        const nodeId = data.ref ? resolveSemanticRef(targetTabId, data.ref, data.documentId) : data.nodeId;
+        const nodeId = data.ref ? await resolveSemanticRef(targetTabId, data.ref, data.documentId) : data.nodeId;
         if (data.ref && nodeId == null) {
             return {
                 error: "Stale or invalid semantic ref",
@@ -605,7 +620,7 @@ export async function dispatchCommand(
     }
 
     if (cmd === "inspect_element") {
-        const nodeId = data.ref ? resolveSemanticRef(targetTabId, data.ref, data.documentId) : data.nodeId;
+        const nodeId = data.ref ? await resolveSemanticRef(targetTabId, data.ref, data.documentId) : data.nodeId;
         if (nodeId == null)
             return {
                 error: data.ref ? "Stale or invalid semantic ref" : "Missing nodeId",
@@ -619,6 +634,7 @@ export async function dispatchCommand(
     if (cmd === "network_requests") {
         return {
             requests: listNetworkRequests({
+                tabId: targetTabId,
                 resourceTypes: data.resourceTypes,
                 filter: data.filter,
                 limit: data.limit,
@@ -636,7 +652,7 @@ export async function dispatchCommand(
     }
 
     if (cmd === "network_clear") {
-        clearNetworkRequests();
+        clearNetworkRequests(targetTabId);
         clearBlockedRequests();
         return { success: true, message: "Network log cleared." };
     }
@@ -655,7 +671,7 @@ export async function dispatchCommand(
 
     if (cmd === "dev_layout") {
         const nodeId = data.ref
-            ? (resolveSemanticRef(targetTabId, data.ref, data.documentId) ?? undefined)
+            ? ((await resolveSemanticRef(targetTabId, data.ref, data.documentId)) ?? undefined)
             : data.nodeId;
         if (data.ref && nodeId == null) {
             return {
@@ -683,7 +699,7 @@ export async function dispatchCommand(
                   success: true,
                   sandboxed: true,
                   message:
-                      "Sandbox ON for this tab — every POST/PUT/PATCH/DELETE is intercepted, nothing reaches the real server. Answered with a real response this endpoint already produced this session if one exists, otherwise the submitted body echoed back. GET/HEAD pass through unaffected. inspect.network_requests marks intercepted calls with blocked:true.",
+                      "HTTP mutation mock ON for this tab: POST/PUT/PATCH/DELETE are intercepted. GET/HEAD, WebSocket traffic and other channels still reach servers; this is not a security sandbox. Mock responses do not verify real backend behavior.",
               }
             : {
                   success: true,
@@ -692,41 +708,12 @@ export async function dispatchCommand(
               };
     }
 
-    if (cmd === "start_flow_recording") {
-        let recTabId = targetTabId;
-        try {
-            const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-            if (activeTab?.id != null && isAttachableUrl(activeTab.url)) {
-                recTabId = activeTab.id;
-                ctx.setLastActiveTabId(recTabId);
-            }
-        } catch {}
-        let dom = data.domain;
-        if (!dom) {
-            try {
-                const tab = await chrome.tabs.get(recTabId);
-                if (tab?.url) dom = new URL(tab.url).hostname;
-            } catch {}
-        }
-        return await flowRecorder.start(recTabId, dom);
-    }
-
-    if (cmd === "stop_flow_recording") {
-        return flowRecorder.stop();
-    }
-
-    if (cmd === "flow_recording_status") {
-        return {
-            isRecording: flowRecorder.isRecording(),
-            stepCount: flowRecorder.getStepCount(),
-            steps: flowRecorder.getRecordedSteps(),
-        };
-    }
-
     if (cmd === "evaluate") {
         const res = await sendCommand(target, "Runtime.evaluate", {
             expression: data.expression,
             returnByValue: true,
+            awaitPromise: true,
+            timeout: Math.max(1, Math.min(10000, (execution.deadline ?? Date.now() + 10000) - Date.now())),
         });
         if (res?.exceptionDetails) {
             return {

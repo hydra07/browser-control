@@ -1,0 +1,13 @@
+{
+  "classification": "synthetic",
+  "url": "https://example.test/orders?email=mai%40example.test&orderId=ORD-42",
+  "name": "Mai Nguyen",
+  "email": "mai@example.test",
+  "address": "12 Example Street",
+  "orderId": "ORD-42",
+  "nodes": [
+    { "role": "textbox", "name": "Email", "value": "mai@example.test" },
+    { "role": "textbox", "name": "Password", "value": "[REDACTED]" },
+    { "role": "button", "name": "Save order" }
+  ]
+}

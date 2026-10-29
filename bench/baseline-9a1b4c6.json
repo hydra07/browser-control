@@ -1,0 +1,2959 @@
+{
+  "schemaVersion": 1,
+  "task": "R0-05",
+  "baselineCommit": "9a1b4c6df6a4785a66186dd49f62f3bd49fbbe90",
+  "collectedAt": "2026-10-16T07:53:31Z",
+  "provenance": {
+    "arch": "amd64",
+    "archiveSha256": "c9e47b034cf7ce7ced910d71fa3e3c9d0b9e966a97000816cff394d04f99ab16",
+    "baselineSource": "archived original runtime inputs; extension endpoint-only patch; no current product source substituted",
+    "bridgeExecutableSha256": "8efa8a13460744d333b840229e5a7fe25133f2d0b00c64c17222e047c97862eb",
+    "chromeArchiveSha256": "507f2a031441d10c62b5e3d4e863f09ac1198a571c1419976cbd8387f639afde",
+    "chromeDistribution": "Chrome for Testing win64; official version/download recorded after Browser.getVersion",
+    "chromeDownloadUrl": "https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.84/win64/chrome-win64.zip",
+    "chromeExecutableSha256": "a2ae305da79e701af793b667c1ca3d87383729040596264e52f51259d7966413",
+    "chromeVersion": "Chrome/155.0.8059.84",
+    "endpointPatch": {
+      "file": "app/extension/entrypoints/offscreen/main.ts",
+      "fromPort": 8765,
+      "originalSha256": "9090f4589cbadf4a6c03bccea7806f380c6bb5542db5acadda0636de57143e18",
+      "patchedSha256": "9262bb830ada8550019fed751b706dc60273dfd1c840583467e92bf15b0ed286",
+      "toPort": 55861
+    },
+    "extensionFiles": 12,
+    "extensionTreeSha256": "42bf6a12b4873851ad1b11858b3c6ffda4f711d719d65da479174eacf01d92ca",
+    "go": "go1.26.3",
+    "harnessExecutableSha256": "29c718c98354cff6d60626dcdb0367d280d5987e866566eee062433e8697f67f",
+    "harnessGoInputFiles": 80,
+    "harnessGoInputsSha256": "2d77d9536ecc24ed11f65aae3885d83bd890cf56cc3ccba6269ebc1bc2de825a",
+    "harnessScope": "current worktree instrumentation; not the original product binary",
+    "logicalCPUs": 12,
+    "originalInputsSha256": "b39160881a3e6228284a30d6f1b20149ea7483ccadb49246c15782f46d859383",
+    "os": "windows",
+    "tokenizer": "github.com/tiktoken-go/tokenizer v0.8.1 / o200k_base / ordinary_text",
+    "verifiedOriginalFiles": 117
+  },
+  "method": {
+    "clock": "windows_qpc_ns",
+    "clockFrequency": 10000000,
+    "commandLatencyScope": "before host process launch to successful process wait after stdout pipe drained; includes launch/IPC/render/pipe; not first-response/connect decomposition",
+    "commandsPerQuerySample": 20,
+    "cpuCounterCaveat": "CDP cpuTime and Windows GetProcessTimes are independent counters and disagree materially on this host for short bursts; raw counters/cycles are retained. PID verification does not claim agreement or establish an overhead improvement.",
+    "cpuUnits": "SystemInfo cumulative process cpuTime seconds; percent is delta / wall window * 100 of one logical core; no overhead subtraction",
+    "fixture": "static synthetic inventory / 100 rows / 101 controls / no page script or external assets",
+    "fixtureHtmlSha256": "376df7c66a2f9154a5767d54937fae4fcb2fbeaf78eaa622af37e77a1e18246a",
+    "idleScope": "warm attached bridge idle after snapshot; \u003c=3 minute debugger lease; no 10-minute cold-idle claim",
+    "idleWindowNs": 2000000000,
+    "instrumentation": "one root browser WebSocket; setup tracing stopped and page CDP session detached before sampling; two SystemInfo.getProcessInfo calls per interval plus before/after inventory/attachment checks outside interval",
+    "osCpuUnits": "GetProcessTimes raw 100ns kernel/user counters; bracketing window reported separately",
+    "outputCounting": "exact text stdout with newline; hash and ordinary-text BPE counted after CPU interval; no raw page output persisted",
+    "processCountScope": "owned archived bridge daemon; transient snapshot children have exited; benchmark runner and one monitoring browser socket are separate test infrastructure",
+    "rendererMapping": "setup-only Chrome trace main frame URL+frame -\u003e processId; OS executable, parent PID and creation time cross-check; SystemInfo renderer membership checked before/after",
+    "runsPerScenario": 10,
+    "scenarioIsolation": "fresh Chrome for Testing profile per scenario; ten repeated windows in the same page; no navigating during sampling",
+    "statistics": "nearest-rank p50/p95; sequential fixed scenario order; no significance or optimization claim",
+    "warmupSnapshots": 3
+  },
+  "unavailable": {
+    "cdpCallsPerCommand": "original extension has no per-method counter; no inferred counts or runtime shim used in this baseline",
+    "coldIdleObserversAndCache": "10-minute detach/observer/cache behavior not measured in these warm-idle windows",
+    "connectLatency": "separate R0-S4 connect-spike-windows.json is a current harness probe; not an original bridge first-CDP-response measurement",
+    "hostedCI": "local Windows run; R0-06 Linux hosted CI dependency is still unverified",
+    "injectedPageCoreIdle": "original commit has no page core; bridge-idle is the available original-engine counterpart, not an injected page-core result",
+    "pageCoreMemory": "no original isolated page core to measure; worker heap is not a substitute",
+    "productionDirectCommands": "new direct snapshot/query runtime is not migrated; archived bridge is measured here",
+    "recoveryAndConformance": "R0-08/R5-17 fault matrix and R6-07 Flow conformance are separate acceptance suites",
+    "resumeAndCheckpoints": "production fast/slow resume and checkpoint store do not exist at original commit",
+    "successfulTaskTokens": "query output BPE is not total tokens per successful agent task; R4-12 task suite remains required"
+  },
+  "scenarios": [
+    {
+      "name": "chrome-only",
+      "extensionWorkersAtSetup": [
+        "Google Hangouts 1.4.5",
+        "Contextual Tasks 1.0"
+      ],
+      "summary": {
+        "rendererCdpCpuSecondsDelta": {
+          "count": 10,
+          "min": 0,
+          "p50": 0,
+          "p95": 0.004443999999999976,
+          "max": 0.004443999999999976
+        },
+        "rendererOsCpuSecondsDelta": {
+          "count": 10,
+          "min": 0,
+          "p50": 0,
+          "p95": 0,
+          "max": 0
+        },
+        "rendererOsCyclesDelta": {
+          "count": 10,
+          "min": 0,
+          "p50": 0,
+          "p95": 16410610,
+          "max": 16410610
+        },
+        "rendererPercentOfOneCore": {
+          "count": 10,
+          "min": 0,
+          "p50": 0,
+          "p95": 0.2220924517302484,
+          "max": 0.2220924517302484
+        }
+      },
+      "samples": [
+        {
+          "index": 1,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 24700,
+          "browserPid": 13924,
+          "browserControlHostProcesses": 0,
+          "pageAttachedBefore": false,
+          "pageAttachedAfter": false,
+          "wallNs": 2000968500,
+          "osWindowNs": 2021892800,
+          "rendererBefore": {
+            "cycles": 714835412,
+            "start": "01dd5d4370147cc8",
+            "kernel100ns": 0,
+            "user100ns": 625000,
+            "parentPid": 13924,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 731246022,
+            "start": "01dd5d4370147cc8",
+            "kernel100ns": 0,
+            "user100ns": 625000,
+            "parentPid": 13924,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 0.193561,
+          "rendererCdpCpuSecondsAfter": 0.198005,
+          "rendererCdpCpuSecondsDelta": 0.004443999999999976,
+          "rendererPercentOfOneCore": 0.2220924517302484
+        },
+        {
+          "index": 2,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 24700,
+          "browserPid": 13924,
+          "browserControlHostProcesses": 0,
+          "pageAttachedBefore": false,
+          "pageAttachedAfter": false,
+          "wallNs": 2000708800,
+          "osWindowNs": 2022371900,
+          "rendererBefore": {
+            "cycles": 731246022,
+            "start": "01dd5d4370147cc8",
+            "kernel100ns": 0,
+            "user100ns": 625000,
+            "parentPid": 13924,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 732410671,
+            "start": "01dd5d4370147cc8",
+            "kernel100ns": 0,
+            "user100ns": 625000,
+            "parentPid": 13924,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 0.198005,
+          "rendererCdpCpuSecondsAfter": 0.19832,
+          "rendererCdpCpuSecondsDelta": 0.0003150000000000097,
+          "rendererPercentOfOneCore": 0.015744420177489584
+        },
+        {
+          "index": 3,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 24700,
+          "browserPid": 13924,
+          "browserControlHostProcesses": 0,
+          "pageAttachedBefore": false,
+          "pageAttachedAfter": false,
+          "wallNs": 2000702500,
+          "osWindowNs": 2026721300,
+          "rendererBefore": {
+            "cycles": 732410671,
+            "start": "01dd5d4370147cc8",
+            "kernel100ns": 0,
+            "user100ns": 625000,
+            "parentPid": 13924,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 732839871,
+            "start": "01dd5d4370147cc8",
+            "kernel100ns": 0,
+            "user100ns": 625000,
+            "parentPid": 13924,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 0.19832,
+          "rendererCdpCpuSecondsAfter": 0.198436,
+          "rendererCdpCpuSecondsDelta": 0.00011600000000000499,
+          "rendererPercentOfOneCore": 0.0057979634653330505
+        },
+        {
+          "index": 4,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 24700,
+          "browserPid": 13924,
+          "browserControlHostProcesses": 0,
+          "pageAttachedBefore": false,
+          "pageAttachedAfter": false,
+          "wallNs": 2000991600,
+          "osWindowNs": 2022724200,
+          "rendererBefore": {
+            "cycles": 732839871,
+            "start": "01dd5d4370147cc8",
+            "kernel100ns": 0,
+            "user100ns": 625000,
+            "parentPid": 13924,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 732839871,
+            "start": "01dd5d4370147cc8",
+            "kernel100ns": 0,
+            "user100ns": 625000,
+            "parentPid": 13924,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 0.198436,
+          "rendererCdpCpuSecondsAfter": 0.198436,
+          "rendererCdpCpuSecondsDelta": 0,
+          "rendererPercentOfOneCore": 0
+        },
+        {
+          "index": 5,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 24700,
+          "browserPid": 13924,
+          "browserControlHostProcesses": 0,
+          "pageAttachedBefore": false,
+          "pageAttachedAfter": false,
+          "wallNs": 2001480100,
+          "osWindowNs": 2026631200,
+          "rendererBefore": {
+            "cycles": 732839871,
+            "start": "01dd5d4370147cc8",
+            "kernel100ns": 0,
+            "user100ns": 625000,
+            "parentPid": 13924,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 733887600,
+            "start": "01dd5d4370147cc8",
+            "kernel100ns": 0,
+            "user100ns": 625000,
+            "parentPid": 13924,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 0.198436,
+          "rendererCdpCpuSecondsAfter": 0.19872,
+          "rendererCdpCpuSecondsDelta": 0.00028400000000000647,
+          "rendererPercentOfOneCore": 0.014189499061220067
+        },
+        {
+          "index": 6,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 24700,
+          "browserPid": 13924,
+          "browserControlHostProcesses": 0,
+          "pageAttachedBefore": false,
+          "pageAttachedAfter": false,
+          "wallNs": 2000985000,
+          "osWindowNs": 2032879800,
+          "rendererBefore": {
+            "cycles": 733887600,
+            "start": "01dd5d4370147cc8",
+            "kernel100ns": 0,
+            "user100ns": 625000,
+            "parentPid": 13924,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 733887600,
+            "start": "01dd5d4370147cc8",
+            "kernel100ns": 0,
+            "user100ns": 625000,
+            "parentPid": 13924,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 0.19872,
+          "rendererCdpCpuSecondsAfter": 0.19872,
+          "rendererCdpCpuSecondsDelta": 0,
+          "rendererPercentOfOneCore": 0
+        },
+        {
+          "index": 7,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 24700,
+          "browserPid": 13924,
+          "browserControlHostProcesses": 0,
+          "pageAttachedBefore": false,
+          "pageAttachedAfter": false,
+          "wallNs": 2000938100,
+          "osWindowNs": 2025088100,
+          "rendererBefore": {
+            "cycles": 733887600,
+            "start": "01dd5d4370147cc8",
+            "kernel100ns": 0,
+            "user100ns": 625000,
+            "parentPid": 13924,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 733887600,
+            "start": "01dd5d4370147cc8",
+            "kernel100ns": 0,
+            "user100ns": 625000,
+            "parentPid": 13924,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 0.19872,
+          "rendererCdpCpuSecondsAfter": 0.19872,
+          "rendererCdpCpuSecondsDelta": 0,
+          "rendererPercentOfOneCore": 0
+        },
+        {
+          "index": 8,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 24700,
+          "browserPid": 13924,
+          "browserControlHostProcesses": 0,
+          "pageAttachedBefore": false,
+          "pageAttachedAfter": false,
+          "wallNs": 2001244400,
+          "osWindowNs": 2021790100,
+          "rendererBefore": {
+            "cycles": 733887600,
+            "start": "01dd5d4370147cc8",
+            "kernel100ns": 0,
+            "user100ns": 625000,
+            "parentPid": 13924,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 733887600,
+            "start": "01dd5d4370147cc8",
+            "kernel100ns": 0,
+            "user100ns": 625000,
+            "parentPid": 13924,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 0.19872,
+          "rendererCdpCpuSecondsAfter": 0.19872,
+          "rendererCdpCpuSecondsDelta": 0,
+          "rendererPercentOfOneCore": 0
+        },
+        {
+          "index": 9,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 24700,
+          "browserPid": 13924,
+          "browserControlHostProcesses": 0,
+          "pageAttachedBefore": false,
+          "pageAttachedAfter": false,
+          "wallNs": 2001394800,
+          "osWindowNs": 2028855900,
+          "rendererBefore": {
+            "cycles": 733887600,
+            "start": "01dd5d4370147cc8",
+            "kernel100ns": 0,
+            "user100ns": 625000,
+            "parentPid": 13924,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 733887600,
+            "start": "01dd5d4370147cc8",
+            "kernel100ns": 0,
+            "user100ns": 625000,
+            "parentPid": 13924,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 0.19872,
+          "rendererCdpCpuSecondsAfter": 0.19872,
+          "rendererCdpCpuSecondsDelta": 0,
+          "rendererPercentOfOneCore": 0
+        },
+        {
+          "index": 10,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 24700,
+          "browserPid": 13924,
+          "browserControlHostProcesses": 0,
+          "pageAttachedBefore": false,
+          "pageAttachedAfter": false,
+          "wallNs": 2000681500,
+          "osWindowNs": 2020017900,
+          "rendererBefore": {
+            "cycles": 733887600,
+            "start": "01dd5d4370147cc8",
+            "kernel100ns": 0,
+            "user100ns": 625000,
+            "parentPid": 13924,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 734155221,
+            "start": "01dd5d4370147cc8",
+            "kernel100ns": 0,
+            "user100ns": 625000,
+            "parentPid": 13924,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 0.19872,
+          "rendererCdpCpuSecondsAfter": 0.198792,
+          "rendererCdpCpuSecondsDelta": 0.00007199999999998874,
+          "rendererPercentOfOneCore": 0.003598773717855078
+        }
+      ]
+    },
+    {
+      "name": "bridge-idle",
+      "extensionWorkersAtSetup": [
+        "Google Hangouts 1.4.5",
+        "Contextual Tasks 1.0",
+        "BrowserControl Agent 0.2.0"
+      ],
+      "summary": {
+        "bridgeOsCpuSecondsDelta": {
+          "count": 10,
+          "min": 0,
+          "p50": 0,
+          "p95": 0,
+          "max": 0
+        },
+        "bridgeOsCyclesDelta": {
+          "count": 10,
+          "min": 0,
+          "p50": 0,
+          "p95": 150479,
+          "max": 150479
+        },
+        "rendererCdpCpuSecondsDelta": {
+          "count": 10,
+          "min": 0.0126,
+          "p50": 0.01417400000000002,
+          "p95": 0.016618999999999995,
+          "max": 0.016618999999999995
+        },
+        "rendererOsCpuSecondsDelta": {
+          "count": 10,
+          "min": 0,
+          "p50": 0,
+          "p95": 0,
+          "max": 0
+        },
+        "rendererOsCyclesDelta": {
+          "count": 10,
+          "min": 47934869,
+          "p50": 54008937,
+          "p95": 62531036,
+          "max": 62531036
+        },
+        "rendererPercentOfOneCore": {
+          "count": 10,
+          "min": 0.6297073120413632,
+          "p50": 0.7084560431615383,
+          "p95": 0.8305442376127139,
+          "max": 0.8305442376127139
+        }
+      },
+      "samples": [
+        {
+          "index": 1,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 15332,
+          "browserPid": 24596,
+          "bridgePid": 14312,
+          "browserControlHostProcesses": 1,
+          "pageAttachedBefore": true,
+          "pageAttachedAfter": true,
+          "wallNs": 2001172200,
+          "osWindowNs": 2047435700,
+          "rendererBefore": {
+            "cycles": 1177173093,
+            "start": "01dd5d437d7bb7b3",
+            "kernel100ns": 312500,
+            "user100ns": 781250,
+            "parentPid": 24596,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 1238510879,
+            "start": "01dd5d437d7bb7b3",
+            "kernel100ns": 312500,
+            "user100ns": 781250,
+            "parentPid": 24596,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 0.318752,
+          "rendererCdpCpuSecondsAfter": 0.335361,
+          "rendererCdpCpuSecondsDelta": 0.01660900000000004,
+          "rendererPercentOfOneCore": 0.829963558358448,
+          "bridgeBefore": {
+            "cycles": 91568784,
+            "start": "01dd5d437dfb7c45",
+            "kernel100ns": 0,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "bridgeAfter": {
+            "cycles": 91568784,
+            "start": "01dd5d437dfb7c45",
+            "kernel100ns": 0,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          }
+        },
+        {
+          "index": 2,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 15332,
+          "browserPid": 24596,
+          "bridgePid": 14312,
+          "browserControlHostProcesses": 1,
+          "pageAttachedBefore": true,
+          "pageAttachedAfter": true,
+          "wallNs": 2000829800,
+          "osWindowNs": 2036976600,
+          "rendererBefore": {
+            "cycles": 1239820753,
+            "start": "01dd5d437d7bb7b3",
+            "kernel100ns": 312500,
+            "user100ns": 781250,
+            "parentPid": 24596,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 1292022240,
+            "start": "01dd5d437d7bb7b3",
+            "kernel100ns": 312500,
+            "user100ns": 781250,
+            "parentPid": 24596,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 0.335715,
+          "rendererCdpCpuSecondsAfter": 0.34985,
+          "rendererCdpCpuSecondsDelta": 0.014135000000000009,
+          "rendererPercentOfOneCore": 0.7064568910359097,
+          "bridgeBefore": {
+            "cycles": 91568784,
+            "start": "01dd5d437dfb7c45",
+            "kernel100ns": 0,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "bridgeAfter": {
+            "cycles": 91568784,
+            "start": "01dd5d437dfb7c45",
+            "kernel100ns": 0,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          }
+        },
+        {
+          "index": 3,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 15332,
+          "browserPid": 24596,
+          "bridgePid": 14312,
+          "browserControlHostProcesses": 1,
+          "pageAttachedBefore": true,
+          "pageAttachedAfter": true,
+          "wallNs": 2000929600,
+          "osWindowNs": 2043027700,
+          "rendererBefore": {
+            "cycles": 1292022240,
+            "start": "01dd5d437d7bb7b3",
+            "kernel100ns": 312500,
+            "user100ns": 781250,
+            "parentPid": 24596,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 1339957109,
+            "start": "01dd5d437d7bb7b3",
+            "kernel100ns": 312500,
+            "user100ns": 781250,
+            "parentPid": 24596,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 0.35023,
+          "rendererCdpCpuSecondsAfter": 0.36283,
+          "rendererCdpCpuSecondsDelta": 0.0126,
+          "rendererPercentOfOneCore": 0.6297073120413632,
+          "bridgeBefore": {
+            "cycles": 91568784,
+            "start": "01dd5d437dfb7c45",
+            "kernel100ns": 0,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "bridgeAfter": {
+            "cycles": 91568784,
+            "start": "01dd5d437dfb7c45",
+            "kernel100ns": 0,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          }
+        },
+        {
+          "index": 4,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 15332,
+          "browserPid": 24596,
+          "bridgePid": 14312,
+          "browserControlHostProcesses": 1,
+          "pageAttachedBefore": true,
+          "pageAttachedAfter": true,
+          "wallNs": 2000925900,
+          "osWindowNs": 2038759400,
+          "rendererBefore": {
+            "cycles": 1339957109,
+            "start": "01dd5d437d7bb7b3",
+            "kernel100ns": 312500,
+            "user100ns": 781250,
+            "parentPid": 24596,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 1396007558,
+            "start": "01dd5d437d7bb7b3",
+            "kernel100ns": 312500,
+            "user100ns": 781250,
+            "parentPid": 24596,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 0.363396,
+          "rendererCdpCpuSecondsAfter": 0.378007,
+          "rendererCdpCpuSecondsDelta": 0.014610999999999985,
+          "rendererPercentOfOneCore": 0.7302119483784975,
+          "bridgeBefore": {
+            "cycles": 91568784,
+            "start": "01dd5d437dfb7c45",
+            "kernel100ns": 0,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "bridgeAfter": {
+            "cycles": 91568784,
+            "start": "01dd5d437dfb7c45",
+            "kernel100ns": 0,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          }
+        },
+        {
+          "index": 5,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 15332,
+          "browserPid": 24596,
+          "bridgePid": 14312,
+          "browserControlHostProcesses": 1,
+          "pageAttachedBefore": true,
+          "pageAttachedAfter": true,
+          "wallNs": 2000977100,
+          "osWindowNs": 2038614000,
+          "rendererBefore": {
+            "cycles": 1396007558,
+            "start": "01dd5d437d7bb7b3",
+            "kernel100ns": 312500,
+            "user100ns": 781250,
+            "parentPid": 24596,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 1458538594,
+            "start": "01dd5d437d7bb7b3",
+            "kernel100ns": 312500,
+            "user100ns": 781250,
+            "parentPid": 24596,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 0.378007,
+          "rendererCdpCpuSecondsAfter": 0.394626,
+          "rendererCdpCpuSecondsDelta": 0.016618999999999995,
+          "rendererPercentOfOneCore": 0.8305442376127139,
+          "bridgeBefore": {
+            "cycles": 91568784,
+            "start": "01dd5d437dfb7c45",
+            "kernel100ns": 0,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "bridgeAfter": {
+            "cycles": 91719263,
+            "start": "01dd5d437dfb7c45",
+            "kernel100ns": 0,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          }
+        },
+        {
+          "index": 6,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 15332,
+          "browserPid": 24596,
+          "bridgePid": 14312,
+          "browserControlHostProcesses": 1,
+          "pageAttachedBefore": true,
+          "pageAttachedAfter": true,
+          "wallNs": 2000948700,
+          "osWindowNs": 2042699500,
+          "rendererBefore": {
+            "cycles": 1458538594,
+            "start": "01dd5d437d7bb7b3",
+            "kernel100ns": 312500,
+            "user100ns": 781250,
+            "parentPid": 24596,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 1512547531,
+            "start": "01dd5d437d7bb7b3",
+            "kernel100ns": 312500,
+            "user100ns": 781250,
+            "parentPid": 24596,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 0.394939,
+          "rendererCdpCpuSecondsAfter": 0.40907,
+          "rendererCdpCpuSecondsDelta": 0.014131000000000005,
+          "rendererPercentOfOneCore": 0.7062150069114718,
+          "bridgeBefore": {
+            "cycles": 91719263,
+            "start": "01dd5d437dfb7c45",
+            "kernel100ns": 0,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "bridgeAfter": {
+            "cycles": 91719263,
+            "start": "01dd5d437dfb7c45",
+            "kernel100ns": 0,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          }
+        },
+        {
+          "index": 7,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 15332,
+          "browserPid": 24596,
+          "bridgePid": 14312,
+          "browserControlHostProcesses": 1,
+          "pageAttachedBefore": true,
+          "pageAttachedAfter": true,
+          "wallNs": 2001035000,
+          "osWindowNs": 2037344800,
+          "rendererBefore": {
+            "cycles": 1512547531,
+            "start": "01dd5d437d7bb7b3",
+            "kernel100ns": 312500,
+            "user100ns": 781250,
+            "parentPid": 24596,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 1562427601,
+            "start": "01dd5d437d7bb7b3",
+            "kernel100ns": 312500,
+            "user100ns": 781250,
+            "parentPid": 24596,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 0.409563,
+          "rendererCdpCpuSecondsAfter": 0.42307,
+          "rendererCdpCpuSecondsDelta": 0.013506999999999991,
+          "rendererPercentOfOneCore": 0.6750006871444024,
+          "bridgeBefore": {
+            "cycles": 91719263,
+            "start": "01dd5d437dfb7c45",
+            "kernel100ns": 0,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "bridgeAfter": {
+            "cycles": 91719263,
+            "start": "01dd5d437dfb7c45",
+            "kernel100ns": 0,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          }
+        },
+        {
+          "index": 8,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 15332,
+          "browserPid": 24596,
+          "bridgePid": 14312,
+          "browserControlHostProcesses": 1,
+          "pageAttachedBefore": true,
+          "pageAttachedAfter": true,
+          "wallNs": 2001199200,
+          "osWindowNs": 2043436100,
+          "rendererBefore": {
+            "cycles": 1562427601,
+            "start": "01dd5d437d7bb7b3",
+            "kernel100ns": 312500,
+            "user100ns": 781250,
+            "parentPid": 24596,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 1618253645,
+            "start": "01dd5d437d7bb7b3",
+            "kernel100ns": 312500,
+            "user100ns": 781250,
+            "parentPid": 24596,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 0.423345,
+          "rendererCdpCpuSecondsAfter": 0.438186,
+          "rendererCdpCpuSecondsDelta": 0.014840999999999993,
+          "rendererPercentOfOneCore": 0.7416053334420678,
+          "bridgeBefore": {
+            "cycles": 91719263,
+            "start": "01dd5d437dfb7c45",
+            "kernel100ns": 0,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "bridgeAfter": {
+            "cycles": 91719263,
+            "start": "01dd5d437dfb7c45",
+            "kernel100ns": 0,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          }
+        },
+        {
+          "index": 9,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 15332,
+          "browserPid": 24596,
+          "bridgePid": 14312,
+          "browserControlHostProcesses": 1,
+          "pageAttachedBefore": true,
+          "pageAttachedAfter": true,
+          "wallNs": 2000693800,
+          "osWindowNs": 2041940800,
+          "rendererBefore": {
+            "cycles": 1618253645,
+            "start": "01dd5d437d7bb7b3",
+            "kernel100ns": 312500,
+            "user100ns": 781250,
+            "parentPid": 24596,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 1678608230,
+            "start": "01dd5d437d7bb7b3",
+            "kernel100ns": 312500,
+            "user100ns": 781250,
+            "parentPid": 24596,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 0.438901,
+          "rendererCdpCpuSecondsAfter": 0.454529,
+          "rendererCdpCpuSecondsDelta": 0.01562800000000003,
+          "rendererPercentOfOneCore": 0.7811290263407639,
+          "bridgeBefore": {
+            "cycles": 91719263,
+            "start": "01dd5d437dfb7c45",
+            "kernel100ns": 0,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "bridgeAfter": {
+            "cycles": 91719263,
+            "start": "01dd5d437dfb7c45",
+            "kernel100ns": 0,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          }
+        },
+        {
+          "index": 10,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 15332,
+          "browserPid": 24596,
+          "bridgePid": 14312,
+          "browserControlHostProcesses": 1,
+          "pageAttachedBefore": true,
+          "pageAttachedAfter": true,
+          "wallNs": 2000688700,
+          "osWindowNs": 2042744800,
+          "rendererBefore": {
+            "cycles": 1678608230,
+            "start": "01dd5d437d7bb7b3",
+            "kernel100ns": 312500,
+            "user100ns": 781250,
+            "parentPid": 24596,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 1731862848,
+            "start": "01dd5d437d7bb7b3",
+            "kernel100ns": 312500,
+            "user100ns": 781250,
+            "parentPid": 24596,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 0.454775,
+          "rendererCdpCpuSecondsAfter": 0.468949,
+          "rendererCdpCpuSecondsDelta": 0.01417400000000002,
+          "rendererPercentOfOneCore": 0.7084560431615383,
+          "bridgeBefore": {
+            "cycles": 91719263,
+            "start": "01dd5d437dfb7c45",
+            "kernel100ns": 0,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "bridgeAfter": {
+            "cycles": 91719263,
+            "start": "01dd5d437dfb7c45",
+            "kernel100ns": 0,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "bridge-query",
+      "extensionWorkersAtSetup": [
+        "Google Hangouts 1.4.5",
+        "Contextual Tasks 1.0",
+        "BrowserControl Agent 0.2.0"
+      ],
+      "summary": {
+        "bridgeOsCpuSecondsDelta": {
+          "count": 10,
+          "min": 0,
+          "p50": 0,
+          "p95": 0.015625,
+          "max": 0.015625
+        },
+        "bridgeOsCyclesDelta": {
+          "count": 10,
+          "min": 100384885,
+          "p50": 117394044,
+          "p95": 144013620,
+          "max": 144013620
+        },
+        "commandLatencyNs": {
+          "count": 200,
+          "min": 74600100,
+          "p50": 88581900,
+          "p95": 135601300,
+          "max": 204542100
+        },
+        "rendererCdpCpuSecondsDelta": {
+          "count": 10,
+          "min": 0.40721000000000007,
+          "p50": 0.4348409999999996,
+          "p95": 0.665953,
+          "max": 0.665953
+        },
+        "rendererOsCpuSecondsDelta": {
+          "count": 10,
+          "min": 0.015625,
+          "p50": 0.046875,
+          "p95": 0.203125,
+          "max": 0.203125
+        },
+        "rendererOsCyclesDelta": {
+          "count": 10,
+          "min": 1503856046,
+          "p50": 1605894535,
+          "p95": 2459411090,
+          "max": 2459411090
+        },
+        "rendererPercentOfOneCore": {
+          "count": 10,
+          "min": 24.57652420070268,
+          "p50": 25.4186966639652,
+          "p95": 27.006064533211337,
+          "max": 27.006064533211337
+        },
+        "stdoutBytes": {
+          "count": 200,
+          "min": 2693,
+          "p50": 2693,
+          "p95": 2693,
+          "max": 2693
+        },
+        "stdoutTokens": {
+          "count": 200,
+          "min": 886,
+          "p50": 886,
+          "p95": 886,
+          "max": 886
+        }
+      },
+      "samples": [
+        {
+          "index": 1,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 24680,
+          "browserPid": 4968,
+          "bridgePid": 25344,
+          "browserControlHostProcesses": 1,
+          "pageAttachedBefore": true,
+          "pageAttachedAfter": true,
+          "wallNs": 2619933700,
+          "osWindowNs": 2667998300,
+          "rendererBefore": {
+            "cycles": 1060136284,
+            "start": "01dd5d438bf7711c",
+            "kernel100ns": 156250,
+            "user100ns": 312500,
+            "parentPid": 4968,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 3519547374,
+            "start": "01dd5d438bf7711c",
+            "kernel100ns": 156250,
+            "user100ns": 2343750,
+            "parentPid": 4968,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 0.287061,
+          "rendererCdpCpuSecondsAfter": 0.953014,
+          "rendererCdpCpuSecondsDelta": 0.665953,
+          "rendererPercentOfOneCore": 25.4186966639652,
+          "bridgeBefore": {
+            "cycles": 96606075,
+            "start": "01dd5d438c625ec8",
+            "kernel100ns": 0,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "bridgeAfter": {
+            "cycles": 240619695,
+            "start": "01dd5d438c625ec8",
+            "kernel100ns": 156250,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "commands": [
+            {
+              "durationNs": 170614900,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 198606400,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 176144500,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 126347000,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 130897100,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 135601300,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 121468000,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 109508700,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 112650500,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 124629600,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 122488500,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 103218600,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 97277500,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 101788400,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 119000200,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 138734500,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 92307100,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 118531800,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 204542100,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 114931700,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 24680,
+          "browserPid": 4968,
+          "bridgePid": 25344,
+          "browserControlHostProcesses": 1,
+          "pageAttachedBefore": true,
+          "pageAttachedAfter": true,
+          "wallNs": 1598122100,
+          "osWindowNs": 1641889200,
+          "rendererBefore": {
+            "cycles": 3519547374,
+            "start": "01dd5d438bf7711c",
+            "kernel100ns": 156250,
+            "user100ns": 2343750,
+            "parentPid": 4968,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 5023403420,
+            "start": "01dd5d438bf7711c",
+            "kernel100ns": 468750,
+            "user100ns": 2656250,
+            "parentPid": 4968,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 0.953014,
+          "rendererCdpCpuSecondsAfter": 1.360224,
+          "rendererCdpCpuSecondsDelta": 0.40721000000000007,
+          "rendererPercentOfOneCore": 25.480531180940435,
+          "bridgeBefore": {
+            "cycles": 240619695,
+            "start": "01dd5d438c625ec8",
+            "kernel100ns": 156250,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "bridgeAfter": {
+            "cycles": 361857521,
+            "start": "01dd5d438c625ec8",
+            "kernel100ns": 156250,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "commands": [
+            {
+              "durationNs": 76781700,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 83522800,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 83849400,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 83958100,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 82138100,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 75217300,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 74615900,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 79736700,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 75103000,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 80421900,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 82095100,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 79452800,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 78850900,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 80301300,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 78149200,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 79532200,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 94310900,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 76757500,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 76156800,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 76593300,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            }
+          ]
+        },
+        {
+          "index": 3,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 24680,
+          "browserPid": 4968,
+          "bridgePid": 25344,
+          "browserControlHostProcesses": 1,
+          "pageAttachedBefore": true,
+          "pageAttachedAfter": true,
+          "wallNs": 1955616300,
+          "osWindowNs": 2008235300,
+          "rendererBefore": {
+            "cycles": 5023403420,
+            "start": "01dd5d438bf7711c",
+            "kernel100ns": 468750,
+            "user100ns": 2656250,
+            "parentPid": 4968,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 6973839365,
+            "start": "01dd5d438bf7711c",
+            "kernel100ns": 468750,
+            "user100ns": 2812500,
+            "parentPid": 4968,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 1.360224,
+          "rendererCdpCpuSecondsAfter": 1.888359,
+          "rendererCdpCpuSecondsDelta": 0.5281349999999998,
+          "rendererPercentOfOneCore": 27.006064533211337,
+          "bridgeBefore": {
+            "cycles": 361857521,
+            "start": "01dd5d438c625ec8",
+            "kernel100ns": 156250,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "bridgeAfter": {
+            "cycles": 489810995,
+            "start": "01dd5d438c625ec8",
+            "kernel100ns": 156250,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "commands": [
+            {
+              "durationNs": 82914100,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 117375900,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 131587000,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 125117100,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 106718600,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 84106300,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 92143100,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 85565400,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 93664300,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 90800400,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 86288800,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 96370100,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 99816400,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 100894700,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 98477900,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 90904000,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 87150300,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 104150400,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 96127300,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 84512100,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            }
+          ]
+        },
+        {
+          "index": 4,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 24680,
+          "browserPid": 4968,
+          "bridgePid": 25344,
+          "browserControlHostProcesses": 1,
+          "pageAttachedBefore": true,
+          "pageAttachedAfter": true,
+          "wallNs": 1973429600,
+          "osWindowNs": 2022492900,
+          "rendererBefore": {
+            "cycles": 6973839365,
+            "start": "01dd5d438bf7711c",
+            "kernel100ns": 468750,
+            "user100ns": 2812500,
+            "parentPid": 4968,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 8825815979,
+            "start": "01dd5d438bf7711c",
+            "kernel100ns": 468750,
+            "user100ns": 3281250,
+            "parentPid": 4968,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 1.888359,
+          "rendererCdpCpuSecondsAfter": 2.389832,
+          "rendererCdpCpuSecondsDelta": 0.5014730000000003,
+          "rendererPercentOfOneCore": 25.411243451501907,
+          "bridgeBefore": {
+            "cycles": 489810995,
+            "start": "01dd5d438c625ec8",
+            "kernel100ns": 156250,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "bridgeAfter": {
+            "cycles": 607205039,
+            "start": "01dd5d438c625ec8",
+            "kernel100ns": 156250,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "commands": [
+            {
+              "durationNs": 97728500,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 99411300,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 83746500,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 88598800,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 87793600,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 76711400,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 84882300,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 85015000,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 78053600,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 75161100,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 74600100,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 85451800,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 89559700,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 151477800,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 147731900,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 132791100,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 112004600,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 108367600,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 111011800,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 102712200,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            }
+          ]
+        },
+        {
+          "index": 5,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 24680,
+          "browserPid": 4968,
+          "bridgePid": 25344,
+          "browserControlHostProcesses": 1,
+          "pageAttachedBefore": true,
+          "pageAttachedAfter": true,
+          "wallNs": 1866185700,
+          "osWindowNs": 1919348000,
+          "rendererBefore": {
+            "cycles": 8825815979,
+            "start": "01dd5d438bf7711c",
+            "kernel100ns": 468750,
+            "user100ns": 3281250,
+            "parentPid": 4968,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 10578229182,
+            "start": "01dd5d438bf7711c",
+            "kernel100ns": 468750,
+            "user100ns": 3750000,
+            "parentPid": 4968,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 2.389832,
+          "rendererCdpCpuSecondsAfter": 2.864346,
+          "rendererCdpCpuSecondsDelta": 0.47451399999999966,
+          "rendererPercentOfOneCore": 25.426944381794357,
+          "bridgeBefore": {
+            "cycles": 607205039,
+            "start": "01dd5d438c625ec8",
+            "kernel100ns": 156250,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "bridgeAfter": {
+            "cycles": 725638894,
+            "start": "01dd5d438c625ec8",
+            "kernel100ns": 156250,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "commands": [
+            {
+              "durationNs": 96203600,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 100406500,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 83888800,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 88023800,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 85990700,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 86139600,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 80387900,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 92711000,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 89849200,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 88693700,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 82918500,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 106766300,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 111158600,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 117062000,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 107242200,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 99929400,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 89013500,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 84140500,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 92759800,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 82344900,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            }
+          ]
+        },
+        {
+          "index": 6,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 24680,
+          "browserPid": 4968,
+          "bridgePid": 25344,
+          "browserControlHostProcesses": 1,
+          "pageAttachedBefore": true,
+          "pageAttachedAfter": true,
+          "wallNs": 1742088100,
+          "osWindowNs": 1778869300,
+          "rendererBefore": {
+            "cycles": 10578229182,
+            "start": "01dd5d438bf7711c",
+            "kernel100ns": 468750,
+            "user100ns": 3750000,
+            "parentPid": 4968,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 12180043542,
+            "start": "01dd5d438bf7711c",
+            "kernel100ns": 625000,
+            "user100ns": 4218750,
+            "parentPid": 4968,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 2.864346,
+          "rendererCdpCpuSecondsAfter": 3.298082,
+          "rendererCdpCpuSecondsDelta": 0.4337360000000001,
+          "rendererPercentOfOneCore": 24.897477917448615,
+          "bridgeBefore": {
+            "cycles": 725638894,
+            "start": "01dd5d438c625ec8",
+            "kernel100ns": 156250,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "bridgeAfter": {
+            "cycles": 826023779,
+            "start": "01dd5d438c625ec8",
+            "kernel100ns": 156250,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "commands": [
+            {
+              "durationNs": 90276100,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 82987700,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 95155300,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 95234000,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 84358400,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 94438400,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 93617600,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 88174400,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 95462000,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 99173100,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 88592600,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 102068300,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 88226100,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 77685000,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 76545600,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 78676300,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 77021900,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 80440800,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 76982400,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 76325400,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            }
+          ]
+        },
+        {
+          "index": 7,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 24680,
+          "browserPid": 4968,
+          "bridgePid": 25344,
+          "browserControlHostProcesses": 1,
+          "pageAttachedBefore": true,
+          "pageAttachedAfter": true,
+          "wallNs": 1732635100,
+          "osWindowNs": 1775020900,
+          "rendererBefore": {
+            "cycles": 12180043542,
+            "start": "01dd5d438bf7711c",
+            "kernel100ns": 625000,
+            "user100ns": 4218750,
+            "parentPid": 4968,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 13777868118,
+            "start": "01dd5d438bf7711c",
+            "kernel100ns": 625000,
+            "user100ns": 4375000,
+            "parentPid": 4968,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 3.298082,
+          "rendererCdpCpuSecondsAfter": 3.730737,
+          "rendererCdpCpuSecondsDelta": 0.432655,
+          "rendererPercentOfOneCore": 24.970924345235762,
+          "bridgeBefore": {
+            "cycles": 826023779,
+            "start": "01dd5d438c625ec8",
+            "kernel100ns": 156250,
+            "user100ns": 0,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "bridgeAfter": {
+            "cycles": 934477661,
+            "start": "01dd5d438c625ec8",
+            "kernel100ns": 156250,
+            "user100ns": 156250,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "commands": [
+            {
+              "durationNs": 88581900,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 79406900,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 97638200,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 75378100,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 80708400,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 81164600,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 77735000,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 78591500,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 82345800,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 75487300,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 78774500,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 78821500,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 78769800,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 77653400,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 77615400,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 88422000,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 82223400,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 114266600,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 117261200,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 120990900,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            }
+          ]
+        },
+        {
+          "index": 8,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 24680,
+          "browserPid": 4968,
+          "bridgePid": 25344,
+          "browserControlHostProcesses": 1,
+          "pageAttachedBefore": true,
+          "pageAttachedAfter": true,
+          "wallNs": 2084184500,
+          "osWindowNs": 2134042300,
+          "rendererBefore": {
+            "cycles": 13777868118,
+            "start": "01dd5d438bf7711c",
+            "kernel100ns": 625000,
+            "user100ns": 4375000,
+            "parentPid": 4968,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 15798139380,
+            "start": "01dd5d438bf7711c",
+            "kernel100ns": 625000,
+            "user100ns": 4687500,
+            "parentPid": 4968,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 3.730737,
+          "rendererCdpCpuSecondsAfter": 4.277781,
+          "rendererCdpCpuSecondsDelta": 0.5470440000000001,
+          "rendererPercentOfOneCore": 26.247388367008778,
+          "bridgeBefore": {
+            "cycles": 934477661,
+            "start": "01dd5d438c625ec8",
+            "kernel100ns": 156250,
+            "user100ns": 156250,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "bridgeAfter": {
+            "cycles": 1058630828,
+            "start": "01dd5d438c625ec8",
+            "kernel100ns": 156250,
+            "user100ns": 156250,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "commands": [
+            {
+              "durationNs": 98905100,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 89402000,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 88668200,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 109452900,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 135911100,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 122305500,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 110888100,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 101412200,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 105776400,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 98335800,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 98318700,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 100951500,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 107845400,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 95759800,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 96629900,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 98061300,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 129917500,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 101279700,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 96251200,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 97431400,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            }
+          ]
+        },
+        {
+          "index": 9,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 24680,
+          "browserPid": 4968,
+          "bridgePid": 25344,
+          "browserControlHostProcesses": 1,
+          "pageAttachedBefore": true,
+          "pageAttachedAfter": true,
+          "wallNs": 1733003400,
+          "osWindowNs": 1774235300,
+          "rendererBefore": {
+            "cycles": 15798139380,
+            "start": "01dd5d438bf7711c",
+            "kernel100ns": 625000,
+            "user100ns": 4687500,
+            "parentPid": 4968,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 17371063992,
+            "start": "01dd5d438bf7711c",
+            "kernel100ns": 625000,
+            "user100ns": 5156250,
+            "parentPid": 4968,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 4.277781,
+          "rendererCdpCpuSecondsAfter": 4.703693,
+          "rendererCdpCpuSecondsDelta": 0.4259120000000003,
+          "rendererPercentOfOneCore": 24.57652420070268,
+          "bridgeBefore": {
+            "cycles": 1058811240,
+            "start": "01dd5d438c625ec8",
+            "kernel100ns": 156250,
+            "user100ns": 156250,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "bridgeAfter": {
+            "cycles": 1166233525,
+            "start": "01dd5d438c625ec8",
+            "kernel100ns": 156250,
+            "user100ns": 156250,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "commands": [
+            {
+              "durationNs": 98167100,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 104081100,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 91329500,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 81333000,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 86464000,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 78667900,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 85632400,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 135992300,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 96188300,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 81017800,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 80871400,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 75772700,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 84091400,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 79447000,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 75868800,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 78809900,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 81524700,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 78964100,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 78582500,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 78640500,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            }
+          ]
+        },
+        {
+          "index": 10,
+          "pageCount": 1,
+          "pidVerified": true,
+          "rendererPid": 24680,
+          "browserPid": 4968,
+          "bridgePid": 25344,
+          "browserControlHostProcesses": 1,
+          "pageAttachedBefore": true,
+          "pageAttachedAfter": true,
+          "wallNs": 1674626800,
+          "osWindowNs": 1714916300,
+          "rendererBefore": {
+            "cycles": 17371063992,
+            "start": "01dd5d438bf7711c",
+            "kernel100ns": 625000,
+            "user100ns": 5156250,
+            "parentPid": 4968,
+            "imageVerified": true
+          },
+          "rendererAfter": {
+            "cycles": 18976958527,
+            "start": "01dd5d438bf7711c",
+            "kernel100ns": 625000,
+            "user100ns": 5312500,
+            "parentPid": 4968,
+            "imageVerified": true
+          },
+          "rendererCdpCpuSecondsBefore": 4.703693,
+          "rendererCdpCpuSecondsAfter": 5.138534,
+          "rendererCdpCpuSecondsDelta": 0.4348409999999996,
+          "rendererPercentOfOneCore": 25.96644219476241,
+          "bridgeBefore": {
+            "cycles": 1166233525,
+            "start": "01dd5d438c625ec8",
+            "kernel100ns": 156250,
+            "user100ns": 156250,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "bridgeAfter": {
+            "cycles": 1277200336,
+            "start": "01dd5d438c625ec8",
+            "kernel100ns": 156250,
+            "user100ns": 156250,
+            "parentPid": 632,
+            "imageVerified": true
+          },
+          "commands": [
+            {
+              "durationNs": 94009300,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 74887900,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 83470700,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 83274000,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 80016700,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 81433200,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 75181700,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 78146600,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 80511900,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 74898000,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 76962200,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 76739800,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 75792600,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 76537000,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 75821700,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 80080300,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 90486200,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 143164600,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 92540700,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            },
+            {
+              "durationNs": 80037900,
+              "exitCode": 0,
+              "stdoutBytes": 2693,
+              "stdoutTokens": 886,
+              "stdoutSha256": "856ea8037e4dc4b6aded260ebbbb7e6f8a5eb256087d7080568a6f15d14ceed8"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

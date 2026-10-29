@@ -9,6 +9,7 @@ import { errorMessage } from "../../libs/errorMessage.js";
 export class ScreencastRelay {
     private capturePort: chrome.runtime.Port | null;
     private relayedFrameCount: number;
+    private tabId: number | undefined;
     private listener: ((source: chrome.debugger.Debuggee, method: string, params?: unknown) => void) | null;
 
     constructor() {
@@ -17,14 +18,14 @@ export class ScreencastRelay {
         this.listener = null;
     }
 
-    public install(getActiveTabId: () => number | null): void {
+    public install(): void {
         if (this.listener) {
             chrome.debugger.onEvent.removeListener(this.listener);
         }
         this.listener = (source, method, params) => {
             if (method !== "Page.screencastFrame") return;
             if (!this.capturePort) return;
-            if (!source.tabId || source.tabId !== getActiveTabId()) return;
+            if (!source.tabId || source.tabId !== this.tabId) return;
             const p = params as Protocol.Page.ScreencastFrameEvent;
             try {
                 this.capturePort.postMessage({ data: p.data, metadata: p.metadata });
@@ -50,6 +51,8 @@ export class ScreencastRelay {
             };
         }
         this.relayedFrameCount = 0;
+        this.tabId = target.tabId;
+        this.capturePort = port;
         try {
             const { recordingQuality, recordingMaxWidth, recordingMaxHeight } = await getSettings();
             await sendCommand(target, "Page.startScreencast", {
@@ -60,6 +63,8 @@ export class ScreencastRelay {
                 everyNthFrame: 1,
             });
         } catch (e) {
+            this.capturePort = null;
+            this.tabId = undefined;
             return {
                 error: "Failed to start screencast",
                 hint: errorMessage(e),
@@ -79,6 +84,7 @@ export class ScreencastRelay {
 
     public async stop(target: chrome.debugger.Debuggee): Promise<void> {
         this.capturePort = null;
+        this.tabId = undefined;
         try {
             await sendCommand(target, "Page.stopScreencast");
         } catch {
@@ -99,8 +105,8 @@ export class ScreencastRelay {
 
 export const screencastRelay = new ScreencastRelay();
 
-export function installScreencastFrameRelay(getActiveTabId: () => number | null): void {
-    screencastRelay.install(getActiveTabId);
+export function installScreencastFrameRelay(): void {
+    screencastRelay.install();
 }
 
 export function startScreencastRelay(

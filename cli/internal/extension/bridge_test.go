@@ -1,16 +1,97 @@
 package extension
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+func TestClientCannotOverrideRequestIdentityOrDeadline(t *testing.T) {
+	client, connect := startBridge(t)
+	conn := connect(func(msg map[string]any) map[string]any {
+		if msg["id"] == "spoof" || msg["deadline"] == float64(1) || msg["type"] != nil {
+			t.Error("reserved envelope fields were overridden")
+		}
+		return map[string]any{"type": "result", "data": map[string]any{"success": true}}
+	})
+	defer conn.Close()
+	if _, err := client.Execute("snapshot", map[string]any{"id": "spoof", "deadline": 1, "type": "cancel"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDeadlineSendsCancellation(t *testing.T) {
+	client, connect := startBridge(t)
+	cancelled := make(chan string, 1)
+	conn := connect(func(msg map[string]any) map[string]any {
+		if msg["type"] == "cancel" {
+			cancelled <- msg["id"].(string)
+		}
+		return nil
+	})
+	defer conn.Close()
+	_, err := client.Execute("run_flow", map[string]any{"timeoutMs": 20})
+	if err == nil || !strings.Contains(err.Error(), "outcome unknown") {
+		t.Fatalf("unexpected timeout: %v", err)
+	}
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("cancel was not sent")
+	}
+}
+
+func TestCaptureBinaryFramesAreSavedIncludingFinalChunk(t *testing.T) {
+	client, connect := startBridge(t)
+	var conn *websocket.Conn
+	conn = connect(func(msg map[string]any) map[string]any {
+		if msg["cmd"] == "stop_capture" {
+			payload := []byte("webm-first-and-final")
+			packet := make([]byte, 8+len(payload))
+			packet[0], packet[1], packet[2] = 0xbc, 1, 2
+			binary.LittleEndian.PutUint32(packet[4:8], uint32(len(payload)))
+			copy(packet[8:], payload)
+			_ = conn.WriteMessage(websocket.BinaryMessage, packet)
+		}
+		return map[string]any{"type": "result", "data": map[string]any{"success": true, "isStreamed": true}}
+	})
+	defer conn.Close()
+	if _, err := client.Execute("start_capture", map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := client.Execute("stop_capture", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reply struct {
+		Result map[string]any `json:"result"`
+	}
+	_ = json.Unmarshal(data, &reply)
+	path, _ := reply.Result["dataPath"].(string)
+	bytes, err := os.ReadFile(path)
+	if err != nil || string(bytes) != "webm-first-and-final" {
+		t.Fatalf("artifact: %q %v", bytes, err)
+	}
+}
+
+func TestTokenIsNeverDisclosedByDefault(t *testing.T) {
+	t.Setenv("BROWSERCONTROL_HOME", t.TempDir())
+	t.Setenv("BROWSERCONTROL_AUTO_PAIR", "")
+	server, _, _ := NewServer(Config{Token: testToken})
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+	if _, err := dialExtension(t, ts.URL, "chrome-extension://forged", ""); err == nil {
+		t.Fatal("origin alone must not disclose the bearer token")
+	}
+}
 
 const testToken = "0123456789abcdef0123456789abcdef"
 
@@ -170,6 +251,7 @@ func dialExtension(t *testing.T, url, origin, token string) (map[string]any, err
 }
 
 func TestAutoPairTrustsFirstExtensionOnly(t *testing.T) {
+	t.Setenv("BROWSERCONTROL_AUTO_PAIR", "1")
 	t.Setenv("BROWSERCONTROL_HOME", t.TempDir())
 	t.Setenv("BROWSERCONTROL_EXTENSION_ID", "")
 	server, _, err := NewServer(Config{Token: testToken})

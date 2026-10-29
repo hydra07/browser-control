@@ -59,7 +59,7 @@ function toCompactEntry(node: AXNode): SnapshotEntry {
 const MAX_SEMANTIC_TEXT = 200;
 
 function boundedSemanticText(value: string | undefined): string | undefined {
-    const normalized = value?.replace(/\\s+/g, " ").trim();
+    const normalized = value?.replace(/\s+/g, " ").trim();
     if (!normalized) return undefined;
     return normalized.length > MAX_SEMANTIC_TEXT ? `${normalized.slice(0, MAX_SEMANTIC_TEXT - 1)}…` : normalized;
 }
@@ -270,8 +270,13 @@ export function clearSemanticState(tabId: number): void {
 }
 
 /** Resolves a document-scoped runtime ref only when the caller supplies the current document epoch. */
-export function resolveSemanticRef(tabId: number, ref: string, documentId: string | undefined): number | null {
+export async function resolveSemanticRef(
+    tabId: number,
+    ref: string,
+    documentId: string | undefined,
+): Promise<number | null> {
     if (!documentId) return null;
+    await handleSemanticSnapshotCommand({ tabId });
     const state = semanticStates.get(tabId);
     if (!state) return null;
     const scope = state.getScope();

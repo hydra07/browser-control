@@ -3,15 +3,115 @@ package main
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
+	extbridge "github.com/hydra07/browsercontrol/cli/internal/extension"
 	"image"
 	"image/jpeg"
 	"image/png"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
+
+func testSession(t *testing.T, handler http.HandlerFunc) *session {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	return &session{g: globalOpts{cfg: extbridge.Config{BaseURL: server.URL, Token: "0123456789abcdef0123456789abcdef", Timeout: time.Second}, noAutostart: true}, state: &cliState{}}
+}
+
+func TestCommandFailurePreservesResultAndStopsBatch(t *testing.T) {
+	calls := 0
+	s := testSession(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		writeCompactJSON(w, map[string]any{"success": true, "result": map[string]any{"success": false, "reason": "assert_failed", "message": "missing text", "steps": []any{map[string]any{"success": false}}}})
+	})
+	_, err := cmdDo(s, cmdArgs{pos: []string{"exec fail_flow", "exec after_failure"}})
+	var ce *cmdError
+	if !errors.As(err, &ce) || ce.Result == nil || calls != 1 {
+		t.Fatalf("must stop and preserve result: %v calls=%d", err, calls)
+	}
+}
+
+func TestBatchHonorsEachStepsTimeoutWithoutEchoingInput(t *testing.T) {
+	var timeouts []float64
+	s := testSession(t, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		timeouts = append(timeouts, body["timeoutMs"].(float64))
+		writeCompactJSON(w, map[string]any{"success": true, "result": map[string]any{"success": true}})
+	})
+	out, err := cmdDo(s, cmdArgs{pos: []string{`type 42 "super-secret" --timeout 5ms`, `type 42 "Tiếng Việt 😀" --timeout 10ms`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(timeouts, []float64{5, 10}) {
+		t.Fatalf("timeouts=%v", timeouts)
+	}
+	data, _ := json.Marshal(out.data)
+	if strings.Contains(out.text, "super-secret") || strings.Contains(string(data), "super-secret") {
+		t.Fatal("batch echoed input")
+	}
+	words, _ := splitCommandLine(`type 42 "Tiếng Việt 😀"`)
+	if words[2] != "Tiếng Việt 😀" {
+		t.Fatalf("corrupted UTF-8: %q", words[2])
+	}
+}
+
+func TestUnknownOutcomeIsNeverAutomaticallyReplayed(t *testing.T) {
+	calls := 0
+	s := testSession(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		conn, _, _ := w.(http.Hijacker).Hijack()
+		_ = conn.Close()
+	})
+	_, err := s.call("click", map[string]any{"nodeId": 42})
+	if err == nil || !strings.Contains(err.Error(), "outcome unknown") || calls != 1 {
+		t.Fatalf("err=%v calls=%d", err, calls)
+	}
+}
+
+func TestAmbiguousTargetFailsWithoutActing(t *testing.T) {
+	s := testSession(t, func(w http.ResponseWriter, r *http.Request) {
+		writeCompactJSON(w, map[string]any{"result": map[string]any{"count": 2, "matches": []any{map[string]any{"i": 42}}}})
+	})
+	payload := map[string]any{}
+	if err := s.applyTarget(payload, "#duplicate", false); err == nil || payload["nodeId"] != nil {
+		t.Fatalf("unsafe resolution: %v %v", payload, err)
+	}
+}
+
+func TestRefScopeRejectsCrossTabAndPinsRememberedTab(t *testing.T) {
+	s := &session{g: globalOpts{tabID: float64(8)}, state: &cliState{DocumentID: "doc", TabID: 7}}
+	if err := s.applyTarget(map[string]any{}, "e1", false); err == nil {
+		t.Fatal("cross-tab cache must be rejected")
+	}
+	s.g.tabID = nil
+	p := map[string]any{}
+	if err := s.applyTarget(p, "e1", false); err != nil || p["tabId"] != 7 {
+		t.Fatalf("must pin cached tab: %v %v", p, err)
+	}
+}
+
+func TestFlowEnvironmentBindingsAreExecutionOnly(t *testing.T) {
+	t.Setenv("BC_TEST_INPUT", "secret-value")
+	steps := []json.RawMessage{json.RawMessage(`{"action":"fill","selector":"#email","textFromEnv":"BC_TEST_INPUT"}`)}
+	bound, err := bindFlowEnvironment(steps)
+	if err != nil || !strings.Contains(string(bound[0]), "secret-value") || strings.Contains(string(bound[0]), "textFromEnv") {
+		t.Fatalf("binding: %s %v", bound, err)
+	}
+	if strings.Contains(string(steps[0]), "secret-value") {
+		t.Fatal("saved recipe was modified")
+	}
+	if _, err := bindFlowEnvironment([]json.RawMessage{json.RawMessage(`{"action":"fill","textFromEnv":"BC_UNSET_TEST"}`)}); err == nil {
+		t.Fatal("missing variables must fail before execution")
+	}
+}
 
 func TestParseCLISeparatesGlobalAndPayloadFlags(t *testing.T) {
 	g, a, err := parseCLI([]string{"type", "12", "123", "--tab", "5", "--json", "--timeout", "5s", "--confirm-risky", "--max-chars", "300", "--text", "007"}, globalOpts{})
@@ -54,7 +154,7 @@ func TestSplitCommandLine(t *testing.T) {
 }
 
 func TestApplyTargetWithoutBridge(t *testing.T) {
-	s := &session{state: &cliState{DocumentID: "d4"}}
+	s := &session{state: &cliState{DocumentID: "d4", TabID: 7}}
 	p := map[string]any{}
 	if err := s.applyTarget(p, "42", false); err != nil || p["nodeId"] != 42 {
 		t.Fatalf("numeric target: %v %v", p, err)
@@ -114,7 +214,7 @@ func TestRenderDelta(t *testing.T) {
 		"changed": []any{map[string]any{"ref": "e2", "role": "textbox", "name": "Email", "value": "a@b"}},
 		"removed": []any{"e7"},
 	}
-	got := renderDelta(delta, "")
+	got := snapshotDeltaView(delta, "", 0).text
 	want := "doc d1 diff r1→r2\n+ e9 button \"Save\"\n~ e2 textbox \"Email\" = \"a@b\"\n- e7"
 	if got != want {
 		t.Fatalf("got %q", got)

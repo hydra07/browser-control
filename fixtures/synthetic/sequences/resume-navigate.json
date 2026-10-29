@@ -1,0 +1,3583 @@
+{
+  "schemaVersion": 1,
+  "classification": "synthetic",
+  "id": "resume-navigate",
+  "kind": "resume",
+  "states": [
+    {
+      "id": "s0",
+      "observation": "snapshot_at",
+      "document": "ca8793f8-98a4-4fe4-a6e7-578f8c66d8df",
+      "browser": "browser-1",
+      "snapshot": {
+        "epoch": "fixture_RYCGWIYII35EWQAFAD4AE22Y2B",
+        "url": "http://fixture.test/sequence.html",
+        "browser": "Chrome/155.0.8059.79",
+        "frames": [
+          {
+            "id": "85ADA859C1CF36E805A863F08EBD2111",
+            "url": "http://fixture.test/sequence.html"
+          }
+        ],
+        "documents": [
+          {
+            "frameId": "85ADA859C1CF36E805A863F08EBD2111",
+            "url": "http://fixture.test/sequence.html",
+            "title": "Sequence ground truth fixture",
+            "nodes": [
+              {
+                "index": 0,
+                "parent": -1,
+                "handle": 3,
+                "type": 9,
+                "name": "#document"
+              },
+              {
+                "index": 1,
+                "parent": 0,
+                "handle": 4,
+                "type": 10,
+                "name": "html"
+              },
+              {
+                "index": 2,
+                "parent": 0,
+                "handle": 5,
+                "type": 1,
+                "name": "HTML"
+              },
+              {
+                "index": 3,
+                "parent": 2,
+                "handle": 6,
+                "type": 1,
+                "name": "HEAD"
+              },
+              {
+                "index": 4,
+                "parent": 3,
+                "handle": 7,
+                "type": 1,
+                "name": "META"
+              },
+              {
+                "index": 5,
+                "parent": 3,
+                "handle": 8,
+                "type": 1,
+                "name": "TITLE"
+              },
+              {
+                "index": 6,
+                "parent": 5,
+                "handle": 9,
+                "type": 3,
+                "name": "#text",
+                "text": "Sequence ground truth fixture"
+              },
+              {
+                "index": 7,
+                "parent": 3,
+                "handle": 10,
+                "type": 3,
+                "name": "#text",
+                "text": "\n"
+              },
+              {
+                "index": 8,
+                "parent": 2,
+                "handle": 11,
+                "type": 1,
+                "name": "BODY"
+              },
+              {
+                "index": 9,
+                "parent": 8,
+                "handle": 12,
+                "type": 1,
+                "name": "MAIN",
+                "attributes": {
+                  "id": "fixture-root"
+                }
+              },
+              {
+                "index": 10,
+                "parent": 9,
+                "handle": 13,
+                "type": 3,
+                "name": "#text",
+                "text": "\n"
+              },
+              {
+                "index": 11,
+                "parent": 9,
+                "handle": 14,
+                "type": 1,
+                "name": "HEADER",
+                "attributes": {
+                  "id": "header"
+                }
+              },
+              {
+                "index": 12,
+                "parent": 11,
+                "handle": 15,
+                "type": 1,
+                "name": "H1",
+                "attributes": {
+                  "data-testid": "screen-title"
+                }
+              },
+              {
+                "index": 13,
+                "parent": 12,
+                "handle": 16,
+                "type": 3,
+                "name": "#text",
+                "text": "Customer orders"
+              },
+              {
+                "index": 14,
+                "parent": 11,
+                "handle": 17,
+                "type": 1,
+                "name": "BUTTON",
+                "attributes": {
+                  "data-testid": "navigate"
+                }
+              },
+              {
+                "index": 15,
+                "parent": 14,
+                "handle": 18,
+                "type": 3,
+                "name": "#text",
+                "text": "Monthly report"
+              },
+              {
+                "index": 16,
+                "parent": 9,
+                "handle": 19,
+                "type": 3,
+                "name": "#text",
+                "text": "\n"
+              },
+              {
+                "index": 17,
+                "parent": 9,
+                "handle": 20,
+                "type": 1,
+                "name": "SECTION",
+                "attributes": {
+                  "data-test": "customer",
+                  "id": "customer"
+                }
+              },
+              {
+                "index": 18,
+                "parent": 17,
+                "handle": 21,
+                "type": 1,
+                "name": "H2"
+              },
+              {
+                "index": 19,
+                "parent": 18,
+                "handle": 22,
+                "type": 3,
+                "name": "#text",
+                "text": "Customer editor"
+              },
+              {
+                "index": 20,
+                "parent": 17,
+                "handle": 23,
+                "type": 1,
+                "name": "LABEL"
+              },
+              {
+                "index": 21,
+                "parent": 20,
+                "handle": 24,
+                "type": 3,
+                "name": "#text",
+                "text": "Customer name "
+              },
+              {
+                "index": 22,
+                "parent": 20,
+                "handle": 1,
+                "type": 1,
+                "name": "INPUT",
+                "value": "Mai Nguyen",
+                "attributes": {
+                  "data-testid": "customer-name",
+                  "value": "Mai Nguyen"
+                }
+              },
+              {
+                "index": 23,
+                "parent": 17,
+                "handle": 25,
+                "type": 1,
+                "name": "BUTTON",
+                "attributes": {
+                  "data-testid": "save"
+                }
+              },
+              {
+                "index": 24,
+                "parent": 23,
+                "handle": 26,
+                "type": 3,
+                "name": "#text",
+                "text": "Save customer"
+              },
+              {
+                "index": 25,
+                "parent": 9,
+                "handle": 27,
+                "type": 3,
+                "name": "#text",
+                "text": "\n"
+              },
+              {
+                "index": 26,
+                "parent": 9,
+                "handle": 28,
+                "type": 1,
+                "name": "P",
+                "attributes": {
+                  "data-testid": "status",
+                  "role": "status"
+                }
+              },
+              {
+                "index": 27,
+                "parent": 26,
+                "handle": 29,
+                "type": 3,
+                "name": "#text",
+                "text": "Draft"
+              },
+              {
+                "index": 28,
+                "parent": 9,
+                "handle": 30,
+                "type": 3,
+                "name": "#text",
+                "text": "\n"
+              },
+              {
+                "index": 29,
+                "parent": 9,
+                "handle": 31,
+                "type": 1,
+                "name": "SECTION",
+                "attributes": {
+                  "data-test": "editor"
+                }
+              },
+              {
+                "index": 30,
+                "parent": 29,
+                "handle": 32,
+                "type": 1,
+                "name": "BUTTON",
+                "attributes": {
+                  "data-testid": "open-editor"
+                }
+              },
+              {
+                "index": 31,
+                "parent": 30,
+                "handle": 33,
+                "type": 3,
+                "name": "#text",
+                "text": "Edit order"
+              },
+              {
+                "index": 32,
+                "parent": 29,
+                "handle": 34,
+                "type": 1,
+                "name": "DIALOG",
+                "attributes": {
+                  "aria-label": "Edit order",
+                  "data-testid": "dialog"
+                }
+              },
+              {
+                "index": 33,
+                "parent": 32,
+                "handle": 35,
+                "type": 1,
+                "name": "LABEL"
+              },
+              {
+                "index": 34,
+                "parent": 33,
+                "handle": 36,
+                "type": 3,
+                "name": "#text",
+                "text": "Notes "
+              },
+              {
+                "index": 35,
+                "parent": 33,
+                "handle": 2,
+                "type": 1,
+                "name": "TEXTAREA",
+                "value": "Leave at reception",
+                "attributes": {
+                  "data-testid": "notes"
+                }
+              },
+              {
+                "index": 36,
+                "parent": 35,
+                "handle": 37,
+                "type": 3,
+                "name": "#text",
+                "text": "Leave at reception"
+              },
+              {
+                "index": 37,
+                "parent": 32,
+                "handle": 38,
+                "type": 1,
+                "name": "BUTTON",
+                "attributes": {
+                  "data-testid": "save-order"
+                }
+              },
+              {
+                "index": 38,
+                "parent": 37,
+                "handle": 39,
+                "type": 3,
+                "name": "#text",
+                "text": "Save order"
+              },
+              {
+                "index": 39,
+                "parent": 9,
+                "handle": 40,
+                "type": 3,
+                "name": "#text",
+                "text": "\n"
+              },
+              {
+                "index": 40,
+                "parent": 9,
+                "handle": 41,
+                "type": 1,
+                "name": "SECTION",
+                "attributes": {
+                  "data-test": "replacement"
+                }
+              },
+              {
+                "index": 41,
+                "parent": 40,
+                "handle": 42,
+                "type": 1,
+                "name": "BUTTON",
+                "attributes": {
+                  "data-testid": "replace"
+                }
+              },
+              {
+                "index": 42,
+                "parent": 41,
+                "handle": 43,
+                "type": 3,
+                "name": "#text",
+                "text": "Replace control"
+              },
+              {
+                "index": 43,
+                "parent": 40,
+                "handle": 44,
+                "type": 1,
+                "name": "BUTTON",
+                "attributes": {
+                  "data-testid": "replace-target"
+                }
+              },
+              {
+                "index": 44,
+                "parent": 43,
+                "handle": 45,
+                "type": 3,
+                "name": "#text",
+                "text": "Approve order"
+              },
+              {
+                "index": 45,
+                "parent": 9,
+                "handle": 46,
+                "type": 3,
+                "name": "#text",
+                "text": "\n"
+              },
+              {
+                "index": 46,
+                "parent": 9,
+                "handle": 47,
+                "type": 1,
+                "name": "SECTION",
+                "attributes": {
+                  "data-test": "orders"
+                }
+              },
+              {
+                "index": 47,
+                "parent": 46,
+                "handle": 48,
+                "type": 1,
+                "name": "H2"
+              },
+              {
+                "index": 48,
+                "parent": 47,
+                "handle": 49,
+                "type": 3,
+                "name": "#text",
+                "text": "Orders"
+              },
+              {
+                "index": 49,
+                "parent": 46,
+                "handle": 50,
+                "type": 1,
+                "name": "TABLE",
+                "attributes": {
+                  "aria-label": "Orders",
+                  "aria-rowcount": "2",
+                  "data-testid": "orders-table"
+                }
+              },
+              {
+                "index": 50,
+                "parent": 49,
+                "handle": 51,
+                "type": 1,
+                "name": "THEAD"
+              },
+              {
+                "index": 51,
+                "parent": 50,
+                "handle": 52,
+                "type": 1,
+                "name": "TR"
+              },
+              {
+                "index": 52,
+                "parent": 51,
+                "handle": 53,
+                "type": 1,
+                "name": "TH"
+              },
+              {
+                "index": 53,
+                "parent": 52,
+                "handle": 54,
+                "type": 3,
+                "name": "#text",
+                "text": "Order"
+              },
+              {
+                "index": 54,
+                "parent": 51,
+                "handle": 55,
+                "type": 1,
+                "name": "TH"
+              },
+              {
+                "index": 55,
+                "parent": 54,
+                "handle": 56,
+                "type": 3,
+                "name": "#text",
+                "text": "Customer"
+              },
+              {
+                "index": 56,
+                "parent": 51,
+                "handle": 57,
+                "type": 1,
+                "name": "TH"
+              },
+              {
+                "index": 57,
+                "parent": 56,
+                "handle": 58,
+                "type": 3,
+                "name": "#text",
+                "text": "Status"
+              },
+              {
+                "index": 58,
+                "parent": 51,
+                "handle": 59,
+                "type": 1,
+                "name": "TH"
+              },
+              {
+                "index": 59,
+                "parent": 58,
+                "handle": 60,
+                "type": 3,
+                "name": "#text",
+                "text": "Action"
+              },
+              {
+                "index": 60,
+                "parent": 49,
+                "handle": 61,
+                "type": 1,
+                "name": "TBODY",
+                "attributes": {
+                  "data-testid": "rows",
+                  "id": "rows"
+                }
+              },
+              {
+                "index": 61,
+                "parent": 60,
+                "handle": 62,
+                "type": 1,
+                "name": "TR",
+                "attributes": {
+                  "data-test": "ORD-42",
+                  "data-testid": "row-slot-0"
+                }
+              },
+              {
+                "index": 62,
+                "parent": 61,
+                "handle": 63,
+                "type": 1,
+                "name": "TD"
+              },
+              {
+                "index": 63,
+                "parent": 62,
+                "handle": 64,
+                "type": 3,
+                "name": "#text",
+                "text": "ORD-42"
+              },
+              {
+                "index": 64,
+                "parent": 61,
+                "handle": 65,
+                "type": 1,
+                "name": "TD"
+              },
+              {
+                "index": 65,
+                "parent": 64,
+                "handle": 66,
+                "type": 3,
+                "name": "#text",
+                "text": "Mai Nguyen"
+              },
+              {
+                "index": 66,
+                "parent": 61,
+                "handle": 67,
+                "type": 1,
+                "name": "TD",
+                "attributes": {
+                  "data-testid": "row-slot-0-status"
+                }
+              },
+              {
+                "index": 67,
+                "parent": 66,
+                "handle": 68,
+                "type": 3,
+                "name": "#text",
+                "text": "Pending"
+              },
+              {
+                "index": 68,
+                "parent": 61,
+                "handle": 69,
+                "type": 1,
+                "name": "TD"
+              },
+              {
+                "index": 69,
+                "parent": 68,
+                "handle": 70,
+                "type": 1,
+                "name": "BUTTON",
+                "attributes": {
+                  "data-testid": "row-slot-0-action"
+                }
+              },
+              {
+                "index": 70,
+                "parent": 69,
+                "handle": 71,
+                "type": 3,
+                "name": "#text",
+                "text": "Open"
+              },
+              {
+                "index": 71,
+                "parent": 60,
+                "handle": 72,
+                "type": 1,
+                "name": "TR",
+                "attributes": {
+                  "data-test": "ORD-43",
+                  "data-testid": "row-slot-1"
+                }
+              },
+              {
+                "index": 72,
+                "parent": 71,
+                "handle": 73,
+                "type": 1,
+                "name": "TD"
+              },
+              {
+                "index": 73,
+                "parent": 72,
+                "handle": 74,
+                "type": 3,
+                "name": "#text",
+                "text": "ORD-43"
+              },
+              {
+                "index": 74,
+                "parent": 71,
+                "handle": 75,
+                "type": 1,
+                "name": "TD"
+              },
+              {
+                "index": 75,
+                "parent": 74,
+                "handle": 76,
+                "type": 3,
+                "name": "#text",
+                "text": "Ada Lovelace"
+              },
+              {
+                "index": 76,
+                "parent": 71,
+                "handle": 77,
+                "type": 1,
+                "name": "TD",
+                "attributes": {
+                  "data-testid": "row-slot-1-status"
+                }
+              },
+              {
+                "index": 77,
+                "parent": 76,
+                "handle": 78,
+                "type": 3,
+                "name": "#text",
+                "text": "Pending"
+              },
+              {
+                "index": 78,
+                "parent": 71,
+                "handle": 79,
+                "type": 1,
+                "name": "TD"
+              },
+              {
+                "index": 79,
+                "parent": 78,
+                "handle": 80,
+                "type": 1,
+                "name": "BUTTON",
+                "attributes": {
+                  "data-testid": "row-slot-1-action"
+                }
+              },
+              {
+                "index": 80,
+                "parent": 79,
+                "handle": 81,
+                "type": 3,
+                "name": "#text",
+                "text": "Open"
+              },
+              {
+                "index": 81,
+                "parent": 9,
+                "handle": 82,
+                "type": 3,
+                "name": "#text",
+                "text": "\n"
+              },
+              {
+                "index": 82,
+                "parent": 9,
+                "handle": 83,
+                "type": 1,
+                "name": "NAV"
+              },
+              {
+                "index": 83,
+                "parent": 82,
+                "handle": 84,
+                "type": 1,
+                "name": "BUTTON",
+                "attributes": {
+                  "data-testid": "insert"
+                }
+              },
+              {
+                "index": 84,
+                "parent": 83,
+                "handle": 85,
+                "type": 3,
+                "name": "#text",
+                "text": "Insert sibling"
+              },
+              {
+                "index": 85,
+                "parent": 82,
+                "handle": 86,
+                "type": 1,
+                "name": "BUTTON",
+                "attributes": {
+                  "data-testid": "reorder"
+                }
+              },
+              {
+                "index": 86,
+                "parent": 85,
+                "handle": 87,
+                "type": 3,
+                "name": "#text",
+                "text": "Reorder rows"
+              },
+              {
+                "index": 87,
+                "parent": 82,
+                "handle": 88,
+                "type": 1,
+                "name": "BUTTON",
+                "attributes": {
+                  "data-testid": "next-window"
+                }
+              },
+              {
+                "index": 88,
+                "parent": 87,
+                "handle": 89,
+                "type": 3,
+                "name": "#text",
+                "text": "Next rows"
+              },
+              {
+                "index": 89,
+                "parent": 82,
+                "handle": 90,
+                "type": 1,
+                "name": "BUTTON",
+                "attributes": {
+                  "data-testid": "previous-window"
+                }
+              },
+              {
+                "index": 90,
+                "parent": 89,
+                "handle": 91,
+                "type": 3,
+                "name": "#text",
+                "text": "Previous rows"
+              },
+              {
+                "index": 91,
+                "parent": 9,
+                "handle": 92,
+                "type": 3,
+                "name": "#text",
+                "text": "\n"
+              },
+              {
+                "index": 92,
+                "parent": 8,
+                "handle": 93,
+                "type": 3,
+                "name": "#text",
+                "text": "\n"
+              },
+              {
+                "index": 93,
+                "parent": 8,
+                "handle": 94,
+                "type": 1,
+                "name": "SCRIPT"
+              },
+              {
+                "index": 94,
+                "parent": 93,
+                "handle": 95,
+                "type": 3,
+                "name": "#text"
+              },
+              {
+                "index": 95,
+                "parent": 8,
+                "handle": 96,
+                "type": 3,
+                "name": "#text",
+                "text": "\n"
+              }
+            ]
+          }
+        ],
+        "accessibility": [
+          {
+            "frameId": "85ADA859C1CF36E805A863F08EBD2111",
+            "nodes": [
+              {
+                "id": "3",
+                "children": [
+                  "5"
+                ],
+                "handle": 3,
+                "role": "RootWebArea",
+                "name": "Sequence ground truth fixture",
+                "states": {
+                  "focused": "true"
+                }
+              },
+              {
+                "id": "5",
+                "parentId": "3",
+                "children": [
+                  "11"
+                ],
+                "handle": 5,
+                "role": "none",
+                "ignored": true
+              },
+              {
+                "id": "11",
+                "parentId": "5",
+                "children": [
+                  "12"
+                ],
+                "handle": 11,
+                "role": "none",
+                "ignored": true
+              },
+              {
+                "id": "12",
+                "parentId": "11",
+                "children": [
+                  "14",
+                  "20",
+                  "28",
+                  "31",
+                  "41",
+                  "47",
+                  "83"
+                ],
+                "handle": 12,
+                "role": "main"
+              },
+              {
+                "id": "14",
+                "parentId": "12",
+                "children": [
+                  "15",
+                  "17"
+                ],
+                "handle": 14,
+                "role": "sectionheader"
+              },
+              {
+                "id": "20",
+                "parentId": "12",
+                "children": [
+                  "21",
+                  "23",
+                  "25"
+                ],
+                "handle": 20,
+                "role": "generic"
+              },
+              {
+                "id": "28",
+                "parentId": "12",
+                "children": [
+                  "29"
+                ],
+                "handle": 28,
+                "role": "status"
+              },
+              {
+                "id": "31",
+                "parentId": "12",
+                "children": [
+                  "32",
+                  "35"
+                ],
+                "handle": 31,
+                "role": "generic"
+              },
+              {
+                "id": "41",
+                "parentId": "12",
+                "children": [
+                  "42",
+                  "44"
+                ],
+                "handle": 41,
+                "role": "generic"
+              },
+              {
+                "id": "47",
+                "parentId": "12",
+                "children": [
+                  "48",
+                  "50"
+                ],
+                "handle": 47,
+                "role": "generic"
+              },
+              {
+                "id": "83",
+                "parentId": "12",
+                "children": [
+                  "84",
+                  "86",
+                  "88",
+                  "90"
+                ],
+                "handle": 83,
+                "role": "navigation"
+              },
+              {
+                "id": "15",
+                "parentId": "14",
+                "children": [
+                  "16"
+                ],
+                "handle": 15,
+                "role": "heading",
+                "name": "Customer orders"
+              },
+              {
+                "id": "17",
+                "parentId": "14",
+                "children": [
+                  "18"
+                ],
+                "handle": 17,
+                "role": "button",
+                "name": "Monthly report",
+                "states": {
+                  "invalid": "false"
+                }
+              },
+              {
+                "id": "21",
+                "parentId": "20",
+                "children": [
+                  "22"
+                ],
+                "handle": 21,
+                "role": "heading",
+                "name": "Customer editor"
+              },
+              {
+                "id": "23",
+                "parentId": "20",
+                "children": [
+                  "24",
+                  "1"
+                ],
+                "handle": 23,
+                "role": "LabelText"
+              },
+              {
+                "id": "25",
+                "parentId": "20",
+                "children": [
+                  "26"
+                ],
+                "handle": 25,
+                "role": "button",
+                "name": "Save customer",
+                "states": {
+                  "invalid": "false"
+                }
+              },
+              {
+                "id": "29",
+                "parentId": "28",
+                "children": [
+                  "-1000000008"
+                ],
+                "handle": 29,
+                "role": "StaticText",
+                "name": "Draft"
+              },
+              {
+                "id": "32",
+                "parentId": "31",
+                "children": [
+                  "33"
+                ],
+                "handle": 32,
+                "role": "button",
+                "name": "Edit order",
+                "states": {
+                  "invalid": "false"
+                }
+              },
+              {
+                "id": "35",
+                "parentId": "31",
+                "children": [
+                  "36",
+                  "2"
+                ],
+                "handle": 35,
+                "role": "none",
+                "ignored": true
+              },
+              {
+                "id": "36",
+                "parentId": "35",
+                "handle": 36,
+                "role": "none",
+                "ignored": true
+              },
+              {
+                "id": "2",
+                "parentId": "35",
+                "children": [
+                  "98"
+                ],
+                "handle": 2,
+                "role": "none",
+                "ignored": true
+              },
+              {
+                "id": "98",
+                "parentId": "2",
+                "children": [
+                  "100"
+                ],
+                "handle": 98,
+                "role": "none",
+                "ignored": true
+              },
+              {
+                "id": "100",
+                "parentId": "98",
+                "handle": 100,
+                "role": "none",
+                "ignored": true
+              },
+              {
+                "id": "42",
+                "parentId": "41",
+                "children": [
+                  "43"
+                ],
+                "handle": 42,
+                "role": "button",
+                "name": "Replace control",
+                "states": {
+                  "invalid": "false"
+                }
+              },
+              {
+                "id": "44",
+                "parentId": "41",
+                "children": [
+                  "45"
+                ],
+                "handle": 44,
+                "role": "button",
+                "name": "Approve order",
+                "states": {
+                  "invalid": "false"
+                }
+              },
+              {
+                "id": "48",
+                "parentId": "47",
+                "children": [
+                  "49"
+                ],
+                "handle": 48,
+                "role": "heading",
+                "name": "Orders"
+              },
+              {
+                "id": "50",
+                "parentId": "47",
+                "children": [
+                  "51",
+                  "61"
+                ],
+                "handle": 50,
+                "role": "table",
+                "name": "Orders"
+              },
+              {
+                "id": "84",
+                "parentId": "83",
+                "children": [
+                  "85"
+                ],
+                "handle": 84,
+                "role": "button",
+                "name": "Insert sibling",
+                "states": {
+                  "invalid": "false"
+                }
+              },
+              {
+                "id": "86",
+                "parentId": "83",
+                "children": [
+                  "87"
+                ],
+                "handle": 86,
+                "role": "button",
+                "name": "Reorder rows",
+                "states": {
+                  "invalid": "false"
+                }
+              },
+              {
+                "id": "88",
+                "parentId": "83",
+                "children": [
+                  "89"
+                ],
+                "handle": 88,
+                "role": "button",
+                "name": "Next rows",
+                "states": {
+                  "invalid": "false"
+                }
+              },
+              {
+                "id": "90",
+                "parentId": "83",
+                "children": [
+                  "91"
+                ],
+                "handle": 90,
+                "role": "button",
+                "name": "Previous rows",
+                "states": {
+                  "invalid": "false"
+                }
+              },
+              {
+                "id": "16",
+                "parentId": "15",
+                "children": [
+                  "-1000000002"
+                ],
+                "handle": 16,
+                "role": "StaticText",
+                "name": "Customer orders"
+              },
+              {
+                "id": "18",
+                "parentId": "17",
+                "children": [
+                  "-1000000003"
+                ],
+                "handle": 18,
+                "role": "StaticText",
+                "name": "Monthly report"
+              },
+              {
+                "id": "22",
+                "parentId": "21",
+                "children": [
+                  "-1000000004"
+                ],
+                "handle": 22,
+                "role": "StaticText",
+                "name": "Customer editor"
+              },
+              {
+                "id": "24",
+                "parentId": "23",
+                "children": [
+                  "-1000000005"
+                ],
+                "handle": 24,
+                "role": "StaticText",
+                "name": "Customer name "
+              },
+              {
+                "id": "1",
+                "parentId": "23",
+                "children": [
+                  "97"
+                ],
+                "handle": 1,
+                "role": "textbox",
+                "name": "Customer name",
+                "value": "Mai Nguyen",
+                "states": {
+                  "invalid": "false",
+                  "required": "false"
+                }
+              },
+              {
+                "id": "26",
+                "parentId": "25",
+                "children": [
+                  "-1000000007"
+                ],
+                "handle": 26,
+                "role": "StaticText",
+                "name": "Save customer"
+              },
+              {
+                "id": "-1000000008",
+                "parentId": "29",
+                "role": "InlineTextBox",
+                "name": "Draft"
+              },
+              {
+                "id": "33",
+                "parentId": "32",
+                "children": [
+                  "-1000000009"
+                ],
+                "handle": 33,
+                "role": "StaticText",
+                "name": "Edit order"
+              },
+              {
+                "id": "43",
+                "parentId": "42",
+                "children": [
+                  "-1000000010"
+                ],
+                "handle": 43,
+                "role": "StaticText",
+                "name": "Replace control"
+              },
+              {
+                "id": "45",
+                "parentId": "44",
+                "children": [
+                  "-1000000011"
+                ],
+                "handle": 45,
+                "role": "StaticText",
+                "name": "Approve order"
+              },
+              {
+                "id": "49",
+                "parentId": "48",
+                "children": [
+                  "-1000000012"
+                ],
+                "handle": 49,
+                "role": "StaticText",
+                "name": "Orders"
+              },
+              {
+                "id": "51",
+                "parentId": "50",
+                "children": [
+                  "52"
+                ],
+                "handle": 51,
+                "role": "rowgroup"
+              },
+              {
+                "id": "61",
+                "parentId": "50",
+                "children": [
+                  "62",
+                  "72"
+                ],
+                "handle": 61,
+                "role": "rowgroup"
+              },
+              {
+                "id": "85",
+                "parentId": "84",
+                "children": [
+                  "-1000000025"
+                ],
+                "handle": 85,
+                "role": "StaticText",
+                "name": "Insert sibling"
+              },
+              {
+                "id": "87",
+                "parentId": "86",
+                "children": [
+                  "-1000000026"
+                ],
+                "handle": 87,
+                "role": "StaticText",
+                "name": "Reorder rows"
+              },
+              {
+                "id": "89",
+                "parentId": "88",
+                "children": [
+                  "-1000000027"
+                ],
+                "handle": 89,
+                "role": "StaticText",
+                "name": "Next rows"
+              },
+              {
+                "id": "91",
+                "parentId": "90",
+                "children": [
+                  "-1000000028"
+                ],
+                "handle": 91,
+                "role": "StaticText",
+                "name": "Previous rows"
+              },
+              {
+                "id": "-1000000002",
+                "parentId": "16",
+                "role": "InlineTextBox",
+                "name": "Customer orders"
+              },
+              {
+                "id": "-1000000003",
+                "parentId": "18",
+                "role": "InlineTextBox",
+                "name": "Monthly report"
+              },
+              {
+                "id": "-1000000004",
+                "parentId": "22",
+                "role": "InlineTextBox",
+                "name": "Customer editor"
+              },
+              {
+                "id": "-1000000005",
+                "parentId": "24",
+                "role": "InlineTextBox",
+                "name": "Customer name "
+              },
+              {
+                "id": "97",
+                "parentId": "1",
+                "children": [
+                  "99"
+                ],
+                "handle": 97,
+                "role": "generic"
+              },
+              {
+                "id": "-1000000007",
+                "parentId": "26",
+                "role": "InlineTextBox",
+                "name": "Save customer"
+              },
+              {
+                "id": "-1000000009",
+                "parentId": "33",
+                "role": "InlineTextBox",
+                "name": "Edit order"
+              },
+              {
+                "id": "-1000000010",
+                "parentId": "43",
+                "role": "InlineTextBox",
+                "name": "Replace control"
+              },
+              {
+                "id": "-1000000011",
+                "parentId": "45",
+                "role": "InlineTextBox",
+                "name": "Approve order"
+              },
+              {
+                "id": "-1000000012",
+                "parentId": "49",
+                "role": "InlineTextBox",
+                "name": "Orders"
+              },
+              {
+                "id": "52",
+                "parentId": "51",
+                "children": [
+                  "53",
+                  "55",
+                  "57",
+                  "59"
+                ],
+                "handle": 52,
+                "role": "row"
+              },
+              {
+                "id": "62",
+                "parentId": "61",
+                "children": [
+                  "63",
+                  "65",
+                  "67",
+                  "69"
+                ],
+                "handle": 62,
+                "role": "row"
+              },
+              {
+                "id": "72",
+                "parentId": "61",
+                "children": [
+                  "73",
+                  "75",
+                  "77",
+                  "79"
+                ],
+                "handle": 72,
+                "role": "row"
+              },
+              {
+                "id": "-1000000025",
+                "parentId": "85",
+                "role": "InlineTextBox",
+                "name": "Insert sibling"
+              },
+              {
+                "id": "-1000000026",
+                "parentId": "87",
+                "role": "InlineTextBox",
+                "name": "Reorder rows"
+              },
+              {
+                "id": "-1000000027",
+                "parentId": "89",
+                "role": "InlineTextBox",
+                "name": "Next rows"
+              },
+              {
+                "id": "-1000000028",
+                "parentId": "91",
+                "role": "InlineTextBox",
+                "name": "Previous rows"
+              },
+              {
+                "id": "99",
+                "parentId": "97",
+                "children": [
+                  "-1000000006"
+                ],
+                "handle": 99,
+                "role": "StaticText",
+                "name": "Mai Nguyen"
+              },
+              {
+                "id": "53",
+                "parentId": "52",
+                "children": [
+                  "54"
+                ],
+                "handle": 53,
+                "role": "columnheader",
+                "name": "Order",
+                "states": {
+                  "required": "false"
+                }
+              },
+              {
+                "id": "55",
+                "parentId": "52",
+                "children": [
+                  "56"
+                ],
+                "handle": 55,
+                "role": "columnheader",
+                "name": "Customer",
+                "states": {
+                  "required": "false"
+                }
+              },
+              {
+                "id": "57",
+                "parentId": "52",
+                "children": [
+                  "58"
+                ],
+                "handle": 57,
+                "role": "columnheader",
+                "name": "Status",
+                "states": {
+                  "required": "false"
+                }
+              },
+              {
+                "id": "59",
+                "parentId": "52",
+                "children": [
+                  "60"
+                ],
+                "handle": 59,
+                "role": "columnheader",
+                "name": "Action",
+                "states": {
+                  "required": "false"
+                }
+              },
+              {
+                "id": "63",
+                "parentId": "62",
+                "children": [
+                  "64"
+                ],
+                "handle": 63,
+                "role": "cell",
+                "name": "ORD-42"
+              },
+              {
+                "id": "65",
+                "parentId": "62",
+                "children": [
+                  "66"
+                ],
+                "handle": 65,
+                "role": "cell",
+                "name": "Mai Nguyen"
+              },
+              {
+                "id": "67",
+                "parentId": "62",
+                "children": [
+                  "68"
+                ],
+                "handle": 67,
+                "role": "cell",
+                "name": "Pending"
+              },
+              {
+                "id": "69",
+                "parentId": "62",
+                "children": [
+                  "70"
+                ],
+                "handle": 69,
+                "role": "cell",
+                "name": "Open"
+              },
+              {
+                "id": "73",
+                "parentId": "72",
+                "children": [
+                  "74"
+                ],
+                "handle": 73,
+                "role": "cell",
+                "name": "ORD-43"
+              },
+              {
+                "id": "75",
+                "parentId": "72",
+                "children": [
+                  "76"
+                ],
+                "handle": 75,
+                "role": "cell",
+                "name": "Ada Lovelace"
+              },
+              {
+                "id": "77",
+                "parentId": "72",
+                "children": [
+                  "78"
+                ],
+                "handle": 77,
+                "role": "cell",
+                "name": "Pending"
+              },
+              {
+                "id": "79",
+                "parentId": "72",
+                "children": [
+                  "80"
+                ],
+                "handle": 79,
+                "role": "cell",
+                "name": "Open"
+              },
+              {
+                "id": "-1000000006",
+                "parentId": "99",
+                "role": "InlineTextBox",
+                "name": "Mai Nguyen"
+              },
+              {
+                "id": "54",
+                "parentId": "53",
+                "children": [
+                  "-1000000013"
+                ],
+                "handle": 54,
+                "role": "StaticText",
+                "name": "Order"
+              },
+              {
+                "id": "56",
+                "parentId": "55",
+                "children": [
+                  "-1000000014"
+                ],
+                "handle": 56,
+                "role": "StaticText",
+                "name": "Customer"
+              },
+              {
+                "id": "58",
+                "parentId": "57",
+                "children": [
+                  "-1000000015"
+                ],
+                "handle": 58,
+                "role": "StaticText",
+                "name": "Status"
+              },
+              {
+                "id": "60",
+                "parentId": "59",
+                "children": [
+                  "-1000000016"
+                ],
+                "handle": 60,
+                "role": "StaticText",
+                "name": "Action"
+              },
+              {
+                "id": "64",
+                "parentId": "63",
+                "children": [
+                  "-1000000017"
+                ],
+                "handle": 64,
+                "role": "StaticText",
+                "name": "ORD-42"
+              },
+              {
+                "id": "66",
+                "parentId": "65",
+                "children": [
+                  "-1000000018"
+                ],
+                "handle": 66,
+                "role": "StaticText",
+                "name": "Mai Nguyen"
+              },
+              {
+                "id": "68",
+                "parentId": "67",
+                "children": [
+                  "-1000000019"
+                ],
+                "handle": 68,
+                "role": "StaticText",
+                "name": "Pending"
+              },
+              {
+                "id": "70",
+                "parentId": "69",
+                "children": [
+                  "71"
+                ],
+                "handle": 70,
+                "role": "button",
+                "name": "Open",
+                "states": {
+                  "invalid": "false"
+                }
+              },
+              {
+                "id": "74",
+                "parentId": "73",
+                "children": [
+                  "-1000000021"
+                ],
+                "handle": 74,
+                "role": "StaticText",
+                "name": "ORD-43"
+              },
+              {
+                "id": "76",
+                "parentId": "75",
+                "children": [
+                  "-1000000022"
+                ],
+                "handle": 76,
+                "role": "StaticText",
+                "name": "Ada Lovelace"
+              },
+              {
+                "id": "78",
+                "parentId": "77",
+                "children": [
+                  "-1000000023"
+                ],
+                "handle": 78,
+                "role": "StaticText",
+                "name": "Pending"
+              },
+              {
+                "id": "80",
+                "parentId": "79",
+                "children": [
+                  "81"
+                ],
+                "handle": 80,
+                "role": "button",
+                "name": "Open",
+                "states": {
+                  "invalid": "false"
+                }
+              },
+              {
+                "id": "-1000000013",
+                "parentId": "54",
+                "role": "InlineTextBox",
+                "name": "Order"
+              },
+              {
+                "id": "-1000000014",
+                "parentId": "56",
+                "role": "InlineTextBox",
+                "name": "Customer"
+              },
+              {
+                "id": "-1000000015",
+                "parentId": "58",
+                "role": "InlineTextBox",
+                "name": "Status"
+              },
+              {
+                "id": "-1000000016",
+                "parentId": "60",
+                "role": "InlineTextBox",
+                "name": "Action"
+              },
+              {
+                "id": "-1000000017",
+                "parentId": "64",
+                "role": "InlineTextBox",
+                "name": "ORD-42"
+              },
+              {
+                "id": "-1000000018",
+                "parentId": "66",
+                "role": "InlineTextBox",
+                "name": "Mai Nguyen"
+              },
+              {
+                "id": "-1000000019",
+                "parentId": "68",
+                "role": "InlineTextBox",
+                "name": "Pending"
+              },
+              {
+                "id": "71",
+                "parentId": "70",
+                "children": [
+                  "-1000000020"
+                ],
+                "handle": 71,
+                "role": "StaticText",
+                "name": "Open"
+              },
+              {
+                "id": "-1000000021",
+                "parentId": "74",
+                "role": "InlineTextBox",
+                "name": "ORD-43"
+              },
+              {
+                "id": "-1000000022",
+                "parentId": "76",
+                "role": "InlineTextBox",
+                "name": "Ada Lovelace"
+              },
+              {
+                "id": "-1000000023",
+                "parentId": "78",
+                "role": "InlineTextBox",
+                "name": "Pending"
+              },
+              {
+                "id": "81",
+                "parentId": "80",
+                "children": [
+                  "-1000000024"
+                ],
+                "handle": 81,
+                "role": "StaticText",
+                "name": "Open"
+              },
+              {
+                "id": "-1000000020",
+                "parentId": "71",
+                "role": "InlineTextBox",
+                "name": "Open"
+              },
+              {
+                "id": "-1000000024",
+                "parentId": "81",
+                "role": "InlineTextBox",
+                "name": "Open"
+              }
+            ]
+          }
+        ],
+        "truncated": false
+      },
+      "nodes": [
+        {
+          "key": "save",
+          "ref": "e1",
+          "physical": "node-4",
+          "handle": 25,
+          "anchor": "customer"
+        }
+      ],
+      "facts": [
+        {
+          "key": "screen-title",
+          "nodeKey": "screen-title",
+          "property": "text",
+          "captured": true,
+          "value": "Customer orders"
+        }
+      ],
+      "coverage": {
+        "scopes": [
+          "fixture-root"
+        ],
+        "unobservable": [
+          "programmatic_form_values",
+          "offscreen_virtualized_rows"
+        ],
+        "complete": true,
+        "observerActive": true,
+        "gap": false,
+        "revision": 0,
+        "oldestRevision": 0,
+        "history": []
+      }
+    },
+    {
+      "id": "s1",
+      "observation": "snapshot_at",
+      "document": "1e79aeb8-7b69-4bf3-8a67-9bd885e718e3",
+      "browser": "browser-1",
+      "snapshot": {
+        "epoch": "fixture_UQOZWCF3CC6BH4S7764EGCQARJ",
+        "url": "http://fixture.test/sequence.html?screen=report",
+        "browser": "Chrome/155.0.8059.79",
+        "frames": [
+          {
+            "id": "85ADA859C1CF36E805A863F08EBD2111",
+            "url": "http://fixture.test/sequence.html?screen=report"
+          }
+        ],
+        "documents": [
+          {
+            "frameId": "85ADA859C1CF36E805A863F08EBD2111",
+            "url": "http://fixture.test/sequence.html?screen=report",
+            "title": "Sequence ground truth fixture",
+            "nodes": [
+              {
+                "index": 0,
+                "parent": -1,
+                "handle": 102,
+                "type": 9,
+                "name": "#document"
+              },
+              {
+                "index": 1,
+                "parent": 0,
+                "handle": 103,
+                "type": 10,
+                "name": "html"
+              },
+              {
+                "index": 2,
+                "parent": 0,
+                "handle": 104,
+                "type": 1,
+                "name": "HTML"
+              },
+              {
+                "index": 3,
+                "parent": 2,
+                "handle": 105,
+                "type": 1,
+                "name": "HEAD"
+              },
+              {
+                "index": 4,
+                "parent": 3,
+                "handle": 106,
+                "type": 1,
+                "name": "META"
+              },
+              {
+                "index": 5,
+                "parent": 3,
+                "handle": 107,
+                "type": 1,
+                "name": "TITLE"
+              },
+              {
+                "index": 6,
+                "parent": 5,
+                "handle": 108,
+                "type": 3,
+                "name": "#text",
+                "text": "Sequence ground truth fixture"
+              },
+              {
+                "index": 7,
+                "parent": 3,
+                "handle": 109,
+                "type": 3,
+                "name": "#text",
+                "text": "\n"
+              },
+              {
+                "index": 8,
+                "parent": 2,
+                "handle": 110,
+                "type": 1,
+                "name": "BODY"
+              },
+              {
+                "index": 9,
+                "parent": 8,
+                "handle": 111,
+                "type": 1,
+                "name": "MAIN",
+                "attributes": {
+                  "id": "fixture-root"
+                }
+              },
+              {
+                "index": 10,
+                "parent": 9,
+                "handle": 112,
+                "type": 3,
+                "name": "#text",
+                "text": "\n"
+              },
+              {
+                "index": 11,
+                "parent": 9,
+                "handle": 113,
+                "type": 1,
+                "name": "HEADER",
+                "attributes": {
+                  "id": "header"
+                }
+              },
+              {
+                "index": 12,
+                "parent": 11,
+                "handle": 114,
+                "type": 1,
+                "name": "H1",
+                "attributes": {
+                  "data-testid": "screen-title"
+                }
+              },
+              {
+                "index": 13,
+                "parent": 12,
+                "handle": 115,
+                "type": 3,
+                "name": "#text",
+                "text": "Monthly report"
+              },
+              {
+                "index": 14,
+                "parent": 11,
+                "handle": 116,
+                "type": 1,
+                "name": "BUTTON",
+                "attributes": {
+                  "data-testid": "navigate"
+                }
+              },
+              {
+                "index": 15,
+                "parent": 14,
+                "handle": 117,
+                "type": 3,
+                "name": "#text",
+                "text": "Monthly report"
+              },
+              {
+                "index": 16,
+                "parent": 9,
+                "handle": 118,
+                "type": 3,
+                "name": "#text",
+                "text": "\n"
+              },
+              {
+                "index": 17,
+                "parent": 9,
+                "handle": 119,
+                "type": 3,
+                "name": "#text",
+                "text": "\n"
+              },
+              {
+                "index": 18,
+                "parent": 9,
+                "handle": 120,
+                "type": 1,
+                "name": "P",
+                "attributes": {
+                  "data-testid": "status",
+                  "role": "status"
+                }
+              },
+              {
+                "index": 19,
+                "parent": 18,
+                "handle": 121,
+                "type": 3,
+                "name": "#text",
+                "text": "Report ready"
+              },
+              {
+                "index": 20,
+                "parent": 9,
+                "handle": 122,
+                "type": 3,
+                "name": "#text",
+                "text": "\n"
+              },
+              {
+                "index": 21,
+                "parent": 9,
+                "handle": 123,
+                "type": 1,
+                "name": "SECTION",
+                "attributes": {
+                  "data-test": "editor"
+                }
+              },
+              {
+                "index": 22,
+                "parent": 21,
+                "handle": 124,
+                "type": 1,
+                "name": "BUTTON",
+                "attributes": {
+                  "data-testid": "open-editor"
+                }
+              },
+              {
+                "index": 23,
+                "parent": 22,
+                "handle": 125,
+                "type": 3,
+                "name": "#text",
+                "text": "Edit order"
+              },
+              {
+                "index": 24,
+                "parent": 21,
+                "handle": 126,
+                "type": 1,
+                "name": "DIALOG",
+                "attributes": {
+                  "aria-label": "Edit order",
+                  "data-testid": "dialog"
+                }
+              },
+              {
+                "index": 25,
+                "parent": 24,
+                "handle": 127,
+                "type": 1,
+                "name": "LABEL"
+              },
+              {
+                "index": 26,
+                "parent": 25,
+                "handle": 128,
+                "type": 3,
+                "name": "#text",
+                "text": "Notes "
+              },
+              {
+                "index": 27,
+                "parent": 25,
+                "handle": 101,
+                "type": 1,
+                "name": "TEXTAREA",
+                "value": "Leave at reception",
+                "attributes": {
+                  "data-testid": "notes"
+                }
+              },
+              {
+                "index": 28,
+                "parent": 27,
+                "handle": 129,
+                "type": 3,
+                "name": "#text",
+                "text": "Leave at reception"
+              },
+              {
+                "index": 29,
+                "parent": 24,
+                "handle": 130,
+                "type": 1,
+                "name": "BUTTON",
+                "attributes": {
+                  "data-testid": "save-order"
+                }
+              },
+              {
+                "index": 30,
+                "parent": 29,
+                "handle": 131,
+                "type": 3,
+                "name": "#text",
+                "text": "Save order"
+              },
+              {
+                "index": 31,
+                "parent": 9,
+                "handle": 132,
+                "type": 3,
+                "name": "#text",
+                "text": "\n"
+              },
+              {
+                "index": 32,
+                "parent": 9,
+                "handle": 133,
+                "type": 1,
+                "name": "SECTION",
+                "attributes": {
+                  "data-test": "replacement"
+                }
+              },
+              {
+                "index": 33,
+                "parent": 32,
+                "handle": 134,
+                "type": 1,
+                "name": "BUTTON",
+                "attributes": {
+                  "data-testid": "replace"
+                }
+              },
+              {
+                "index": 34,
+                "parent": 33,
+                "handle": 135,
+                "type": 3,
+                "name": "#text",
+                "text": "Replace control"
+              },
+              {
+                "index": 35,
+                "parent": 32,
+                "handle": 136,
+                "type": 1,
+                "name": "BUTTON",
+                "attributes": {
+                  "data-testid": "replace-target"
+                }
+              },
+              {
+                "index": 36,
+                "parent": 35,
+                "handle": 137,
+                "type": 3,
+                "name": "#text",
+                "text": "Approve order"
+              },
+              {
+                "index": 37,
+                "parent": 9,
+                "handle": 138,
+                "type": 3,
+                "name": "#text",
+                "text": "\n"
+              },
+              {
+                "index": 38,
+                "parent": 9,
+                "handle": 139,
+                "type": 1,
+                "name": "SECTION",
+                "attributes": {
+                  "data-test": "orders"
+                }
+              },
+              {
+                "index": 39,
+                "parent": 38,
+                "handle": 140,
+                "type": 1,
+                "name": "H2"
+              },
+              {
+                "index": 40,
+                "parent": 39,
+                "handle": 141,
+                "type": 3,
+                "name": "#text",
+                "text": "Orders"
+              },
+              {
+                "index": 41,
+                "parent": 38,
+                "handle": 142,
+                "type": 1,
+                "name": "TABLE",
+                "attributes": {
+                  "aria-label": "Orders",
+                  "aria-rowcount": "2",
+                  "data-testid": "orders-table"
+                }
+              },
+              {
+                "index": 42,
+                "parent": 41,
+                "handle": 143,
+                "type": 1,
+                "name": "THEAD"
+              },
+              {
+                "index": 43,
+                "parent": 42,
+                "handle": 144,
+                "type": 1,
+                "name": "TR"
+              },
+              {
+                "index": 44,
+                "parent": 43,
+                "handle": 145,
+                "type": 1,
+                "name": "TH"
+              },
+              {
+                "index": 45,
+                "parent": 44,
+                "handle": 146,
+                "type": 3,
+                "name": "#text",
+                "text": "Order"
+              },
+              {
+                "index": 46,
+                "parent": 43,
+                "handle": 147,
+                "type": 1,
+                "name": "TH"
+              },
+              {
+                "index": 47,
+                "parent": 46,
+                "handle": 148,
+                "type": 3,
+                "name": "#text",
+                "text": "Customer"
+              },
+              {
+                "index": 48,
+                "parent": 43,
+                "handle": 149,
+                "type": 1,
+                "name": "TH"
+              },
+              {
+                "index": 49,
+                "parent": 48,
+                "handle": 150,
+                "type": 3,
+                "name": "#text",
+                "text": "Status"
+              },
+              {
+                "index": 50,
+                "parent": 43,
+                "handle": 151,
+                "type": 1,
+                "name": "TH"
+              },
+              {
+                "index": 51,
+                "parent": 50,
+                "handle": 152,
+                "type": 3,
+                "name": "#text",
+                "text": "Action"
+              },
+              {
+                "index": 52,
+                "parent": 41,
+                "handle": 153,
+                "type": 1,
+                "name": "TBODY",
+                "attributes": {
+                  "data-testid": "rows",
+                  "id": "rows"
+                }
+              },
+              {
+                "index": 53,
+                "parent": 52,
+                "handle": 154,
+                "type": 1,
+                "name": "TR",
+                "attributes": {
+                  "data-test": "ORD-42",
+                  "data-testid": "row-slot-0"
+                }
+              },
+              {
+                "index": 54,
+                "parent": 53,
+                "handle": 155,
+                "type": 1,
+                "name": "TD"
+              },
+              {
+                "index": 55,
+                "parent": 54,
+                "handle": 156,
+                "type": 3,
+                "name": "#text",
+                "text": "ORD-42"
+              },
+              {
+                "index": 56,
+                "parent": 53,
+                "handle": 157,
+                "type": 1,
+                "name": "TD"
+              },
+              {
+                "index": 57,
+                "parent": 56,
+                "handle": 158,
+                "type": 3,
+                "name": "#text",
+                "text": "Mai Nguyen"
+              },
+              {
+                "index": 58,
+                "parent": 53,
+                "handle": 159,
+                "type": 1,
+                "name": "TD",
+                "attributes": {
+                  "data-testid": "row-slot-0-status"
+                }
+              },
+              {
+                "index": 59,
+                "parent": 58,
+                "handle": 160,
+                "type": 3,
+                "name": "#text",
+                "text": "Pending"
+              },
+              {
+                "index": 60,
+                "parent": 53,
+                "handle": 161,
+                "type": 1,
+                "name": "TD"
+              },
+              {
+                "index": 61,
+                "parent": 60,
+                "handle": 162,
+                "type": 1,
+                "name": "BUTTON",
+                "attributes": {
+                  "data-testid": "row-slot-0-action"
+                }
+              },
+              {
+                "index": 62,
+                "parent": 61,
+                "handle": 163,
+                "type": 3,
+                "name": "#text",
+                "text": "Open"
+              },
+              {
+                "index": 63,
+                "parent": 52,
+                "handle": 164,
+                "type": 1,
+                "name": "TR",
+                "attributes": {
+                  "data-test": "ORD-43",
+                  "data-testid": "row-slot-1"
+                }
+              },
+              {
+                "index": 64,
+                "parent": 63,
+                "handle": 165,
+                "type": 1,
+                "name": "TD"
+              },
+              {
+                "index": 65,
+                "parent": 64,
+                "handle": 166,
+                "type": 3,
+                "name": "#text",
+                "text": "ORD-43"
+              },
+              {
+                "index": 66,
+                "parent": 63,
+                "handle": 167,
+                "type": 1,
+                "name": "TD"
+              },
+              {
+                "index": 67,
+                "parent": 66,
+                "handle": 168,
+                "type": 3,
+                "name": "#text",
+                "text": "Ada Lovelace"
+              },
+              {
+                "index": 68,
+                "parent": 63,
+                "handle": 169,
+                "type": 1,
+                "name": "TD",
+                "attributes": {
+                  "data-testid": "row-slot-1-status"
+                }
+              },
+              {
+                "index": 69,
+                "parent": 68,
+                "handle": 170,
+                "type": 3,
+                "name": "#text",
+                "text": "Pending"
+              },
+              {
+                "index": 70,
+                "parent": 63,
+                "handle": 171,
+                "type": 1,
+                "name": "TD"
+              },
+              {
+                "index": 71,
+                "parent": 70,
+                "handle": 172,
+                "type": 1,
+                "name": "BUTTON",
+                "attributes": {
+                  "data-testid": "row-slot-1-action"
+                }
+              },
+              {
+                "index": 72,
+                "parent": 71,
+                "handle": 173,
+                "type": 3,
+                "name": "#text",
+                "text": "Open"
+              },
+              {
+                "index": 73,
+                "parent": 9,
+                "handle": 174,
+                "type": 3,
+                "name": "#text",
+                "text": "\n"
+              },
+              {
+                "index": 74,
+                "parent": 9,
+                "handle": 175,
+                "type": 1,
+                "name": "NAV"
+              },
+              {
+                "index": 75,
+                "parent": 74,
+                "handle": 176,
+                "type": 1,
+                "name": "BUTTON",
+                "attributes": {
+                  "data-testid": "insert"
+                }
+              },
+              {
+                "index": 76,
+                "parent": 75,
+                "handle": 177,
+                "type": 3,
+                "name": "#text",
+                "text": "Insert sibling"
+              },
+              {
+                "index": 77,
+                "parent": 74,
+                "handle": 178,
+                "type": 1,
+                "name": "BUTTON",
+                "attributes": {
+                  "data-testid": "reorder"
+                }
+              },
+              {
+                "index": 78,
+                "parent": 77,
+                "handle": 179,
+                "type": 3,
+                "name": "#text",
+                "text": "Reorder rows"
+              },
+              {
+                "index": 79,
+                "parent": 74,
+                "handle": 180,
+                "type": 1,
+                "name": "BUTTON",
+                "attributes": {
+                  "data-testid": "next-window"
+                }
+              },
+              {
+                "index": 80,
+                "parent": 79,
+                "handle": 181,
+                "type": 3,
+                "name": "#text",
+                "text": "Next rows"
+              },
+              {
+                "index": 81,
+                "parent": 74,
+                "handle": 182,
+                "type": 1,
+                "name": "BUTTON",
+                "attributes": {
+                  "data-testid": "previous-window"
+                }
+              },
+              {
+                "index": 82,
+                "parent": 81,
+                "handle": 183,
+                "type": 3,
+                "name": "#text",
+                "text": "Previous rows"
+              },
+              {
+                "index": 83,
+                "parent": 9,
+                "handle": 184,
+                "type": 3,
+                "name": "#text",
+                "text": "\n"
+              },
+              {
+                "index": 84,
+                "parent": 8,
+                "handle": 185,
+                "type": 3,
+                "name": "#text",
+                "text": "\n"
+              },
+              {
+                "index": 85,
+                "parent": 8,
+                "handle": 186,
+                "type": 1,
+                "name": "SCRIPT"
+              },
+              {
+                "index": 86,
+                "parent": 85,
+                "handle": 187,
+                "type": 3,
+                "name": "#text"
+              },
+              {
+                "index": 87,
+                "parent": 8,
+                "handle": 188,
+                "type": 3,
+                "name": "#text",
+                "text": "\n"
+              }
+            ]
+          }
+        ],
+        "accessibility": [
+          {
+            "frameId": "85ADA859C1CF36E805A863F08EBD2111",
+            "nodes": [
+              {
+                "id": "102",
+                "children": [
+                  "104"
+                ],
+                "handle": 102,
+                "role": "RootWebArea",
+                "name": "Sequence ground truth fixture",
+                "states": {
+                  "focused": "true"
+                }
+              },
+              {
+                "id": "104",
+                "parentId": "102",
+                "children": [
+                  "110"
+                ],
+                "handle": 104,
+                "role": "none",
+                "ignored": true
+              },
+              {
+                "id": "110",
+                "parentId": "104",
+                "children": [
+                  "111"
+                ],
+                "handle": 110,
+                "role": "none",
+                "ignored": true
+              },
+              {
+                "id": "111",
+                "parentId": "110",
+                "children": [
+                  "113",
+                  "120",
+                  "123",
+                  "133",
+                  "139",
+                  "175"
+                ],
+                "handle": 111,
+                "role": "main"
+              },
+              {
+                "id": "113",
+                "parentId": "111",
+                "children": [
+                  "114",
+                  "116"
+                ],
+                "handle": 113,
+                "role": "sectionheader"
+              },
+              {
+                "id": "120",
+                "parentId": "111",
+                "children": [
+                  "121"
+                ],
+                "handle": 120,
+                "role": "status"
+              },
+              {
+                "id": "123",
+                "parentId": "111",
+                "children": [
+                  "124",
+                  "127"
+                ],
+                "handle": 123,
+                "role": "generic"
+              },
+              {
+                "id": "133",
+                "parentId": "111",
+                "children": [
+                  "134",
+                  "136"
+                ],
+                "handle": 133,
+                "role": "generic"
+              },
+              {
+                "id": "139",
+                "parentId": "111",
+                "children": [
+                  "140",
+                  "142"
+                ],
+                "handle": 139,
+                "role": "generic"
+              },
+              {
+                "id": "175",
+                "parentId": "111",
+                "children": [
+                  "176",
+                  "178",
+                  "180",
+                  "182"
+                ],
+                "handle": 175,
+                "role": "navigation"
+              },
+              {
+                "id": "114",
+                "parentId": "113",
+                "children": [
+                  "115"
+                ],
+                "handle": 114,
+                "role": "heading",
+                "name": "Monthly report"
+              },
+              {
+                "id": "116",
+                "parentId": "113",
+                "children": [
+                  "117"
+                ],
+                "handle": 116,
+                "role": "button",
+                "name": "Monthly report",
+                "states": {
+                  "invalid": "false"
+                }
+              },
+              {
+                "id": "121",
+                "parentId": "120",
+                "children": [
+                  "-1000000031"
+                ],
+                "handle": 121,
+                "role": "StaticText",
+                "name": "Report ready"
+              },
+              {
+                "id": "124",
+                "parentId": "123",
+                "children": [
+                  "125"
+                ],
+                "handle": 124,
+                "role": "button",
+                "name": "Edit order",
+                "states": {
+                  "invalid": "false"
+                }
+              },
+              {
+                "id": "127",
+                "parentId": "123",
+                "children": [
+                  "128",
+                  "101"
+                ],
+                "handle": 127,
+                "role": "none",
+                "ignored": true
+              },
+              {
+                "id": "128",
+                "parentId": "127",
+                "handle": 128,
+                "role": "none",
+                "ignored": true
+              },
+              {
+                "id": "101",
+                "parentId": "127",
+                "children": [
+                  "189"
+                ],
+                "handle": 101,
+                "role": "none",
+                "ignored": true
+              },
+              {
+                "id": "189",
+                "parentId": "101",
+                "children": [
+                  "190"
+                ],
+                "handle": 189,
+                "role": "none",
+                "ignored": true
+              },
+              {
+                "id": "190",
+                "parentId": "189",
+                "handle": 190,
+                "role": "none",
+                "ignored": true
+              },
+              {
+                "id": "134",
+                "parentId": "133",
+                "children": [
+                  "135"
+                ],
+                "handle": 134,
+                "role": "button",
+                "name": "Replace control",
+                "states": {
+                  "invalid": "false"
+                }
+              },
+              {
+                "id": "136",
+                "parentId": "133",
+                "children": [
+                  "137"
+                ],
+                "handle": 136,
+                "role": "button",
+                "name": "Approve order",
+                "states": {
+                  "invalid": "false"
+                }
+              },
+              {
+                "id": "140",
+                "parentId": "139",
+                "children": [
+                  "141"
+                ],
+                "handle": 140,
+                "role": "heading",
+                "name": "Orders"
+              },
+              {
+                "id": "142",
+                "parentId": "139",
+                "children": [
+                  "143",
+                  "153"
+                ],
+                "handle": 142,
+                "role": "table",
+                "name": "Orders"
+              },
+              {
+                "id": "176",
+                "parentId": "175",
+                "children": [
+                  "177"
+                ],
+                "handle": 176,
+                "role": "button",
+                "name": "Insert sibling",
+                "states": {
+                  "invalid": "false"
+                }
+              },
+              {
+                "id": "178",
+                "parentId": "175",
+                "children": [
+                  "179"
+                ],
+                "handle": 178,
+                "role": "button",
+                "name": "Reorder rows",
+                "states": {
+                  "invalid": "false"
+                }
+              },
+              {
+                "id": "180",
+                "parentId": "175",
+                "children": [
+                  "181"
+                ],
+                "handle": 180,
+                "role": "button",
+                "name": "Next rows",
+                "states": {
+                  "invalid": "false"
+                }
+              },
+              {
+                "id": "182",
+                "parentId": "175",
+                "children": [
+                  "183"
+                ],
+                "handle": 182,
+                "role": "button",
+                "name": "Previous rows",
+                "states": {
+                  "invalid": "false"
+                }
+              },
+              {
+                "id": "115",
+                "parentId": "114",
+                "children": [
+                  "-1000000029"
+                ],
+                "handle": 115,
+                "role": "StaticText",
+                "name": "Monthly report"
+              },
+              {
+                "id": "117",
+                "parentId": "116",
+                "children": [
+                  "-1000000030"
+                ],
+                "handle": 117,
+                "role": "StaticText",
+                "name": "Monthly report"
+              },
+              {
+                "id": "-1000000031",
+                "parentId": "121",
+                "role": "InlineTextBox",
+                "name": "Report ready"
+              },
+              {
+                "id": "125",
+                "parentId": "124",
+                "children": [
+                  "-1000000032"
+                ],
+                "handle": 125,
+                "role": "StaticText",
+                "name": "Edit order"
+              },
+              {
+                "id": "135",
+                "parentId": "134",
+                "children": [
+                  "-1000000033"
+                ],
+                "handle": 135,
+                "role": "StaticText",
+                "name": "Replace control"
+              },
+              {
+                "id": "137",
+                "parentId": "136",
+                "children": [
+                  "-1000000034"
+                ],
+                "handle": 137,
+                "role": "StaticText",
+                "name": "Approve order"
+              },
+              {
+                "id": "141",
+                "parentId": "140",
+                "children": [
+                  "-1000000035"
+                ],
+                "handle": 141,
+                "role": "StaticText",
+                "name": "Orders"
+              },
+              {
+                "id": "143",
+                "parentId": "142",
+                "children": [
+                  "144"
+                ],
+                "handle": 143,
+                "role": "rowgroup"
+              },
+              {
+                "id": "153",
+                "parentId": "142",
+                "children": [
+                  "154",
+                  "164"
+                ],
+                "handle": 153,
+                "role": "rowgroup"
+              },
+              {
+                "id": "177",
+                "parentId": "176",
+                "children": [
+                  "-1000000048"
+                ],
+                "handle": 177,
+                "role": "StaticText",
+                "name": "Insert sibling"
+              },
+              {
+                "id": "179",
+                "parentId": "178",
+                "children": [
+                  "-1000000049"
+                ],
+                "handle": 179,
+                "role": "StaticText",
+                "name": "Reorder rows"
+              },
+              {
+                "id": "181",
+                "parentId": "180",
+                "children": [
+                  "-1000000050"
+                ],
+                "handle": 181,
+                "role": "StaticText",
+                "name": "Next rows"
+              },
+              {
+                "id": "183",
+                "parentId": "182",
+                "children": [
+                  "-1000000051"
+                ],
+                "handle": 183,
+                "role": "StaticText",
+                "name": "Previous rows"
+              },
+              {
+                "id": "-1000000029",
+                "parentId": "115",
+                "role": "InlineTextBox",
+                "name": "Monthly report"
+              },
+              {
+                "id": "-1000000030",
+                "parentId": "117",
+                "role": "InlineTextBox",
+                "name": "Monthly report"
+              },
+              {
+                "id": "-1000000032",
+                "parentId": "125",
+                "role": "InlineTextBox",
+                "name": "Edit order"
+              },
+              {
+                "id": "-1000000033",
+                "parentId": "135",
+                "role": "InlineTextBox",
+                "name": "Replace control"
+              },
+              {
+                "id": "-1000000034",
+                "parentId": "137",
+                "role": "InlineTextBox",
+                "name": "Approve order"
+              },
+              {
+                "id": "-1000000035",
+                "parentId": "141",
+                "role": "InlineTextBox",
+                "name": "Orders"
+              },
+              {
+                "id": "144",
+                "parentId": "143",
+                "children": [
+                  "145",
+                  "147",
+                  "149",
+                  "151"
+                ],
+                "handle": 144,
+                "role": "row"
+              },
+              {
+                "id": "154",
+                "parentId": "153",
+                "children": [
+                  "155",
+                  "157",
+                  "159",
+                  "161"
+                ],
+                "handle": 154,
+                "role": "row"
+              },
+              {
+                "id": "164",
+                "parentId": "153",
+                "children": [
+                  "165",
+                  "167",
+                  "169",
+                  "171"
+                ],
+                "handle": 164,
+                "role": "row"
+              },
+              {
+                "id": "-1000000048",
+                "parentId": "177",
+                "role": "InlineTextBox",
+                "name": "Insert sibling"
+              },
+              {
+                "id": "-1000000049",
+                "parentId": "179",
+                "role": "InlineTextBox",
+                "name": "Reorder rows"
+              },
+              {
+                "id": "-1000000050",
+                "parentId": "181",
+                "role": "InlineTextBox",
+                "name": "Next rows"
+              },
+              {
+                "id": "-1000000051",
+                "parentId": "183",
+                "role": "InlineTextBox",
+                "name": "Previous rows"
+              },
+              {
+                "id": "145",
+                "parentId": "144",
+                "children": [
+                  "146"
+                ],
+                "handle": 145,
+                "role": "columnheader",
+                "name": "Order",
+                "states": {
+                  "required": "false"
+                }
+              },
+              {
+                "id": "147",
+                "parentId": "144",
+                "children": [
+                  "148"
+                ],
+                "handle": 147,
+                "role": "columnheader",
+                "name": "Customer",
+                "states": {
+                  "required": "false"
+                }
+              },
+              {
+                "id": "149",
+                "parentId": "144",
+                "children": [
+                  "150"
+                ],
+                "handle": 149,
+                "role": "columnheader",
+                "name": "Status",
+                "states": {
+                  "required": "false"
+                }
+              },
+              {
+                "id": "151",
+                "parentId": "144",
+                "children": [
+                  "152"
+                ],
+                "handle": 151,
+                "role": "columnheader",
+                "name": "Action",
+                "states": {
+                  "required": "false"
+                }
+              },
+              {
+                "id": "155",
+                "parentId": "154",
+                "children": [
+                  "156"
+                ],
+                "handle": 155,
+                "role": "cell",
+                "name": "ORD-42"
+              },
+              {
+                "id": "157",
+                "parentId": "154",
+                "children": [
+                  "158"
+                ],
+                "handle": 157,
+                "role": "cell",
+                "name": "Mai Nguyen"
+              },
+              {
+                "id": "159",
+                "parentId": "154",
+                "children": [
+                  "160"
+                ],
+                "handle": 159,
+                "role": "cell",
+                "name": "Pending"
+              },
+              {
+                "id": "161",
+                "parentId": "154",
+                "children": [
+                  "162"
+                ],
+                "handle": 161,
+                "role": "cell",
+                "name": "Open"
+              },
+              {
+                "id": "165",
+                "parentId": "164",
+                "children": [
+                  "166"
+                ],
+                "handle": 165,
+                "role": "cell",
+                "name": "ORD-43"
+              },
+              {
+                "id": "167",
+                "parentId": "164",
+                "children": [
+                  "168"
+                ],
+                "handle": 167,
+                "role": "cell",
+                "name": "Ada Lovelace"
+              },
+              {
+                "id": "169",
+                "parentId": "164",
+                "children": [
+                  "170"
+                ],
+                "handle": 169,
+                "role": "cell",
+                "name": "Pending"
+              },
+              {
+                "id": "171",
+                "parentId": "164",
+                "children": [
+                  "172"
+                ],
+                "handle": 171,
+                "role": "cell",
+                "name": "Open"
+              },
+              {
+                "id": "146",
+                "parentId": "145",
+                "children": [
+                  "-1000000036"
+                ],
+                "handle": 146,
+                "role": "StaticText",
+                "name": "Order"
+              },
+              {
+                "id": "148",
+                "parentId": "147",
+                "children": [
+                  "-1000000037"
+                ],
+                "handle": 148,
+                "role": "StaticText",
+                "name": "Customer"
+              },
+              {
+                "id": "150",
+                "parentId": "149",
+                "children": [
+                  "-1000000038"
+                ],
+                "handle": 150,
+                "role": "StaticText",
+                "name": "Status"
+              },
+              {
+                "id": "152",
+                "parentId": "151",
+                "children": [
+                  "-1000000039"
+                ],
+                "handle": 152,
+                "role": "StaticText",
+                "name": "Action"
+              },
+              {
+                "id": "156",
+                "parentId": "155",
+                "children": [
+                  "-1000000040"
+                ],
+                "handle": 156,
+                "role": "StaticText",
+                "name": "ORD-42"
+              },
+              {
+                "id": "158",
+                "parentId": "157",
+                "children": [
+                  "-1000000041"
+                ],
+                "handle": 158,
+                "role": "StaticText",
+                "name": "Mai Nguyen"
+              },
+              {
+                "id": "160",
+                "parentId": "159",
+                "children": [
+                  "-1000000042"
+                ],
+                "handle": 160,
+                "role": "StaticText",
+                "name": "Pending"
+              },
+              {
+                "id": "162",
+                "parentId": "161",
+                "children": [
+                  "163"
+                ],
+                "handle": 162,
+                "role": "button",
+                "name": "Open",
+                "states": {
+                  "invalid": "false"
+                }
+              },
+              {
+                "id": "166",
+                "parentId": "165",
+                "children": [
+                  "-1000000044"
+                ],
+                "handle": 166,
+                "role": "StaticText",
+                "name": "ORD-43"
+              },
+              {
+                "id": "168",
+                "parentId": "167",
+                "children": [
+                  "-1000000045"
+                ],
+                "handle": 168,
+                "role": "StaticText",
+                "name": "Ada Lovelace"
+              },
+              {
+                "id": "170",
+                "parentId": "169",
+                "children": [
+                  "-1000000046"
+                ],
+                "handle": 170,
+                "role": "StaticText",
+                "name": "Pending"
+              },
+              {
+                "id": "172",
+                "parentId": "171",
+                "children": [
+                  "173"
+                ],
+                "handle": 172,
+                "role": "button",
+                "name": "Open",
+                "states": {
+                  "invalid": "false"
+                }
+              },
+              {
+                "id": "-1000000036",
+                "parentId": "146",
+                "role": "InlineTextBox",
+                "name": "Order"
+              },
+              {
+                "id": "-1000000037",
+                "parentId": "148",
+                "role": "InlineTextBox",
+                "name": "Customer"
+              },
+              {
+                "id": "-1000000038",
+                "parentId": "150",
+                "role": "InlineTextBox",
+                "name": "Status"
+              },
+              {
+                "id": "-1000000039",
+                "parentId": "152",
+                "role": "InlineTextBox",
+                "name": "Action"
+              },
+              {
+                "id": "-1000000040",
+                "parentId": "156",
+                "role": "InlineTextBox",
+                "name": "ORD-42"
+              },
+              {
+                "id": "-1000000041",
+                "parentId": "158",
+                "role": "InlineTextBox",
+                "name": "Mai Nguyen"
+              },
+              {
+                "id": "-1000000042",
+                "parentId": "160",
+                "role": "InlineTextBox",
+                "name": "Pending"
+              },
+              {
+                "id": "163",
+                "parentId": "162",
+                "children": [
+                  "-1000000043"
+                ],
+                "handle": 163,
+                "role": "StaticText",
+                "name": "Open"
+              },
+              {
+                "id": "-1000000044",
+                "parentId": "166",
+                "role": "InlineTextBox",
+                "name": "ORD-43"
+              },
+              {
+                "id": "-1000000045",
+                "parentId": "168",
+                "role": "InlineTextBox",
+                "name": "Ada Lovelace"
+              },
+              {
+                "id": "-1000000046",
+                "parentId": "170",
+                "role": "InlineTextBox",
+                "name": "Pending"
+              },
+              {
+                "id": "173",
+                "parentId": "172",
+                "children": [
+                  "-1000000047"
+                ],
+                "handle": 173,
+                "role": "StaticText",
+                "name": "Open"
+              },
+              {
+                "id": "-1000000043",
+                "parentId": "163",
+                "role": "InlineTextBox",
+                "name": "Open"
+              },
+              {
+                "id": "-1000000047",
+                "parentId": "173",
+                "role": "InlineTextBox",
+                "name": "Open"
+              }
+            ]
+          }
+        ],
+        "truncated": false
+      },
+      "nodes": [],
+      "facts": [
+        {
+          "key": "screen-title",
+          "nodeKey": "screen-title",
+          "property": "text",
+          "captured": true,
+          "value": "Monthly report"
+        }
+      ],
+      "coverage": {
+        "scopes": [
+          "fixture-root"
+        ],
+        "unobservable": [
+          "programmatic_form_values",
+          "offscreen_virtualized_rows"
+        ],
+        "complete": true,
+        "observerActive": true,
+        "gap": false,
+        "revision": 0,
+        "oldestRevision": 0,
+        "history": []
+      }
+    }
+  ],
+  "transitions": [
+    {
+      "from": "s0",
+      "to": "s1",
+      "trigger": "navigate",
+      "offline": false,
+      "reopen": false,
+      "expected": {
+        "documentState": "navigated",
+        "provenance": "reconstructed",
+        "mappings": [
+          {
+            "key": "save",
+            "fromRef": "e1",
+            "decision": "stale",
+            "anchorGuard": "stale_fingerprint"
+          }
+        ],
+        "content": [
+          {
+            "key": "screen-title",
+            "status": "changed",
+            "before": "Customer orders",
+            "after": "Monthly report"
+          }
+        ]
+      }
+    }
+  ]
+}

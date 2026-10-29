@@ -41,9 +41,10 @@ export async function getAxInfoForNode(target: chrome.debugger.Debuggee, backend
  * gone (detached/re-rendered) or unreadable.
  */
 async function readElementText(target: chrome.debugger.Debuggee, backendNodeId: number): Promise<string | null> {
+    let objectId: string | undefined;
     try {
         const resolved = await sendCommand(target, "DOM.resolveNode", { backendNodeId });
-        const objectId = resolved?.object?.objectId;
+        objectId = resolved?.object?.objectId;
         if (!objectId) return null;
         const result = await sendCommand(target, "Runtime.callFunctionOn", {
             objectId,
@@ -53,6 +54,32 @@ async function readElementText(target: chrome.debugger.Debuggee, backendNodeId: 
         return typeof result?.result?.value === "string" ? result.result.value : null;
     } catch {
         return null;
+    } finally {
+        if (objectId) await sendCommand(target, "Runtime.releaseObject", { objectId }).catch(() => {});
+    }
+}
+
+async function expectedInsertedValue(
+    target: chrome.debugger.Debuggee,
+    backendNodeId: number,
+    text: string,
+): Promise<string | null> {
+    let objectId: string | undefined;
+    try {
+        objectId = (await sendCommand(target, "DOM.resolveNode", { backendNodeId }))?.object?.objectId;
+        if (!objectId) return null;
+        const result = await sendCommand(target, "Runtime.callFunctionOn", {
+            objectId,
+            arguments: [{ value: text }],
+            returnByValue: true,
+            functionDeclaration: `function(text) {
+                if (typeof this.value !== 'string' || typeof this.selectionStart !== 'number' || typeof this.selectionEnd !== 'number') return null;
+                return this.value.slice(0, this.selectionStart) + text + this.value.slice(this.selectionEnd);
+            }`,
+        });
+        return typeof result?.result?.value === "string" ? result.result.value : null;
+    } finally {
+        if (objectId) await sendCommand(target, "Runtime.releaseObject", { objectId }).catch(() => {});
     }
 }
 
@@ -98,6 +125,7 @@ async function clickPoint(
     backendNodeId: number,
     box: { x: number; y: number; w: number; h: number },
 ): Promise<{ x: number; y: number; coveredBy?: string }> {
+    let objectId: string | undefined;
     const layout = await sendCommand(target, "Page.getLayoutMetrics").catch(() => null);
     const vw = layout?.cssLayoutViewport?.clientWidth ?? box.x + box.w;
     const vh = layout?.cssLayoutViewport?.clientHeight ?? box.y + box.h;
@@ -109,16 +137,17 @@ async function clickPoint(
     const y = bottom > top ? (top + bottom) / 2 : box.y + box.h / 2;
     try {
         const resolved = await sendCommand(target, "DOM.resolveNode", { backendNodeId });
-        const objectId = resolved?.object?.objectId;
-        if (!objectId) return { x, y };
+        objectId = resolved?.object?.objectId;
+        if (!objectId) return { x, y, coveredBy: "an unverified hit target (node could not be resolved)" };
         const res = await sendCommand(target, "Runtime.callFunctionOn", {
             objectId,
             arguments: [{ value: x }, { value: y }],
             returnByValue: true,
             functionDeclaration: `function (x, y) {
-                if (this.ownerDocument !== document) return null;
+                if (this.ownerDocument !== document) return "an unsupported frame target";
                 const hit = document.elementFromPoint(x, y);
-                if (!hit || hit === this || this.contains(hit) || hit.contains(this)) return null;
+                if (!hit) return "no element at the click point";
+                if (hit === this || this.contains(hit)) return null;
                 const label = hit.closest("label");
                 if (label && (label.control === this || label.contains(this))) return null;
                 const ownLabel = this.closest && this.closest("label");
@@ -129,11 +158,13 @@ async function clickPoint(
                 return "<" + hit.tagName.toLowerCase() + (hit.id ? "#" + hit.id : "") + cls + ">" + (text ? ' "' + text + '"' : "");
             }`,
         });
-        void sendCommand(target, "Runtime.releaseObject", { objectId }).catch(() => {});
         const coveredBy = res?.result?.value;
+        if (res?.exceptionDetails) return { x, y, coveredBy: "an unverified hit target (evaluation failed)" };
         return typeof coveredBy === "string" ? { x, y, coveredBy } : { x, y };
     } catch {
-        return { x, y };
+        return { x, y, coveredBy: "an unverified hit target (hit test unavailable)" };
+    } finally {
+        if (objectId) await sendCommand(target, "Runtime.releaseObject", { objectId }).catch(() => {});
     }
 }
 
@@ -220,21 +251,29 @@ export async function performClick(
 async function selectElementContents(target: chrome.debugger.Debuggee, backendNodeId: number): Promise<void> {
     const resolved = await sendCommand(target, "DOM.resolveNode", { backendNodeId });
     const objectId = resolved?.object?.objectId;
-    if (!objectId) return;
-    await sendCommand(target, "Runtime.callFunctionOn", {
-        objectId,
-        functionDeclaration: `function () {
-            if (typeof this.select === "function" && "value" in this) { this.select(); return; }
+    if (!objectId) throw new Error("Target could not be resolved for fill");
+    try {
+        const result = await sendCommand(target, "Runtime.callFunctionOn", {
+            objectId,
+            functionDeclaration: `function () {
+            if (typeof this.select === "function" && "value" in this) { this.select(); return true; }
             if (this.isContentEditable) {
                 const range = document.createRange();
                 range.selectNodeContents(this);
                 const sel = getSelection();
                 sel.removeAllRanges();
                 sel.addRange(range);
+                return true;
             }
+            return false;
         }`,
-    });
-    void sendCommand(target, "Runtime.releaseObject", { objectId }).catch(() => {});
+            returnByValue: true,
+        });
+        if (result?.exceptionDetails || result?.result?.value !== true)
+            throw new Error("Target does not support selecting its contents");
+    } finally {
+        await sendCommand(target, "Runtime.releaseObject", { objectId }).catch(() => {});
+    }
 }
 
 /** Types text into a targeted element (or currently focused input) with cursor glide and highlight. */
@@ -256,7 +295,13 @@ export async function performType(
                 hint: "The node id may be stale, or the element isn't focusable (e.g. a label or div, not an input). Take a fresh snapshot and pass the textbox's id.",
             };
         }
-        if (opts.clear) await selectElementContents(target, backendNodeId).catch(() => {});
+        if (opts.clear) {
+            try {
+                await selectElementContents(target, backendNodeId);
+            } catch {
+                return { error: "Cannot fill target: contents could not be selected. No text was inserted." };
+            }
+        }
 
         const [boxModel, resolvedAxInfo] = await Promise.all([
             sendCommand(target, "DOM.getBoxModel", { backendNodeId }).catch(() => null),
@@ -275,6 +320,9 @@ export async function performType(
         }
     }
 
+    if (opts.clear && backendNodeId == null) return { error: "Fill requires an explicit target" };
+    const expectedValue =
+        backendNodeId != null && !opts.clear ? await expectedInsertedValue(target, backendNodeId, text) : null;
     if (opts.clear && text === "") {
         await dispatchKey(target, KEY_DEFS.Delete, 0);
     } else if (opts.fast) {
@@ -287,28 +335,19 @@ export async function performType(
             if (perCharDelayMs > 0) await pageDelay(target, perCharDelayMs);
         }
     }
-    let settleReason = (await waitForStableDom(target)).reason;
+    const settleReason = (await waitForStableDom(target)).reason;
 
-    if (backendNodeId != null && text.length > 0) {
-        let landed = await readElementText(target, backendNodeId);
-        if (landed == null || !landed.includes(text)) {
-            // One recovery attempt: the node may still be attached, just
-            // knocked out of focus by a re-render — re-focus and re-insert
-            // before giving up on it.
-            try {
-                await sendCommand(target, "DOM.focus", { backendNodeId });
-                await sendCommand(target, "Input.insertText", { text });
-                settleReason = (await waitForStableDom(target)).reason;
-                landed = await readElementText(target, backendNodeId);
-            } catch {}
-
-            if (landed == null || !landed.includes(text)) {
-                return {
-                    error: `Typed ${text.length} chars but they didn't land in the target element`,
-                    hint: "The element likely lost focus mid-type (a re-render replaced it, or something else grabbed focus). Take a fresh snapshot and retry, ideally right after the element becomes visible/interactive rather than immediately after the action that revealed it.",
-                    settleReason,
-                };
-            }
+    if (backendNodeId != null && (text.length > 0 || opts.clear)) {
+        const landed = await readElementText(target, backendNodeId);
+        if (
+            landed == null ||
+            (opts.clear ? landed !== text : expectedValue !== null ? landed !== expectedValue : !landed.includes(text))
+        ) {
+            return {
+                error: `Input was dispatched but the target value did not verify (${text.length} chars)`,
+                hint: "Inspect the field: the page may have transformed the value or replaced the element. No automatic re-insertion was performed.",
+                settleReason,
+            };
         }
     }
     // The typed text is deliberately not echoed back: it may be a password, and the caller already has it.

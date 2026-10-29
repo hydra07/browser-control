@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Long article fixture</title>
+<article><h1>Community engineering notes</h1><p>Author Mai Nguyen · mai@example.test</p><section id="chapters"></section><a href="#end">Jump to conclusion</a><h2 id="end">Conclusion</h2></article>
+<script>
+for (let i = 1; i <= 250; i++) {
+  const paragraph = document.createElement("p");
+  paragraph.textContent = "Paragraph " + i + ": an accessible article preserves reading order, headings and useful content for deterministic queries.";
+  document.getElementById("chapters").append(paragraph);
+}
+document.documentElement.dataset.fixtureReady = "true";
+</script></html>

@@ -1,5 +1,5 @@
 import type { FlowStep } from "@browsercontrol/shared";
-import { attachFlowTrackerInPage } from "./trackerScript.js";
+import { attachFlowTrackerInPage, detachFlowTrackerInPage } from "./trackerScript.js";
 
 /**
  * Auto-Flow Interaction Recorder.
@@ -40,19 +40,18 @@ export class FlowInteractionRecorder {
     }
 
     public async injectTracker(targetTabId: number): Promise<void> {
-        try {
-            if (chrome.scripting?.executeScript) {
-                await chrome.scripting.executeScript({
-                    target: { tabId: targetTabId },
-                    func: attachFlowTrackerInPage,
-                });
-            }
-        } catch (e) {
-            console.error("[browsercontrol] Failed to inject flow tracker:", e);
+        if (chrome.scripting?.executeScript) {
+            await chrome.scripting.executeScript({
+                target: { tabId: targetTabId },
+                func: attachFlowTrackerInPage,
+            });
+        } else {
+            throw new Error("Chrome scripting API unavailable");
         }
     }
 
     public async start(tabId: number, domain?: string): Promise<{ success: boolean; message: string }> {
+        if (this.recording) this.stop();
         this.recording = true;
         this.steps = [];
         this.tabId = tabId;
@@ -60,7 +59,12 @@ export class FlowInteractionRecorder {
         this.startedAt = Date.now();
 
         // Attach tracker immediately
-        await this.injectTracker(tabId);
+        try {
+            await this.injectTracker(tabId);
+        } catch (error) {
+            this.stop();
+            throw error;
+        }
 
         // Keep tracker attached across in-tab navigations
         if (this.tabUpdateListener) {
@@ -68,7 +72,9 @@ export class FlowInteractionRecorder {
         }
         this.tabUpdateListener = (updatedTabId, changeInfo) => {
             if (this.recording && updatedTabId === this.tabId && changeInfo.status === "complete") {
-                void this.injectTracker(updatedTabId);
+                void this.injectTracker(updatedTabId).catch((error: unknown) =>
+                    console.error("Flow tracker reinjection failed", error),
+                );
             }
         };
         chrome.tabs.onUpdated.addListener(this.tabUpdateListener);
@@ -81,12 +87,12 @@ export class FlowInteractionRecorder {
 
     /** Appends and optimizes live user interaction steps. */
     public addStep(step: FlowStep): void {
-        if (!this.recording) return;
+        if (!this.recording || this.steps.length >= 1000) return;
 
         const last = this.steps[this.steps.length - 1];
 
         // Merge continuous typing events on the same element into a single 'type' step
-        if (last && last.action === "type" && step.action === "type") {
+        if (last && last.action === "fill" && step.action === "fill") {
             const sameSelector = last.selector && step.selector && last.selector === step.selector;
             const sameRoleName = last.role && step.role && last.role === step.role && last.name === step.name;
             if (sameSelector || sameRoleName) {
@@ -104,9 +110,13 @@ export class FlowInteractionRecorder {
         stepCount: number;
         durationMs: number;
     } {
+        if (this.tabId != null)
+            void chrome.scripting
+                .executeScript({ target: { tabId: this.tabId }, func: detachFlowTrackerInPage })
+                .catch(() => {});
         const durationMs = Date.now() - this.startedAt;
         const capturedSteps = [...this.steps];
-        const capturedDomain = this.domain ?? "global";
+        const capturedDomain = this.domain ?? "";
 
         if (this.tabUpdateListener) {
             chrome.tabs.onUpdated.removeListener(this.tabUpdateListener);

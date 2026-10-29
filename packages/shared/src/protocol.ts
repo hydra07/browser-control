@@ -1,3 +1,8 @@
+import type { ActionResult } from "./actionResult.js";
+
+export type { ActionKind, ActionResult, ActionStatus, InputState } from "./actionResult.js";
+export { isActionResult } from "./actionResult.js";
+
 // The dependency-light wire contract between server and extension. This file
 // also owns the small runtime constants/codecs needed to frame binary packets;
 // it must not import application/domain runtime dependencies.
@@ -7,11 +12,12 @@
 // a script is written before the steps that create later DOM state run) or
 // by CSS selector — never a pre-known nodeId.
 export interface FlowStep {
-    action: "click" | "type" | "press_key" | "wait_for" | "assert_text" | "scroll" | "drag";
+    action: "click" | "type" | "fill" | "press_key" | "wait_for" | "assert_text" | "scroll" | "drag";
     role?: string;
     name?: string;
     selector?: string;
     text?: string;
+    textFromEnv?: string;
     key?: string;
     contains?: string;
     deltaX?: number;
@@ -94,6 +100,7 @@ export interface ExpectedTransition {
     selector?: string;
     contains?: string;
     attribute?: string;
+    property?: "value" | "checked" | "disabled";
     value?: string;
 }
 
@@ -105,7 +112,7 @@ export interface FlowStepPolicy {
 
 export type DriftKind = "EXACT" | "SEMANTIC_REPAIR" | "TARGET_DRIFT" | "BEHAVIOR_DRIFT";
 
-export type ActionLifecycleEvent =
+export type ActionLifecycleEvent = (
     | {
           type: "action_started";
           actionId: string;
@@ -128,7 +135,9 @@ export type ActionLifecycleEvent =
           targetRef?: string;
           drift?: DriftKind;
           sensitive: boolean;
-      };
+      }
+) &
+    Partial<Pick<ActionResult, "status" | "dispatched" | "startedAt" | "dispatchedAt" | "bbox">>;
 
 export type EvidenceProfile = "none" | "failure" | "step" | "flow" | "full";
 
@@ -230,7 +239,7 @@ function boundedFlowDescriptorText(value: string | undefined): string | undefine
 export function toFlowTargetDescriptor(step: FlowStep): FlowTargetDescriptor | undefined {
     const role = boundedFlowDescriptorText(step.role);
     const name = boundedFlowDescriptorText(step.name);
-    const selector = boundedFlowDescriptorText(step.selector);
+    const selector = step.selector;
     if (!role && !name && !selector) return undefined;
     return {
         ...(role ? { role } : {}),
@@ -248,16 +257,226 @@ export function migrateFlowStep(step: FlowStep | FlowStepV2): FlowStepV2 {
 
 /** Converts v2 target metadata to the legacy resolver input used during migration. */
 export function normalizeFlowStep(step: FlowStep | FlowStepV2): FlowStep {
-    if (!("target" in step) || !step.target) return step;
-    const target = step.target;
+    const target = "target" in step ? step.target : undefined;
+    const policy = "policy" in step ? step.policy : undefined;
+    const attributes = target
+        ? [
+              ["id", target.id],
+              ["data-testid", target.testId],
+              ["href", target.href],
+              ["name", target.inputName],
+              ["type", target.inputType],
+          ]
+              .filter((pair) => pair[1] !== undefined)
+              .map(([key, value]) => `[${key}=${cssAttributeValue(value!)}]`)
+              .join("")
+        : "";
     return {
         ...step,
-        role: step.role || target.role,
-        name: step.name || target.name,
-        selector: step.selector || target.selectorHints?.[0],
-        timeoutMs: step.timeoutMs ?? step.policy?.timeoutMs,
-        confirmRisky: step.confirmRisky ?? step.policy?.confirmRisky,
+        role: step.role || target?.role,
+        name: step.name || target?.name,
+        selector: step.selector || attributes || target?.selectorHints?.join(","),
+        timeoutMs: step.timeoutMs ?? policy?.timeoutMs,
+        confirmRisky: step.confirmRisky ?? policy?.confirmRisky,
     };
+}
+
+function cssAttributeValue(value: string): string {
+    return `"${value.replace(/["\\\u0000-\u001f\u007f]/g, (char) => `\\${char.charCodeAt(0).toString(16)} `)}"`;
+}
+
+/** Rejects unsupported workflow input before any side effects run. */
+export function validateFlowSteps(input: unknown): string | null {
+    if (!Array.isArray(input) || input.length === 0) return "steps must be a non-empty array";
+    const steps: unknown[] = input;
+    const actions = new Set(["click", "type", "fill", "press_key", "wait_for", "assert_text", "scroll", "drag"]);
+    const stepKeys = new Set([
+        "action",
+        "role",
+        "name",
+        "selector",
+        "text",
+        "key",
+        "contains",
+        "deltaX",
+        "deltaY",
+        "fromX",
+        "fromY",
+        "toX",
+        "toY",
+        "shape",
+        "shapeParams",
+        "path",
+        "stepsCount",
+        "easing",
+        "button",
+        "timeoutMs",
+        "confirmRisky",
+        "target",
+        "expected",
+        "policy",
+    ]);
+    for (let i = 0; i < steps.length; i++) {
+        const value = steps[i];
+        if (!value || typeof value !== "object" || Array.isArray(value)) return `step ${i}: expected an object`;
+        const step = value as Record<string, unknown>;
+        for (const key of Object.keys(step))
+            if (!stepKeys.has(key))
+                return `step ${i}: unsupported field ${key}; host bindings must be resolved before execution`;
+        if (typeof step.action !== "string" || !actions.has(step.action)) return `step ${i}: unsupported action`;
+        for (const key of ["role", "name", "selector", "text", "key", "contains"]) {
+            if (step[key] !== undefined && typeof step[key] !== "string") return `step ${i}: ${key} must be a string`;
+        }
+        if (["type", "fill"].includes(step.action) && typeof step.text !== "string")
+            return `step ${i}: text is required`;
+        if (step.action === "press_key" && (typeof step.key !== "string" || !step.key))
+            return `step ${i}: key is required`;
+        if (step.action === "assert_text" && (typeof step.contains !== "string" || !step.contains))
+            return `step ${i}: contains is required`;
+        if (step.confirmRisky !== undefined && typeof step.confirmRisky !== "boolean")
+            return `step ${i}: confirmRisky must be boolean`;
+        for (const key of ["deltaX", "deltaY", "fromX", "fromY", "toX", "toY", "stepsCount"]) {
+            if (step[key] !== undefined && (typeof step[key] !== "number" || !Number.isFinite(step[key])))
+                return `step ${i}: ${key} must be finite`;
+        }
+        if (step.easing !== undefined && !["linear", "easeIn", "easeOut", "easeInOut"].includes(String(step.easing)))
+            return `step ${i}: invalid easing`;
+        if (step.button !== undefined && !["left", "right", "middle"].includes(String(step.button)))
+            return `step ${i}: invalid button`;
+        if (
+            step.shape !== undefined &&
+            ![
+                "straight",
+                "circle",
+                "arc",
+                "ellipse",
+                "bezier",
+                "sine",
+                "zigzag",
+                "spiral",
+                "waypoints",
+                "polygon",
+                "star",
+                "heart",
+                "flower",
+                "rectangle",
+                "box",
+                "parametric",
+                "polar",
+                "function",
+            ].includes(String(step.shape))
+        )
+            return `step ${i}: invalid shape`;
+        if (
+            step.path !== undefined &&
+            (!Array.isArray(step.path) ||
+                step.path.length < 2 ||
+                !step.path.every((point: unknown) => {
+                    if (Array.isArray(point))
+                        return (
+                            point.length === 2 &&
+                            point.every(
+                                (coordinate: unknown) => typeof coordinate === "number" && Number.isFinite(coordinate),
+                            )
+                        );
+                    return (
+                        point !== null &&
+                        typeof point === "object" &&
+                        "x" in point &&
+                        "y" in point &&
+                        typeof point.x === "number" &&
+                        Number.isFinite(point.x) &&
+                        typeof point.y === "number" &&
+                        Number.isFinite(point.y)
+                    );
+                }))
+        )
+            return `step ${i}: invalid drag path`;
+        if (step.policy !== undefined) {
+            if (!step.policy || typeof step.policy !== "object" || Array.isArray(step.policy))
+                return `step ${i}: invalid policy`;
+            const policy = step.policy as Record<string, unknown>;
+            for (const key of Object.keys(policy))
+                if (!["timeoutMs", "confirmRisky", "onDrift"].includes(key))
+                    return `step ${i}: unsupported policy.${key}`;
+            if (policy.onDrift !== undefined && !["stop", "repair", "report"].includes(String(policy.onDrift)))
+                return `step ${i}: invalid onDrift`;
+            if (policy.confirmRisky !== undefined && typeof policy.confirmRisky !== "boolean")
+                return `step ${i}: confirmRisky must be boolean`;
+            if (
+                policy.timeoutMs !== undefined &&
+                (typeof policy.timeoutMs !== "number" ||
+                    !Number.isFinite(policy.timeoutMs) ||
+                    policy.timeoutMs <= 0 ||
+                    policy.timeoutMs > 120000)
+            )
+                return `step ${i}: invalid policy timeoutMs`;
+        }
+        if (
+            step.timeoutMs !== undefined &&
+            (typeof step.timeoutMs !== "number" ||
+                !Number.isFinite(step.timeoutMs) ||
+                step.timeoutMs <= 0 ||
+                step.timeoutMs > 120000)
+        )
+            return `step ${i}: invalid timeoutMs`;
+        if (step.target !== undefined) {
+            if (!step.target || typeof step.target !== "object" || Array.isArray(step.target))
+                return `step ${i}: invalid target`;
+            const target = step.target as Record<string, unknown>;
+            for (const key of Object.keys(target))
+                if (
+                    ![
+                        "role",
+                        "name",
+                        "testId",
+                        "id",
+                        "href",
+                        "inputName",
+                        "inputType",
+                        "selectorHints",
+                        "recordedRuntimeRef",
+                        "recordedRevision",
+                    ].includes(key)
+                )
+                    return `step ${i}: unsupported target.${key}`;
+            for (const key of ["role", "name", "testId", "id", "href", "inputName", "inputType"]) {
+                if (target[key] !== undefined && typeof target[key] !== "string")
+                    return `step ${i}: target.${key} must be a string`;
+            }
+            if (
+                target.selectorHints !== undefined &&
+                (!Array.isArray(target.selectorHints) ||
+                    !target.selectorHints.every((hint: unknown) => typeof hint === "string" && hint.length > 0))
+            )
+                return `step ${i}: invalid selectorHints`;
+        }
+        const normalized = normalizeFlowStep(step as unknown as FlowStepV2);
+        if (!["scroll", "drag", "press_key"].includes(step.action) && !normalized.selector && !normalized.name)
+            return `step ${i}: a selector or accessible name is required`;
+        if (step.expected !== undefined) {
+            if (!step.expected || typeof step.expected !== "object" || Array.isArray(step.expected))
+                return `step ${i}: invalid expected transition`;
+            const expected = step.expected as Record<string, unknown>;
+            for (const key of Object.keys(expected))
+                if (!["kind", "urlPattern", "selector", "contains", "attribute", "property", "value"].includes(key))
+                    return `step ${i}: unsupported expected.${key}`;
+            if (!["none", "navigation", "text", "state"].includes(String(expected.kind)))
+                return `step ${i}: unsupported expectation`;
+            for (const key of ["urlPattern", "selector", "contains", "attribute", "value"]) {
+                if (expected[key] !== undefined && typeof expected[key] !== "string")
+                    return `step ${i}: expected.${key} must be a string`;
+            }
+            if (expected.kind === "text" && !expected.contains) return `step ${i}: expected.contains is required`;
+            if (expected.kind === "state" && !expected.selector) return `step ${i}: expected.selector is required`;
+            if (
+                expected.property !== undefined &&
+                !["value", "checked", "disabled"].includes(String(expected.property))
+            )
+                return `step ${i}: unsupported state property`;
+        }
+    }
+    return null;
 }
 
 /** Converts either flow document version to the v2 envelope without rewriting storage implicitly. */
@@ -458,6 +677,7 @@ export type BrowserCommand = WithTabId<
     | { cmd: "inspect_element"; nodeId?: number; ref?: string; documentId?: string }
     | { cmd: "evaluate"; expression: string }
     | { cmd: "run_flow"; steps: FlowStepInput[]; domain?: string; returnSnapshot?: boolean }
+    | { cmd: "validate_flow"; steps: FlowStepInput[] }
     | { cmd: "explore_flow"; steps: FlowStepInput[]; domain?: string; returnSnapshot?: boolean }
     | { cmd: "list_tabs"; scope?: "workspace" | "all" }
     | { cmd: "switch_tab"; tabId: number }
@@ -475,7 +695,6 @@ export type BrowserCommand = WithTabId<
     | { cmd: "reading_mode"; maxChars?: number }
     | { cmd: "find"; query: string; limit?: number }
     | { cmd: "select_content"; selector?: string; nodeId?: number; maxChars?: number; maxMatches?: number }
-    | { cmd: "batch_crawl"; urls: string[]; concurrency?: number; maxCharsPerUrl?: number }
     | { cmd: "close_tab"; tabId: number }
     | { cmd: "web_search"; query: string; limit?: number }
     | { cmd: "dev_memory"; focus?: "overview" | "dom" | "listeners" | "gc" }
@@ -499,7 +718,7 @@ export type BrowserCommand = WithTabId<
     | { cmd: "dev_sandbox"; mode: "block_mutations" | "off" }
     | { cmd: "start_flow_recording"; tabId?: number; domain?: string }
     | { cmd: "stop_flow_recording" }
-    | { cmd: "flow_recording_status" }
+    | { cmd: "flow_recording_status"; summary?: boolean }
 >;
 
 export const BROWSER_COMMAND_NAMES = [
@@ -519,6 +738,7 @@ export const BROWSER_COMMAND_NAMES = [
     "inspect_element",
     "evaluate",
     "run_flow",
+    "validate_flow",
     "explore_flow",
     "list_tabs",
     "switch_tab",
@@ -529,7 +749,6 @@ export const BROWSER_COMMAND_NAMES = [
     "reading_mode",
     "find",
     "select_content",
-    "batch_crawl",
     "close_tab",
     "web_search",
     "dev_memory",

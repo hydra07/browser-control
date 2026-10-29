@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -29,7 +30,7 @@ const (
 	protocolVersion   = 2
 	defaultTimeout    = 30 * time.Second
 	maxHTTPBodyBytes  = 2 * 1024 * 1024
-	maxWSMessageBytes = 8 * 1024 * 1024
+	maxWSMessageBytes = 8*1024*1024 + 8
 )
 
 type Config struct {
@@ -39,6 +40,7 @@ type Config struct {
 	Token     string
 	TokenFile string
 	Timeout   time.Duration
+	Quiet     bool
 }
 
 type TokenInfo struct {
@@ -47,8 +49,9 @@ type TokenInfo struct {
 }
 
 type Server struct {
-	cfg   Config
-	token string
+	cfg    Config
+	token  string
+	logger *log.Logger
 
 	mu               sync.Mutex
 	conn             *websocket.Conn
@@ -56,6 +59,8 @@ type Server struct {
 	// lastRejection is why the most recent extension socket was refused, so status can say "not paired" instead of just "not connected".
 	lastRejection string
 	pending       map[string]chan extensionResponse
+	pendingCmd    map[string]string
+	capture       *captureSink
 }
 
 // ErrNotConnected is returned by Execute while no authenticated extension socket is open.
@@ -128,18 +133,35 @@ func NewServer(cfg Config) (*Server, TokenInfo, error) {
 	if err != nil {
 		return nil, TokenInfo{}, err
 	}
-	return &Server{cfg: cfg, token: info.Token, pending: map[string]chan extensionResponse{}}, info, nil
+	logger := log.Default()
+	if cfg.Quiet {
+		logger = log.New(io.Discard, "", 0)
+	}
+	return &Server{cfg: cfg, token: info.Token, logger: logger, pending: map[string]chan extensionResponse{}, pendingCmd: map[string]string{}}, info, nil
 }
 
 func (s *Server) ListenAndServe(ctx context.Context) error {
-	server := &http.Server{Addr: fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port), Handler: s.Handler()}
+	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port))
+	if err != nil {
+		return err
+	}
+	return s.Serve(ctx, listener)
+}
+
+func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
+	server := &http.Server{Addr: fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port), Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
+		s.mu.Lock()
+		if s.conn != nil {
+			_ = s.conn.Close()
+		}
+		s.mu.Unlock()
 		_ = server.Shutdown(shutdownCtx)
 	}()
-	err := server.ListenAndServe()
+	err := server.Serve(listener)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
@@ -168,23 +190,34 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	}}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("websocket upgrade from %q failed: %v", r.Header.Get("Origin"), err)
+		s.logger.Printf("websocket upgrade from %q failed: %v", r.Header.Get("Origin"), err)
 		return
 	}
 	conn.SetReadLimit(maxWSMessageBytes)
 	version, pair, err := s.authenticate(conn, r.Header.Get("Origin"))
 	if err != nil {
-		log.Printf("extension connection from %s rejected: %v", r.Header.Get("Origin"), err)
+		s.logger.Printf("extension connection from %s rejected: %v", r.Header.Get("Origin"), err)
 		s.mu.Lock()
 		s.lastRejection = err.Error()
 		s.mu.Unlock()
 		_ = conn.Close()
 		return
 	}
-	log.Printf("extension v%s connected", version)
+	s.logger.Printf("extension v%s connected", version)
 
 	s.mu.Lock()
 	old := s.conn
+	if old != nil {
+		for id, ch := range s.pending {
+			ch <- extensionResponse{ID: id, Type: "error", Error: "outcome unknown: extension connection replaced before replying; inspect before retrying"}
+			close(ch)
+			delete(s.pending, id)
+			delete(s.pendingCmd, id)
+		}
+		if s.capture != nil {
+			s.capture.close()
+		}
+	}
 	s.conn = conn
 	s.extensionVersion = version
 	s.lastRejection = ""
@@ -192,8 +225,9 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	ack := map[string]any{"type": "hello_ack", "protocolVersion": protocolVersion, "serverVersion": "go-cli"}
 	if pair {
 		ack["token"] = s.token
-		log.Printf("auto-paired extension %s", r.Header.Get("Origin"))
+		s.logger.Printf("auto-paired extension %s", r.Header.Get("Origin"))
 	}
+	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	ackErr := conn.WriteJSON(ack)
 	s.mu.Unlock()
 	if old != nil {
@@ -211,14 +245,18 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		s.mu.Lock()
 		if s.conn == conn {
-			log.Printf("extension disconnected")
+			s.logger.Printf("extension disconnected")
 			s.conn = nil
 			s.extensionVersion = ""
 			// Requests sent over this socket can never be answered now; fail them instead of letting each run to its timeout.
 			for id, ch := range s.pending {
-				ch <- extensionResponse{ID: id, Type: "error", Error: "extension disconnected before replying"}
+				ch <- extensionResponse{ID: id, Type: "error", Error: "outcome unknown: extension disconnected before replying; inspect before retrying"}
 				close(ch)
 				delete(s.pending, id)
+				delete(s.pendingCmd, id)
+			}
+			if s.capture != nil {
+				s.capture.close()
 			}
 		}
 		s.mu.Unlock()
@@ -231,6 +269,20 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if messageType != websocket.TextMessage {
+			if messageType == websocket.BinaryMessage {
+				s.mu.Lock()
+				var binaryErr error
+				if s.conn == conn && s.capture != nil {
+					binaryErr = s.capture.writePacket(data)
+				} else {
+					binaryErr = errors.New("unexpected capture frame")
+				}
+				s.mu.Unlock()
+				if binaryErr != nil {
+					s.logger.Printf("capture rejected: %v", binaryErr)
+					return
+				}
+			}
 			continue
 		}
 		var res extensionResponse
@@ -239,7 +291,26 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		}
 		s.mu.Lock()
 		ch := s.pending[res.ID]
-		delete(s.pending, res.ID)
+		if s.conn != conn {
+			ch = nil
+		} else {
+			cmd := s.pendingCmd[res.ID]
+			if s.capture != nil {
+				if cmd == "stop_capture" {
+					s.capture.close()
+					if result, ok := res.Data.(map[string]any); ok {
+						s.capture.result(result)
+					}
+				} else if cmd == "start_capture" {
+					result, _ := res.Data.(map[string]any)
+					if res.Type == "error" || result["error"] != nil || result["success"] == false {
+						s.capture.close()
+					}
+				}
+			}
+			delete(s.pending, res.ID)
+			delete(s.pendingCmd, res.ID)
+		}
 		s.mu.Unlock()
 		if ch != nil {
 			ch <- res
@@ -278,6 +349,10 @@ func (s *Server) authenticate(conn *websocket.Conn, origin string) (string, bool
 	}
 	pair := false
 	if hello.Type == "hello" && hello.ProtocolVersion == protocolVersion && hello.Role == "extension" && !sameToken(s.token, hello.Token) {
+		ip := net.ParseIP(s.cfg.Host)
+		if os.Getenv("BROWSERCONTROL_AUTO_PAIR") != "1" || !(s.cfg.Host == "localhost" || ip != nil && ip.IsLoopback()) {
+			return "", false, errors.New("extension authentication failed: pair with the token from browsercontrol token; automatic token disclosure is disabled")
+		}
 		if err := trustExtensionOrigin(origin); err != nil {
 			_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "authentication failed"))
 			return "", false, fmt.Errorf("extension authentication failed: %w", err)
@@ -420,7 +495,7 @@ func (s *Server) handleFlows(w http.ResponseWriter, r *http.Request) {
 		if flow.Domain != "" {
 			payload["domain"] = flow.Domain
 		}
-		result, err := s.Execute("run_flow", payload, s.cfg.Timeout)
+		result, err := s.ExecuteContext(r.Context(), "run_flow", payload, s.cfg.Timeout)
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 			return
@@ -457,7 +532,11 @@ func (s *Server) handleExecute(w http.ResponseWriter, r *http.Request) {
 		}
 		delete(body, "timeoutMs")
 	}
-	result, err := s.Execute(cmd, body, timeout)
+	if timeout > 2*time.Minute {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "timeoutMs must not exceed 120000"})
+		return
+	}
+	result, err := s.ExecuteContext(r.Context(), cmd, body, timeout)
 	if err != nil {
 		status := http.StatusBadGateway
 		if errors.Is(err, ErrNotConnected) {
@@ -470,11 +549,35 @@ func (s *Server) handleExecute(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) Execute(cmd string, payload map[string]any, timeout time.Duration) (any, error) {
+	return s.ExecuteContext(context.Background(), cmd, payload, timeout)
+}
+
+func (s *Server) ExecuteContext(ctx context.Context, cmd string, payload map[string]any, timeout time.Duration) (any, error) {
+	if timeout <= 0 {
+		timeout = s.cfg.Timeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	conn := s.conn
 	if conn == nil {
 		s.mu.Unlock()
 		return nil, ErrNotConnected
+	}
+	if cmd == "start_capture" {
+		if s.capture != nil && s.capture.file != nil {
+			s.mu.Unlock()
+			return nil, errors.New("capture already active; stop it first")
+		}
+		capture, err := newCaptureSink()
+		if err != nil {
+			s.mu.Unlock()
+			return nil, err
+		}
+		s.capture = capture
 	}
 	id, err := requestID()
 	if err != nil {
@@ -483,16 +586,27 @@ func (s *Server) Execute(cmd string, payload map[string]any, timeout time.Durati
 	}
 	ch := make(chan extensionResponse, 1)
 	s.pending[id] = ch
-	msg := map[string]any{"id": id, "cmd": cmd, "sessionId": "go-cli"}
+	s.pendingCmd[id] = cmd
+	msg := map[string]any{"id": id, "cmd": cmd, "sessionId": "request-" + id}
 	for k, v := range payload {
-		if k != "cmd" {
+		if k != "cmd" && k != "id" && k != "deadline" && k != "type" {
 			msg[k] = v
 		}
 	}
+	deadline, _ := ctx.Deadline()
+	msg["deadline"] = deadline.UnixMilli()
+	_ = conn.SetWriteDeadline(minTime(deadline, time.Now().Add(5*time.Second)))
 	err = conn.WriteJSON(msg)
+	if err != nil {
+		delete(s.pending, id)
+		delete(s.pendingCmd, id)
+		if cmd == "start_capture" && s.capture != nil {
+			s.capture.close()
+		}
+	}
 	s.mu.Unlock()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("outcome unknown: send failed: %w; inspect before retrying", err)
 	}
 	select {
 	case res := <-ch:
@@ -500,12 +614,24 @@ func (s *Server) Execute(cmd string, payload map[string]any, timeout time.Durati
 			return nil, errors.New(res.Error)
 		}
 		return res.Data, nil
-	case <-time.After(timeout):
+	case <-ctx.Done():
 		s.mu.Lock()
 		delete(s.pending, id)
+		delete(s.pendingCmd, id)
+		if s.conn == conn {
+			_ = conn.SetWriteDeadline(time.Now().Add(time.Second))
+			_ = conn.WriteJSON(map[string]any{"type": "cancel", "id": id})
+		}
 		s.mu.Unlock()
-		return nil, fmt.Errorf("timeout after %s waiting for extension to finish %q", timeout, cmd)
+		return nil, fmt.Errorf("outcome unknown: %w waiting for %q; cancellation requested, inspect completed actions before retrying", ctx.Err(), cmd)
 	}
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
 }
 
 func (s *Server) authorized(r *http.Request) bool {

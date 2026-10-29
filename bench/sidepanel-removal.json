@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "task": "R1-02",
+  "scope": "uncompressed Chrome MV3 build output; not CPU/latency",
+  "before": {
+    "totalBytes": 455712.0,
+    "jsBytes": 398624.0,
+    "cssBytes": 36452.0,
+    "fileCount": 12
+  },
+  "after": {
+    "totalBytes": 182587.0,
+    "jsBytes": 162722.0,
+    "cssBytes": 0,
+    "fileCount": 8,
+    "manifestHasSidePanel": false,
+    "directReactDependency": false
+  }
+}

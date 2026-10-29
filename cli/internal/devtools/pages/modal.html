@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en" data-fixture-ready="true"><meta charset="utf-8"><title>Modal fixture</title>
+<main><h1>Order editor</h1><button id="open">Open editor</button><button>Save draft</button></main>
+<dialog aria-label="Edit order"><h2>Edit order ORD-42</h2><label>Notes <textarea>Leave at reception</textarea></label><button id="save">Save draft</button><button id="cancel">Cancel</button></dialog>
+<script>
+function openEditor() {
+  const dialog = document.querySelector("dialog");
+  if (!dialog.open) dialog.showModal();
+}
+function closeEditor() {
+  document.querySelector("dialog").close();
+}
+document.getElementById("open").addEventListener("click", openEditor);
+document.getElementById("cancel").addEventListener("click", closeEditor);
+document.getElementById("save").addEventListener("click", closeEditor);
+openEditor();
+</script></html>

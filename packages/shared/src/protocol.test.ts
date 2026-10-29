@@ -8,9 +8,43 @@ import {
     migrateFlowDocument,
     migrateFlowStep,
     normalizeFlowStep,
+    validateFlowSteps,
 } from "./protocol.js";
 
 describe("binary protocol", () => {
+    test("honors policies without target metadata and durable fingerprint attributes", () => {
+        expect(
+            normalizeFlowStep({ action: "click", selector: "#go", policy: { timeoutMs: 123, confirmRisky: true } }),
+        ).toMatchObject({ timeoutMs: 123, confirmRisky: true });
+        expect(
+            normalizeFlowStep({ action: "fill", target: { testId: "email", inputName: "user" }, text: "x" }).selector,
+        ).toBe('[data-testid="email"][name="user"]');
+    });
+    test("never truncates operational selectors", () => {
+        const selector = `[data-name="${"x".repeat(250)}"]`;
+        expect(migrateFlowStep({ action: "click", selector }).target?.selectorHints).toEqual([selector]);
+    });
+    test("rejects unsupported or malformed workflow contracts", () => {
+        for (const input of [
+            [{ action: "unknown" }],
+            [{ action: "click", selector: "#x", policy: { timeoutMs: -1 } }],
+            [{ action: "click", target: { ancestors: [{ name: "form" }] } }],
+            [{ action: "fill", selector: "#x" }],
+            [{ action: "click", selector: "#x", nodeId: 1 }],
+        ]) {
+            expect(validateFlowSteps(input)).not.toBeNull();
+        }
+        expect(
+            validateFlowSteps([
+                {
+                    action: "fill",
+                    target: { id: "email" },
+                    text: "x",
+                    expected: { kind: "state", selector: "#email", property: "value", value: "x" },
+                },
+            ]),
+        ).toBeNull();
+    });
     test("round-trips a framed payload", () => {
         const payload = new Uint8Array([1, 2, 3, 255]);
         const packet = encodeBinaryPacket(BinaryOpcode.VIDEO_CHUNK, payload, 4);

@@ -8,7 +8,7 @@ import { errorMessage } from "../../libs/errorMessage.js";
 import { startCapture, stopCapture } from "../../modules/capture/index.js";
 import { handleWebSearchCommand } from "../../modules/search/index.js";
 
-type IncomingMessage = BrowserCommand & { id: string };
+type IncomingMessage = BrowserCommand & { id: string; deadline?: number };
 
 const WS_URL = "ws://127.0.0.1:8765";
 const INITIAL_RECONNECT_DELAY_MS = 1000;
@@ -111,13 +111,15 @@ export class OffscreenBridge {
             };
 
             socket.onmessage = (event: MessageEvent) => {
-                void this.handleIncomingMessage(event);
+                if (socket === this.ws) void this.handleIncomingMessage(event, socket);
             };
 
             socket.onclose = () => {
                 if (this.isDisposed || socket !== this.ws) return;
                 this.connectionState = "DISCONNECTED";
                 this.ws = null;
+                void chrome.runtime.sendMessage({ type: "cancel_command" }).catch(() => {});
+                void stopCapture().catch(() => {});
                 console.log(`[offscreen] Disconnected from bridge, retrying in ${this.reconnectDelayMs}ms`);
                 this.scheduleReconnect();
             };
@@ -134,8 +136,8 @@ export class OffscreenBridge {
         }
     }
 
-    public sendJson(payload: unknown): boolean {
-        if (!this.isConnected() || !this.ws) return false;
+    public sendJson(payload: unknown, socket = this.ws): boolean {
+        if (!this.isConnected() || !this.ws || socket !== this.ws) return false;
         try {
             this.ws.send(JSON.stringify(payload));
             return true;
@@ -147,6 +149,10 @@ export class OffscreenBridge {
 
     public sendBinary(packet: Uint8Array): boolean {
         if (!this.isConnected() || !this.ws) return false;
+        if (this.ws.bufferedAmount + packet.byteLength > 8 * 1024 * 1024) {
+            this.ws.close(4004, "Capture transport backpressure exceeded");
+            return false;
+        }
         try {
             const bytes = packet.slice();
             this.ws.send(bytes.buffer as ArrayBuffer);
@@ -157,7 +163,7 @@ export class OffscreenBridge {
         }
     }
 
-    private async handleIncomingMessage(event: MessageEvent): Promise<void> {
+    private async handleIncomingMessage(event: MessageEvent, socket: WebSocket): Promise<void> {
         if (typeof event.data !== "string") return;
 
         let parsed: unknown;
@@ -168,6 +174,10 @@ export class OffscreenBridge {
             return;
         }
         if (!isRecord(parsed)) return;
+        if (parsed.type === "cancel" && typeof parsed.id === "string") {
+            await chrome.runtime.sendMessage({ type: "cancel_command", id: parsed.id }).catch(() => {});
+            return;
+        }
 
         if (this.connectionState === "AUTHENTICATING") {
             const ack = parsed as Partial<HelloAck>;
@@ -189,8 +199,25 @@ export class OffscreenBridge {
             return;
         }
         if (this.connectionState !== "READY") return;
+        if (
+            typeof parsed.id !== "string" ||
+            typeof parsed.cmd !== "string" ||
+            (parsed.deadline !== undefined &&
+                (typeof parsed.deadline !== "number" || !Number.isFinite(parsed.deadline)))
+        )
+            return;
 
         const data = parsed as IncomingMessage;
+        if (
+            (data.deadline !== undefined && data.deadline <= Date.now()) ||
+            (data.tabId !== undefined && (!Number.isInteger(data.tabId) || data.tabId <= 0))
+        ) {
+            this.sendJson(
+                { id: data.id, type: "error", error: "Request expired or tabId invalid; no action was dispatched" },
+                socket,
+            );
+            return;
+        }
 
         // 1. Capture commands require DOM context (MediaRecorder/Canvas) in offscreen document
         if (data.cmd === "start_capture" || data.cmd === "stop_capture") {
@@ -199,13 +226,14 @@ export class OffscreenBridge {
                     data.cmd === "start_capture"
                         ? await startCapture((chunkBytes) => {
                               const packet = encodeBinaryPacket(BinaryOpcode.VIDEO_CHUNK, chunkBytes);
-                              this.sendBinary(packet);
-                          })
+                              if (socket !== this.ws || !this.sendBinary(packet))
+                                  throw new Error("Capture chunk could not be sent");
+                          }, data.tabId)
                         : await stopCapture();
-                this.sendJson({ id: data.id, type: "result", data: result });
+                this.sendJson({ id: data.id, type: "result", data: result }, socket);
             } catch (e: unknown) {
                 console.error("[offscreen] Capture command failed:", errorMessage(e));
-                this.sendJson({ id: data.id, type: "error", error: errorMessage(e) });
+                this.sendJson({ id: data.id, type: "error", error: errorMessage(e) }, socket);
             }
             return;
         }
@@ -214,10 +242,10 @@ export class OffscreenBridge {
         if (data.cmd === "web_search") {
             try {
                 const result = await handleWebSearchCommand(data);
-                this.sendJson({ id: data.id, type: "result", data: result });
+                this.sendJson({ id: data.id, type: "result", data: result }, socket);
             } catch (e: unknown) {
                 console.error(`[offscreen] ${data.cmd} failed:`, errorMessage(e));
-                this.sendJson({ id: data.id, type: "error", error: errorMessage(e) });
+                this.sendJson({ id: data.id, type: "error", error: errorMessage(e) }, socket);
             }
             return;
         }
@@ -226,15 +254,15 @@ export class OffscreenBridge {
         try {
             const resp = await chrome.runtime.sendMessage({ target: "background", payload: data });
             if (resp && typeof resp === "object" && "result" in resp) {
-                this.sendJson({ id: data.id, type: "result", data: resp.result, telemetry: resp.telemetry });
+                this.sendJson({ id: data.id, type: "result", data: resp.result, telemetry: resp.telemetry }, socket);
             } else if (resp?.error) {
-                this.sendJson({ id: data.id, type: "error", error: resp.error });
+                this.sendJson({ id: data.id, type: "error", error: resp.error }, socket);
             } else {
-                this.sendJson({ id: data.id, type: "result", data: resp });
+                this.sendJson({ id: data.id, type: "result", data: resp }, socket);
             }
         } catch (e: unknown) {
             console.error("[offscreen] Error relaying to background:", errorMessage(e));
-            this.sendJson({ id: data.id, type: "error", error: errorMessage(e) });
+            this.sendJson({ id: data.id, type: "error", error: errorMessage(e) }, socket);
         }
     }
 

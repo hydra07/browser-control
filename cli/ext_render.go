@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"strings"
@@ -179,16 +180,6 @@ func formatEntries(nodes []any) []string {
 	return lines
 }
 
-func renderTree(b *strings.Builder, nodes []any, depth int) {
-	for _, n := range nodes {
-		m := asMap(n)
-		b.WriteString(strings.Repeat(" ", min(depth, 8)) + formatEntry(m) + "\n")
-		if children, ok := m["children"].([]any); ok {
-			renderTree(b, children, depth+1)
-		}
-	}
-}
-
 func formatSemanticNode(m map[string]any) string {
 	var b strings.Builder
 	b.WriteString(str(m["ref"]) + " " + firstNonEmptyString(str(m["role"]), "node"))
@@ -204,8 +195,7 @@ func formatSemanticNode(m map[string]any) string {
 	return b.String()
 }
 
-/** Semantic nodes indented by parentRef depth; the doc id header is what refs are scoped to. */
-func renderSemantic(snap map[string]any, grep string, limit int) string {
+func semanticEntries(snap map[string]any, indent bool) []semanticEntry {
 	nodes, _ := snap["nodes"].([]any)
 	parent := make(map[string]string, len(nodes))
 	for _, n := range nodes {
@@ -219,7 +209,7 @@ func renderSemantic(snap map[string]any, grep string, limit int) string {
 		}
 		return d
 	}
-	lines := make([]string, 0, len(nodes))
+	entries := make([]semanticEntry, 0, len(nodes))
 	for i := 0; i < len(nodes); i++ {
 		m := asMap(nodes[i])
 		line := formatSemanticNode(m)
@@ -235,31 +225,18 @@ func renderSemantic(snap map[string]any, grep string, limit int) string {
 				pieces = append(pieces, str(next["name"]))
 			}
 			if j > i+1 {
-				line = fmt.Sprintf("%s text %q", str(m["ref"]), truncate(joinPieces(pieces), maxMergedText))
+				m = maps.Clone(m)
+				m["name"] = truncate(joinPieces(pieces), maxMergedText)
+				line = fmt.Sprintf("%s text %q", str(m["ref"]), str(m["name"]))
 				i = j - 1
 			}
 		}
-		if grep == "" {
+		if indent {
 			line = strings.Repeat(" ", depth(str(m["ref"]))) + line
 		}
-		lines = append(lines, line)
+		entries = append(entries, semanticEntry{line: line, node: m})
 	}
-	kept := filterLines(lines, grep, limit)
-	header := "doc " + str(asMap(snap["scope"])["documentId"])
-	if t := str(snap["title"]); t != "" {
-		header += " | " + truncate(t, 80)
-	}
-	if u := str(snap["url"]); u != "" {
-		header += " | " + u
-	}
-	text := header + "\n" + strings.Join(kept.kept, "\n")
-	if kept.dropped > 0 {
-		text += fmt.Sprintf("\n(%d of %d nodes shown)", len(kept.kept), len(lines))
-	}
-	if snap["truncated"] == true {
-		text += "\n(snapshot truncated by the extension; use 'snapshot --region <css>')"
-	}
-	return text
+	return entries
 }
 
 /** Glues neighbouring single glyphs together and puts a space around anything word-sized. */
@@ -272,29 +249,6 @@ func joinPieces(pieces []string) string {
 		b.WriteString(p)
 	}
 	return b.String()
-}
-
-func renderDelta(delta map[string]any, grep string) string {
-	var lines []string
-	for _, n := range asSlice(delta["added"]) {
-		lines = append(lines, "+ "+formatSemanticNode(asMap(n)))
-	}
-	for _, n := range asSlice(delta["changed"]) {
-		lines = append(lines, "~ "+formatSemanticNode(asMap(n)))
-	}
-	for _, r := range asSlice(delta["removed"]) {
-		lines = append(lines, "- "+str(r))
-	}
-	kept := filterLines(lines, grep, 0).kept
-	header := fmt.Sprintf("doc %s diff %s→%s", str(asMap(delta["scope"])["documentId"]), str(delta["fromRevision"]), str(delta["toRevision"]))
-	if len(kept) == 0 {
-		return header + ": no changes"
-	}
-	text := header + "\n" + strings.Join(kept, "\n")
-	if delta["truncated"] == true {
-		text += "\n(diff truncated; run 'snapshot --semantic' for the full state)"
-	}
-	return text
 }
 
 func asSlice(v any) []any {
@@ -348,14 +302,38 @@ func formatRequest(m map[string]any) string {
 }
 
 var commandHelp = map[string]string{
+	"agent": `Agent loop (use the CLI's default compact text; --json only when parsing):
+  1. browsercontrol status
+  2. browsercontrol tabs
+  3. browsercontrol snapshot --semantic --tab <id> --grep <word>
+  4. browsercontrol fill <fresh-ref> "value" --tab <id> --snap=diff
+     browsercontrol click <fresh-ref> --tab <id> --snap=diff
+  5. browsercontrol wait <expected-text-or-css> --tab <id> --timeout 15s
+
+Snapshot defaults to 80 entries; --grep searches the complete collected view before the cap.
+Use --region <css> for one container, --limit 20 for less output, --limit 0 for all.
+After navigation or a stale ref, take a fresh semantic snapshot on the same tab.
+Use fill to replace; type appends. Quote multiword text; -- ends flag parsing.
+An 'ok' action means it was dispatched, not that the task's business result succeeded.
+Confirm the expected state with wait or a flow's expected/assert_text checks.
+On ambiguous/covered targets: inspect a fresh snapshot and choose the unique control.
+On 'outcome unknown': inspect snapshot/evidence before retrying; never repeat the whole batch blindly.
+On exit 1: follow hint; exit 2: run browsercontrol help <command> and fix syntax.
+Risky actions require the user's authorization before --confirm-risky; --force bypasses hit testing.
+Batch known steps with do; it stops on failure and reports which earlier steps completed.
+Pin --tab for every command; give concurrent agents distinct BROWSERCONTROL_SESSION_ID values.
+Concurrent agents must use separate tabs and explicit --document-id with refs (CLI ref memory is shared).
+Run browsercontrol help <command> for supported options; exec/eval are advanced escape hatches.`,
 	"snapshot": `snapshot [--grep txt] [--limit n] [--region css] [--semantic] [--diff]
   default: one line per interactive/text node: [nodeId] role "name" (v: "value")
   --grep     keep lines containing txt (case-insensitive); cheapest way to locate one control
+  --limit    default 80 entries in text and JSON; 0 = all; filtering happens before the cap
   --region   scope to a container's subtree (indented)
   --semantic document-scoped refs (e12); the doc id is remembered so 'click e12' just works
-  --diff     with --semantic: only +added ~changed -removed since the previous semantic snapshot`,
+  --diff     only +added ~changed -removed since the previous semantic snapshot (implies --semantic)
+  JSON views retain scope/revision plus shown/total/viewFiltered; omitted nodes are not removals`,
 	"click":      "click <target> [--confirm-risky] [--force] [--snap]\n  target: nodeId (12) | ref (e12, needs a prior 'snapshot --semantic') | css (#id, .cls, a[href]) | visible text\n  hovers first, clicks the visible part of the element, refuses if something (cookie banner, modal) covers it; --force clicks anyway\n  risky targets (delete/pay/submit...) are blocked until you confirm with the user and pass --confirm-risky",
-	"type":       "type <target> <text...> [--clear] [--confirm-risky] [--snap]\n  text is everything after the target; use --text for text starting with --\n  --clear (or 'fill') replaces the current value instead of appending",
+	"type":       "type <target> <text...> [--clear] [--confirm-risky] [--snap]\n  text is everything after the target; for text starting with -- use --text=--value or put -- before the text\n  --clear (or 'fill') replaces the current value instead of appending",
 	"fill":       "fill <target> <text...>   = type --clear: replace the field's value (empty text just clears it)",
 	"scroll":     "scroll [dy] | [dx dy] | up | down [--in <target>]\n  wheel at the viewport centre, or inside a scroll container (chat log, sidebar, list) with --in; reports page y/max",
 	"press":      "press <key> [target]   Enter, Tab, Escape, F5, any character, combos: Control+a, Shift+Tab, Meta+Enter",
@@ -371,20 +349,23 @@ var commandHelp = map[string]string{
 	"tabs":       "tabs [list [--all]] | switch <tabId> | close <tabId> | new <url>\n  '*' = tab commands target by default, [ro] = outside the AI workspace group\n  any command: --tab <tabId> to target a specific tab",
 	"net":        "net list [filter] [--limit 30] [--resource-types '[\"xhr\",\"fetch\"]']\nnet detail <requestId> [--body]\nnet clear\nnet har [--out file.har] [--filter s] [--include-bodies]",
 	"dev":        "dev layout [nodeId|e-ref|css] | memory [overview|dom|listeners|gc] | process [overview|long_tasks|rendering]\n    emulate [device] [--network slow3g] [--cpu-slowdown 4] | sandbox [on|off] | har",
-	"flow":       "flow run|explore <file.json|saved-id> [--return-snapshot] [--domain d]\nflow record [domain] | flow stop [--save id] | flow status | flow list | flow show <id> | flow rm <id>",
+	"flow":       "flow run|explore|validate <file.json|saved-id> [--return-snapshot] [--domain d]\nflow record [domain] | flow stop [--save id] | flow status [--all] | flow list | flow show <id> | flow rm <id>\nDefault run output: one short line per step, distinguishing dispatched from verified; --json retains full reports.\nStatus omits recorded steps unless --all; stop prints a summary in text, --json retains the recipe.\nWorkflow textFromEnv binds input at run time; use fill for replacement and expected for verified outcomes.",
 	"exec":       "exec <extension_cmd> [key=value ...|--key value|@payload.json|{json}]   raw escape hatch; *Base64 fields are saved to files",
-	"status":     "status [--wait 20s]   exit 0 only when the extension is connected; starts the bridge if needed",
+	"status":     "status [--wait 20s]   exit 0 only when the extension is connected; run serve explicitly first",
 	"eval":       "eval <js-expression|@file.js>   returns the value (strings raw, everything else JSON)",
 	"crawl":      "crawl <url...|@urls.txt> [--concurrency 3] [--max-chars 4000]   reads each URL in a background tab",
 	"search":     "search <query> [--limit 8]   DuckDuckGo results without touching the current tab",
 }
 
 func printCommandHelp(name string) {
+	fmt.Println(commandHelpText(name))
+}
+
+func commandHelpText(name string) string {
 	if help, ok := commandHelp[name]; ok {
-		fmt.Println(help)
-		return
+		return help
 	}
-	printUsage()
+	return strings.TrimRight(usage, "\n")
 }
 
 /** Reads pixel dimensions from a PNG/JPEG/WebP header, so the agent knows the real image size without opening it. */

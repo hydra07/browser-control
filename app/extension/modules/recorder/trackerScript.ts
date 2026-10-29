@@ -5,9 +5,10 @@
  */
 
 export function attachFlowTrackerInPage(): void {
-    const win = window as unknown as { __bcFlowTrackerInstalled?: boolean };
-    if (win.__bcFlowTrackerInstalled) return;
-    win.__bcFlowTrackerInstalled = true;
+    const win = window as unknown as { __bcFlowTrackerController?: AbortController };
+    win.__bcFlowTrackerController?.abort();
+    const controller = new AbortController();
+    win.__bcFlowTrackerController = controller;
 
     function getBestSelector(el: Element | null): string {
         if (el?.nodeType !== 1) return "";
@@ -34,8 +35,24 @@ export function attachFlowTrackerInPage(): void {
 
     function getAccessibleInfo(el: Element | null): { role?: string; name?: string } {
         if (!el) return {};
-        const role = el.getAttribute("role") || el.tagName.toLowerCase();
-        let name = el.getAttribute("aria-label") || el.getAttribute("title") || el.getAttribute("placeholder") || "";
+        const role =
+            el.getAttribute("role") ||
+            ({ BUTTON: "button", A: "link", INPUT: "textbox", TEXTAREA: "textbox" } as Record<string, string>)[
+                el.tagName
+            ];
+        const labelIds = el.getAttribute("aria-labelledby")?.split(/\s+/);
+        let name =
+            el.getAttribute("aria-label") ||
+            labelIds
+                ?.map((id) => document.getElementById(id)?.textContent ?? "")
+                .join(" ")
+                .trim() ||
+            "";
+        if (!name && "labels" in el)
+            name = Array.from((el as HTMLInputElement).labels ?? [])
+                .map((label) => label.textContent ?? "")
+                .join(" ")
+                .trim();
         if (!name && el.textContent) {
             name = el.textContent.trim().slice(0, 50);
         }
@@ -45,7 +62,8 @@ export function attachFlowTrackerInPage(): void {
     document.addEventListener(
         "click",
         (e) => {
-            const target = e.target as Element | null;
+            const element = e.target as Element | null;
+            const target = element?.closest("button,a,input,[role='button'],[role='link']") ?? element;
             if (!target || target === document.body || target === document.documentElement) return;
             const selector = getBestSelector(target);
             const { role, name } = getAccessibleInfo(target);
@@ -63,7 +81,7 @@ export function attachFlowTrackerInPage(): void {
                 })
                 .catch(() => {});
         },
-        true,
+        { capture: true, signal: controller.signal },
     );
 
     document.addEventListener(
@@ -96,7 +114,7 @@ export function attachFlowTrackerInPage(): void {
                     target: "background",
                     type: "auto_flow_step",
                     step: {
-                        action: "type",
+                        action: "fill",
                         selector: selector || undefined,
                         role: role || undefined,
                         name: name || undefined,
@@ -105,7 +123,7 @@ export function attachFlowTrackerInPage(): void {
                 })
                 .catch(() => {});
         },
-        true,
+        { capture: true, signal: controller.signal },
     );
 
     document.addEventListener(
@@ -131,6 +149,12 @@ export function attachFlowTrackerInPage(): void {
                     .catch(() => {});
             }
         },
-        true,
+        { capture: true, signal: controller.signal },
     );
+}
+
+export function detachFlowTrackerInPage(): void {
+    const win = window as unknown as { __bcFlowTrackerController?: AbortController };
+    win.__bcFlowTrackerController?.abort();
+    win.__bcFlowTrackerController = undefined;
 }

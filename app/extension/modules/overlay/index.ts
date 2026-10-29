@@ -27,6 +27,7 @@ const ACTION_REPAIR_ICON =
 const ACTION_LABELS = {
     click: "Click",
     type: "Type",
+    fill: "Fill",
     press_key: "Key press",
     wait_for: "Wait",
     assert_text: "Check text",

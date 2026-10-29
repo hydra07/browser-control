@@ -60,13 +60,18 @@ export async function sendCommand<M extends keyof ProtocolMapping.Commands>(
         return await attempt();
     } catch (e) {
         const msg = errorMessage(e);
+        const mayMutate =
+            method.startsWith("Input.") ||
+            method === "Runtime.evaluate" ||
+            method === "Runtime.callFunctionOn" ||
+            method === "Page.navigate";
         // If debugger was detached (e.g. cross-origin navigation / process swap), re-attach and retry once
-        if (target.tabId != null && reattachHook && msg.includes("Debugger is not attached")) {
+        if (!mayMutate && target.tabId != null && reattachHook && msg.includes("Debugger is not attached")) {
             console.warn(`[browsercontrol] Debugger detached before ${method} on tab ${target.tabId}, re-attaching...`);
             await reattachHook(target.tabId).catch(() => {});
             return await attempt();
         }
-        if (opts?.retryOnTimeout && msg.includes("timed out")) {
+        if (!mayMutate && opts?.retryOnTimeout && msg.includes("timed out")) {
             console.warn(`[browsercontrol] CDP ${method} timed out, retrying once:`, msg);
             return await attempt();
         }

@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -80,13 +82,7 @@ func cmdStatus(s *session, a cmdArgs) (output, error) {
 	status, err := s.statusMap()
 	var be *extbridge.BridgeError
 	if err != nil && !errors.As(err, &be) {
-		if s.g.noAutostart || !s.isLocalBridge() {
-			return output{}, notRunningError(err)
-		}
-		if err := s.startBridge(); err != nil {
-			return output{}, err
-		}
-		status, err = s.statusMap()
+		return output{}, notRunningError(err)
 	}
 	if err != nil {
 		return output{}, err
@@ -122,10 +118,13 @@ func cmdServe(s *session, a cmdArgs) (output, error) {
 		return output{}, err
 	}
 	cfg := extbridge.NormalizeConfig(s.g.cfg)
-	fmt.Printf("bridge listening on %s (token: %s); keep this running, then open/reload the extension\n", cfg.BaseURL, info.Source)
+	fmt.Fprintf(os.Stderr, "bridge listening on %s (token: %s); keep this running, then open/reload the extension\n", cfg.BaseURL, info.Source)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return output{}, server.ListenAndServe(ctx)
+	if err := server.ListenAndServe(ctx); err != nil {
+		return output{}, err
+	}
+	return output{data: map[string]any{"stopped": true, "bridge": cfg.BaseURL}, text: "bridge stopped"}, nil
 }
 
 func cmdToken(s *session, _ cmdArgs) (output, error) {
@@ -227,15 +226,19 @@ func cmdSnapshot(s *session, a cmdArgs) (output, error) {
 	} else {
 		entries = splitLines(str(res["compactNodes"]))
 	}
-	lines := filterLines(entries, flagStr(a, "grep"), flagInt(a, "limit", 0))
+	return flatSnapshotView(entries, flagStr(a, "grep"), flagInt(a, "limit", defaultSnapshotLimit)), nil
+}
+
+func flatSnapshotView(entries []string, grep string, limit int) output {
+	lines := filterLines(entries, grep, limit)
 	text := strings.Join(lines.kept, "\n")
 	if lines.dropped > 0 {
-		text += fmt.Sprintf("\n(%d of %d nodes shown)", len(lines.kept), len(lines.kept)+lines.dropped)
+		text += snapshotOmitted(len(lines.kept), len(lines.kept)+lines.dropped)
 	}
 	if text == "" {
 		text = "(no interactive or text nodes)"
 	}
-	return output{data: map[string]any{"nodes": lines.kept, "total": len(lines.kept) + lines.dropped}, text: text}, nil
+	return output{data: map[string]any{"nodes": lines.kept, "shown": len(lines.kept), "total": len(lines.kept) + lines.dropped, "viewFiltered": lines.dropped > 0}, text: text}
 }
 
 func semanticSnapshot(s *session, a cmdArgs) (output, error) {
@@ -247,18 +250,25 @@ func semanticSnapshot(s *session, a cmdArgs) (output, error) {
 		return output{}, err
 	}
 	snap, _ := res["snapshot"].(map[string]any)
+	if snap == nil {
+		return output{}, errors.New("extension returned no semantic snapshot; no action was dispatched")
+	}
 	delta, _ := res["delta"].(map[string]any)
 	if scope, ok := snap["scope"].(map[string]any); ok {
-		if doc, _ := scope["documentId"].(string); doc != "" && doc != s.state.DocumentID {
+		if doc, _ := scope["documentId"].(string); doc != "" {
 			s.state.DocumentID = doc
-			s.state.save()
+			tab, _ := scope["tabId"].(float64)
+			s.state.TabID = int(tab)
+			if err := s.state.save(); err != nil {
+				return output{}, fmt.Errorf("snapshot retrieved but ref state could not be saved: %w; pass --document-id and --tab explicitly", err)
+			}
 		}
 	}
 	_, hasPrevious := delta["fromRevision"]
 	if flagBool(a, "diff") && hasPrevious {
-		return output{data: delta, text: renderDelta(delta, flagStr(a, "grep"))}, nil
+		return snapshotDeltaView(delta, flagStr(a, "grep"), flagInt(a, "limit", defaultSnapshotLimit)), nil
 	}
-	return output{data: snap, text: renderSemantic(snap, flagStr(a, "grep"), flagInt(a, "limit", 0))}, nil
+	return semanticSnapshotView(snap, flagStr(a, "grep"), flagInt(a, "limit", defaultSnapshotLimit)), nil
 }
 
 func cmdRegion(s *session, a cmdArgs) (output, error) {
@@ -272,15 +282,7 @@ func cmdRegion(s *session, a cmdArgs) (output, error) {
 	if err != nil {
 		return output{}, err
 	}
-	tree, _ := res["tree"].([]any)
-	var b strings.Builder
-	renderTree(&b, tree, 0)
-	text := strings.TrimRight(b.String(), "\n")
-	if res["truncated"] == true {
-		text += "\n(truncated; use a narrower selector)"
-	}
-	delete(res, "message")
-	return output{data: res, text: text}, nil
+	return regionSnapshotView(res, flagStr(a, "grep"), flagInt(a, "limit", defaultSnapshotLimit)), nil
 }
 
 func cmdFind(s *session, a cmdArgs) (output, error) {
@@ -514,6 +516,17 @@ func (s *session) applyTarget(p map[string]any, target string, field bool) error
 				return usagef("ref %q needs a document id: run 'browsercontrol snapshot --semantic' first or pass --document-id", ref)
 			}
 			p["documentId"] = s.state.DocumentID
+			tab := p["tabId"]
+			if tab == nil {
+				tab = s.g.tabID
+			}
+			if tab != nil && num(tab) != fmt.Sprint(s.state.TabID) {
+				return usagef("cached ref belongs to tab %d; take a fresh semantic snapshot for the requested tab", s.state.TabID)
+			}
+			if s.state.TabID == 0 {
+				return usagef("cached ref has no tab scope; take a fresh semantic snapshot or pass --document-id and --tab")
+			}
+			p["tabId"] = s.state.TabID
 		}
 		return nil
 	}
@@ -528,7 +541,7 @@ func (s *session) applyTarget(p map[string]any, target string, field bool) error
 		queries = textQueries(target, field)
 	}
 	for _, q := range queries {
-		findPayload := map[string]any{"query": q, "limit": 1}
+		findPayload := map[string]any{"query": q, "limit": 2}
 		if tab, ok := p["tabId"]; ok {
 			findPayload["tabId"] = tab
 		}
@@ -536,11 +549,22 @@ func (s *session) applyTarget(p map[string]any, target string, field bool) error
 		if err != nil {
 			return err
 		}
-		if matches, _ := res["matches"].([]any); len(matches) > 0 {
-			if id, ok := asMap(matches[0])["i"].(float64); ok {
+		matches, ok := res["matches"].([]any)
+		count, validCount := res["count"].(float64)
+		if !ok || !validCount || count < 0 || count != math.Trunc(count) || math.IsInf(count, 0) || math.IsNaN(count) {
+			return &cmdError{Message: "invalid find response; action was not dispatched", Hint: "Run 'browsercontrol snapshot --semantic' and use a fresh ref."}
+		}
+		if count > 1 || len(matches) > 1 {
+			return &cmdError{Message: fmt.Sprintf("ambiguous target %q: %g matches", target, count), Hint: "Use a unique CSS selector, a fresh semantic ref, or an explicit numeric node id."}
+		}
+		if len(matches) > 0 && count == 1 {
+			if id, ok := asMap(matches[0])["i"].(float64); ok && id > 0 && id == math.Trunc(id) && !math.IsInf(id, 0) {
 				p["nodeId"] = int(id)
 				return nil
 			}
+		}
+		if count != 0 || len(matches) != 0 {
+			return &cmdError{Message: "target could not be resolved; action was not dispatched", Hint: "Run 'browsercontrol snapshot --semantic' and use a fresh ref."}
 		}
 	}
 	return &cmdError{
@@ -743,10 +767,10 @@ func cmdEval(s *session, a cmdArgs) (output, error) {
 	}
 	value := res["result"]
 	if str, ok := value.(string); ok {
-		return output{data: value, text: str}, nil
+		return output{data: map[string]any{"result": value}, text: str}, nil
 	}
 	data, _ := json.Marshal(value)
-	return output{data: value, text: string(data)}, nil
+	return output{data: map[string]any{"result": value}, text: string(data)}, nil
 }
 
 func cmdWait(s *session, a cmdArgs) (output, error) {
@@ -798,7 +822,7 @@ func jsString(s string) string {
 func cmdTabs(s *session, a cmdArgs) (output, error) {
 	sub := "list"
 	if len(a.pos) > 0 {
-		sub = canonical(a.pos[0])
+		sub = normalizeCommandName(a.pos[0])
 	}
 	arg := ""
 	if len(a.pos) > 1 {
@@ -850,7 +874,7 @@ func cmdTabs(s *session, a cmdArgs) (output, error) {
 func cmdNet(s *session, a cmdArgs) (output, error) {
 	sub := "list"
 	if len(a.pos) > 0 {
-		sub = canonical(a.pos[0])
+		sub = normalizeCommandName(a.pos[0])
 	}
 	p := passthrough(a)
 	switch sub {
@@ -915,7 +939,7 @@ func cmdDev(s *session, a cmdArgs) (output, error) {
 	if len(a.pos) == 0 {
 		return output{}, usagef("usage: browsercontrol dev layout [target]|memory|process|emulate [device]|sandbox [on|off]|har")
 	}
-	sub := canonical(a.pos[0])
+	sub := normalizeCommandName(a.pos[0])
 	arg := ""
 	if len(a.pos) > 1 {
 		arg = a.pos[1]
@@ -972,17 +996,24 @@ func loadFlowSource(src string) (steps []json.RawMessage, domain string, err err
 			return arr, "", nil
 		}
 		var doc struct {
-			Domain string            `json:"domain"`
-			Steps  []json.RawMessage `json:"steps"`
+			SchemaVersion int               `json:"schemaVersion"`
+			Domain        string            `json:"domain"`
+			Steps         []json.RawMessage `json:"steps"`
 		}
 		if err := json.Unmarshal(data, &doc); err != nil || len(doc.Steps) == 0 {
 			return nil, "", fmt.Errorf("%s has no flow steps", path)
+		}
+		if doc.SchemaVersion != 0 && doc.SchemaVersion != 1 && doc.SchemaVersion != 2 {
+			return nil, "", fmt.Errorf("unsupported flow schemaVersion %d", doc.SchemaVersion)
 		}
 		return doc.Steps, doc.Domain, nil
 	}
 	flow, err := extbridge.GetFlow(src)
 	if err != nil {
 		return nil, "", fmt.Errorf("no flow file %q and no saved flow with that id", src)
+	}
+	if flow.SchemaVersion != 0 && flow.SchemaVersion != 1 && flow.SchemaVersion != 2 {
+		return nil, "", fmt.Errorf("unsupported flow schemaVersion %d", flow.SchemaVersion)
 	}
 	return flow.Steps, flow.Domain, nil
 }
@@ -991,18 +1022,22 @@ func cmdFlow(s *session, a cmdArgs) (output, error) {
 	if len(a.pos) == 0 {
 		return output{}, usagef("usage: browsercontrol flow run|explore <file.json|id> | record [domain] | stop [--save id] | status | list | show <id> | save <id> <file.json> | rm <id>")
 	}
-	sub := canonical(a.pos[0])
+	sub := normalizeCommandName(a.pos[0])
 	arg := ""
 	if len(a.pos) > 1 {
 		arg = a.pos[1]
 	}
 	p := passthrough(a)
 	switch sub {
-	case "run", "explore":
+	case "run", "explore", "validate":
 		if arg == "" {
 			return output{}, usagef("usage: browsercontrol flow %s <file.json|saved-id>", sub)
 		}
 		steps, domain, err := loadFlowSource(arg)
+		if err != nil {
+			return output{}, err
+		}
+		steps, err = bindFlowEnvironment(steps)
 		if err != nil {
 			return output{}, err
 		}
@@ -1012,9 +1047,19 @@ func cmdFlow(s *session, a cmdArgs) (output, error) {
 		}
 		res, err := s.call(sub+"_flow", p)
 		if err != nil {
+			var ce *cmdError
+			if sub != "validate" && res != nil && errors.As(err, &ce) {
+				ce.Message = renderFlowReport(res, a)
+				if ce.Hint == "" {
+					ce.Hint = "Inspect completed steps with 'browsercontrol evidence' and take a fresh snapshot before retrying; do not replay the entire flow blindly."
+				}
+			}
 			return output{}, err
 		}
-		return generic(res), nil
+		if sub == "validate" {
+			return generic(res), nil
+		}
+		return output{data: res, text: renderFlowReport(res, a)}, nil
 	case "record", "start":
 		if arg != "" {
 			p["domain"] = arg
@@ -1033,17 +1078,26 @@ func cmdFlow(s *session, a cmdArgs) (output, error) {
 			raw, _ := json.Marshal(res["steps"])
 			var steps []json.RawMessage
 			_ = json.Unmarshal(raw, &steps)
-			saved, err := extbridge.SaveFlow(extbridge.Flow{ID: id, Name: id, Domain: str(res["domain"]), Steps: steps})
+			saved, err := extbridge.SaveFlow(extbridge.Flow{ID: id, SchemaVersion: 2, Name: id, Domain: str(res["domain"]), Steps: steps})
 			if err != nil {
 				return output{}, err
 			}
 			res["savedAs"] = saved.ID
 		}
-		return generic(res), nil
+		text := fmt.Sprintf("ok: stopped recording (%d steps)", len(asSlice(res["steps"])))
+		if id := str(res["savedAs"]); id != "" {
+			text += " saved as " + id
+		}
+		return output{data: res, text: text}, nil
 	case "status":
+		setDefault(p, "summary", !flagBool(a, "all"))
+		delete(p, "all")
 		res, err := s.call("flow_recording_status", p)
 		if err != nil {
 			return output{}, err
+		}
+		if p["summary"] == true {
+			delete(res, "steps")
 		}
 		return generic(res), nil
 	case "list", "ls":
@@ -1058,7 +1112,7 @@ func cmdFlow(s *session, a cmdArgs) (output, error) {
 		if len(lines) == 0 {
 			lines = []string{"(no saved flows in " + extbridge.FlowDir() + ")"}
 		}
-		return output{data: flows, text: strings.Join(lines, "\n")}, nil
+		return output{data: map[string]any{"flows": flows}, text: strings.Join(lines, "\n")}, nil
 	case "show", "get":
 		flow, err := extbridge.GetFlow(arg)
 		if err != nil {
@@ -1073,7 +1127,7 @@ func cmdFlow(s *session, a cmdArgs) (output, error) {
 		if err != nil {
 			return output{}, err
 		}
-		saved, err := extbridge.SaveFlow(extbridge.Flow{ID: arg, Name: firstNonEmptyString(flagStr(a, "name"), arg), Domain: firstNonEmptyString(flagStr(a, "domain"), domain), Steps: steps})
+		saved, err := extbridge.SaveFlow(extbridge.Flow{ID: arg, SchemaVersion: 2, Name: firstNonEmptyString(flagStr(a, "name"), arg), Domain: firstNonEmptyString(flagStr(a, "domain"), domain), Steps: steps})
 		if err != nil {
 			return output{}, err
 		}
@@ -1112,7 +1166,7 @@ func cmdSearch(s *session, a cmdArgs) (output, error) {
 	if len(results) == 0 {
 		text = firstNonEmptyString(cliHint(str(res["message"])), "no results")
 	}
-	return output{data: results, text: text}, nil
+	return output{data: map[string]any{"results": results}, text: text}, nil
 }
 
 /** Reads each URL in its own background tab (navigate → reading_mode → close), a few at a time. */
@@ -1124,7 +1178,7 @@ func cmdCrawl(s *session, a cmdArgs) (output, error) {
 	if err := s.ensureReady(); err != nil {
 		return output{}, err
 	}
-	concurrency := max(1, flagInt(a, "concurrency", 3))
+	concurrency := min(8, max(1, flagInt(a, "concurrency", 3)))
 	maxChars := flagInt(a, "maxChars", 4000)
 	type page struct {
 		URL   string `json:"url"`
@@ -1133,30 +1187,36 @@ func cmdCrawl(s *session, a cmdArgs) (output, error) {
 		Error string `json:"error,omitempty"`
 	}
 	pages := make([]page, len(urls))
-	sem := make(chan struct{}, concurrency)
+	jobs := make(chan int)
 	var wg sync.WaitGroup
-	for i, u := range urls {
+	for worker := 0; worker < min(concurrency, len(urls)); worker++ {
 		wg.Add(1)
-		go func(i int, u string) {
+		go func() {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			pages[i] = page{URL: normalizeURL(u)}
-			nav, err := s.call("navigate", map[string]any{"url": pages[i].URL, "newTab": true, "background": true})
-			if err != nil {
-				pages[i].Error = err.Error()
-				return
+			for i := range jobs {
+				func() {
+					pages[i] = page{URL: normalizeURL(urls[i])}
+					nav, err := s.call("navigate", map[string]any{"url": pages[i].URL, "newTab": true, "background": true})
+					if err != nil {
+						pages[i].Error = err.Error()
+						return
+					}
+					tabID := nav["tabId"]
+					defer func() { _, _ = s.call("close_tab", map[string]any{"tabId": tabID}) }()
+					res, err := s.call("reading_mode", map[string]any{"tabId": tabID, "maxChars": maxChars})
+					if err != nil {
+						pages[i].Error = err.Error()
+						return
+					}
+					pages[i].Title, pages[i].Text = str(res["title"]), str(res["text"])
+				}()
 			}
-			tabID := nav["tabId"]
-			defer func() { _, _ = s.call("close_tab", map[string]any{"tabId": tabID}) }()
-			res, err := s.call("reading_mode", map[string]any{"tabId": tabID, "maxChars": maxChars})
-			if err != nil {
-				pages[i].Error = err.Error()
-				return
-			}
-			pages[i].Title, pages[i].Text = str(res["title"]), str(res["text"])
-		}(i, u)
+		}()
 	}
+	for i := range urls {
+		jobs <- i
+	}
+	close(jobs)
 	wg.Wait()
 	var b strings.Builder
 	for _, pg := range pages {
@@ -1167,7 +1227,12 @@ func cmdCrawl(s *session, a cmdArgs) (output, error) {
 		}
 		fmt.Fprintf(&b, "# %s\n%s\n\n", pg.Title, pg.Text)
 	}
-	return output{data: pages, text: b.String()}, nil
+	for _, pg := range pages {
+		if pg.Error == "" {
+			return output{data: map[string]any{"pages": pages}, text: b.String()}, nil
+		}
+	}
+	return output{}, &cmdError{Message: "All crawl URLs failed", Result: pages}
 }
 
 func (s *session) ensureReady() error {
@@ -1184,7 +1249,7 @@ func (s *session) ensureReady() error {
 func cmdCapture(s *session, a cmdArgs) (output, error) {
 	sub := ""
 	if len(a.pos) > 0 {
-		sub = canonical(a.pos[0])
+		sub = normalizeCommandName(a.pos[0])
 	}
 	switch sub {
 	case "start":
@@ -1202,6 +1267,22 @@ func cmdCapture(s *session, a cmdArgs) (output, error) {
 		if err != nil {
 			return output{}, err
 		}
+		if path == "" {
+			path = str(res["dataPath"])
+		}
+		if destination := posOrFlag(a, 1, "out"); destination != "" && path != "" && path != destination {
+			if !s.isLocalBridge() {
+				return output{}, &cmdError{Message: "Capture is saved on the remote bridge; copying --out requires a local bridge", Result: res}
+			}
+			if err := extbridge.CopyFileAtomic(path, destination); err != nil {
+				return output{}, err
+			}
+			path, _ = filepath.Abs(destination)
+			res["dataPath"] = path
+		}
+		if path == "" {
+			return output{}, &cmdError{Message: "Capture stopped but no artifact path was returned", Result: res}
+		}
 		return output{data: res, text: fmt.Sprintf("saved %s (%s, %vms)", path, kb(res["bytes"]), num(res["durationMs"]))}, nil
 	}
 	return output{}, usagef("usage: browsercontrol capture start | capture stop [out.webm]")
@@ -1213,7 +1294,7 @@ func cmdEvidence(s *session, a cmdArgs) (output, error) {
 		p["mode"] = a.pos[0]
 	}
 	setDefault(p, "mode", "overview")
-	setDefault(p, "sessionId", "go-cli")
+	setDefault(p, "sessionId", firstNonEmptyString(s.sessionID, "go-cli"))
 	res, err := s.call("evidence", p)
 	if err != nil {
 		return output{}, err

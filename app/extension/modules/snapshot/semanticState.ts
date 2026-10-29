@@ -8,7 +8,6 @@ import type {
 
 const DEFAULT_MAX_NODES = 500;
 const MAX_DELTA_NODES = 100;
-let nextDocumentSequence = 1;
 
 export interface SemanticCandidate {
     role?: string;
@@ -46,6 +45,7 @@ export interface SemanticStateUpdate {
 
 type InternalEntry = SemanticNode & {
     structuralKey: string;
+    sourceStructuralKey: string;
     parentStructuralKey?: string;
     scope: DocumentScope;
     lastSeenRevision: string;
@@ -54,7 +54,7 @@ type InternalEntry = SemanticNode & {
 };
 
 function newDocumentId(): string {
-    return `d${nextDocumentSequence++}`;
+    return `d${crypto.randomUUID()}`;
 }
 
 function identityKey(candidate: SemanticCandidate): string {
@@ -180,13 +180,33 @@ export class SemanticState {
             key: identityKey(candidate),
         }));
         const currentByKey = this.groupByKey(currentMatches, (match) => match.key);
+        const semanticKey = (item: {
+            structuralKey?: string;
+            sourceStructuralKey?: string;
+            role?: string;
+            name?: string;
+        }) =>
+            [
+                (item.sourceStructuralKey ?? item.structuralKey ?? "").replace(/:\d+$/, ":*"),
+                item.role ?? "",
+                item.name ?? "",
+            ].join("|");
+        const previousBySemantic = this.groupByKey(previousActive, semanticKey);
+        const currentBySemantic = this.groupByKey(boundedCandidates, semanticKey);
         const usedRefs = new Set<string>();
         const nextEntries: InternalEntry[] = [];
 
         for (const current of currentMatches) {
-            const prior = previousByKey.get(current.key) ?? [];
+            const semantic = semanticKey(current.candidate);
+            const duplicateSemantic =
+                (currentBySemantic.get(semantic)?.length ?? 0) > 1 ||
+                (previousBySemantic.get(semantic)?.length ?? 0) > 1;
+            const prior = duplicateSemantic
+                ? (previousBySemantic.get(semantic) ?? [])
+                : (previousByKey.get(current.key) ?? []);
             const currentGroup = currentByKey.get(current.key) ?? [];
-            const reusable = prior.length === 1 && currentGroup.length === 1 ? prior[0] : undefined;
+            const reusable =
+                !duplicateSemantic && prior.length === 1 && currentGroup.length === 1 ? prior[0] : undefined;
             const backendMatches = prior.filter(
                 (entry) =>
                     current.candidate.backendNodeId != null &&
@@ -194,7 +214,8 @@ export class SemanticState {
             );
             const backendReusable = !reusable && backendMatches.length === 1 ? backendMatches[0] : undefined;
             const matched = reusable ?? backendReusable;
-            const uncertain = !reusable && !backendReusable && (prior.length > 0 || currentGroup.length > 1);
+            const uncertain =
+                !reusable && !backendReusable && (duplicateSemantic || prior.length > 0 || currentGroup.length > 1);
             const ref = matched && !usedRefs.has(matched.ref) ? matched.ref : `e${this.nextRefNumber++}`;
             usedRefs.add(ref);
             nextEntries.push({
@@ -204,6 +225,7 @@ export class SemanticState {
                 value: current.candidate.value,
                 internalBackendNodeId: current.candidate.backendNodeId,
                 structuralKey: current.key,
+                sourceStructuralKey: current.candidate.structuralKey ?? "",
                 parentStructuralKey: current.candidate.parentStructuralKey,
                 scope: { ...this.scope },
                 lastSeenRevision: nextRevision,
@@ -220,9 +242,9 @@ export class SemanticState {
 
         const byStructuralKey = new Map<string, InternalEntry[]>();
         for (const entry of nextEntries) {
-            const list = byStructuralKey.get(entry.structuralKey) ?? [];
+            const list = byStructuralKey.get(entry.sourceStructuralKey) ?? [];
             list.push(entry);
-            byStructuralKey.set(entry.structuralKey, list);
+            byStructuralKey.set(entry.sourceStructuralKey, list);
         }
         for (const entry of nextEntries) {
             const parents = entry.parentStructuralKey ? (byStructuralKey.get(entry.parentStructuralKey) ?? []) : [];
@@ -230,6 +252,9 @@ export class SemanticState {
         }
 
         for (const entry of nextEntries) this.entries.set(entry.ref, entry);
+        const staleEntries = [...this.entries.values()].filter((entry) => entry.status === "stale");
+        for (const entry of staleEntries.slice(0, Math.max(0, staleEntries.length - this.maxNodes)))
+            this.entries.delete(entry.ref);
         const childrenByParent = new Map<string, string[]>();
         for (const entry of nextEntries) {
             if (!entry.parentRef) continue;
@@ -269,7 +294,7 @@ export class SemanticState {
         const loaderChanged =
             observation.loaderId != null && this.scope.loaderId != null && observation.loaderId !== this.scope.loaderId;
         if (frameChanged || loaderChanged || observation.documentReplaced) {
-            for (const entry of this.entries.values()) entry.status = "stale";
+            this.entries.clear();
             this.scope = {
                 documentId: this.createDocumentId(),
                 tabId: this.scope.tabId,

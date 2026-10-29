@@ -1,9 +1,18 @@
 # Local browser profiles and captured artifacts
 .browsercontrol/
 data/
+/scratch/
+/demo_shots/
+
+# Private fixture captures stay local even when public fixtures are versioned.
+/fixtures/**/private/
+/fixtures/**/local/
+/fixtures/**/.private/
+/fixtures/**/.local/
 
 # Build outputs
 *.exe
+*.exe~
 *.test
 *.out
 cli/browsercontrol
@@ -19,3 +28,25 @@ node_modules/
 .output/
 .wxt/
 .codegraph/
+
+# Personal agent/editor config
+.claude/
+.agents/
+
+# Internal planning notes and stale architecture docs (kept locally, not published)
+/PLANS.md
+/docs/AUDIT.md
+/docs/TEST_PLANS.md
+/docs/REFACTOR_PLAN_VNEXT.md
+/docs/archive/
+/docs/diagram-*.html
+/docs/0[0-9]-*.png
+/docs/assets/
+/assets/*.prompt.md
+/*_demo.png
+/docs/CONTROL_READINESS.md
+/docs/OPTIMIZATION.md
+
+# Release packaging output
+/dist/
+cli/build/

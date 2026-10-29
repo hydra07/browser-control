@@ -38,7 +38,12 @@ export class RequestInterceptor {
             return;
         }
 
-        this.blockedRequestIds.add(requestId);
+        if (p.networkId) this.blockedRequestIds.add(`${target.tabId}:${p.networkId}`);
+        while (this.blockedRequestIds.size > MAX_BLOCKED) {
+            const oldest = this.blockedRequestIds.values().next().value;
+            if (oldest === undefined) break;
+            this.blockedRequestIds.delete(oldest);
+        }
 
         const recorded = await findRecordedResponse(target, method, request.url).catch(() => undefined);
         const responseCode = recorded?.status ?? 200;

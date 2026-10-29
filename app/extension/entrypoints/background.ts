@@ -5,6 +5,7 @@ import { errorMessage } from "../libs/errorMessage.js";
 import { installDialogAutoHandler } from "../modules/dialog/index.js";
 import type { DispatchCtx } from "../modules/dispatch/index.js";
 import { dispatchCommand } from "../modules/dispatch/index.js";
+import { CommandQueue } from "../modules/dispatch/queue.js";
 import {
     installActionLifecycleEvidence,
     persistEvidenceTimeline,
@@ -62,13 +63,11 @@ export default defineBackground(() => {
         clearSemanticState(tabId);
         if (lastActiveTabId === tabId) lastActiveTabId = null;
     });
+    chrome.tabs.onUpdated.addListener((tabId, change) => {
+        if (change.status === "loading" || change.url) clearSemanticState(tabId);
+    });
 
     installTabGroupBadge();
-
-    // Open side panel directly on clicking extension icon in toolbar
-    chrome.sidePanel
-        .setPanelBehavior({ openPanelOnActionClick: true })
-        .catch((e) => console.error("[browsercontrol] setPanelBehavior failed:", e));
 
     const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 
@@ -83,11 +82,12 @@ export default defineBackground(() => {
 
     interface RelayMessage {
         target: "background";
-        payload: BrowserCommand & { id: string };
+        payload: BrowserCommand & { id: string; deadline?: number };
     }
 
     type RuntimeMessage =
         | RelayMessage
+        | { type: "cancel_command"; id?: string }
         | { type: "auto_flow_step"; step: FlowStep }
         | { type: "get_extension_version" }
         | { type: "get_settings" }
@@ -99,10 +99,11 @@ export default defineBackground(() => {
         // Validate ground truth: is the debugger truly attached in Chrome?
         const targets = await chrome.debugger.getTargets().catch(() => []);
         const isAttached = targets.some((t) => t.tabId === tabId && t.attached);
-        if (isAttached) {
-            attachedTabIds.add(tabId);
+        if (isAttached && attachedTabIds.has(tabId)) {
             return;
         }
+        if (isAttached)
+            throw new Error(`Another debugger owns tab ${tabId}; close DevTools before using BrowserControl.`);
 
         // Stale in cache or detached by Chrome (e.g. cross-origin process swap) — re-attach
         attachedTabIds.delete(tabId);
@@ -111,7 +112,7 @@ export default defineBackground(() => {
             chrome.debugger.attach({ tabId }, "1.3", () => {
                 const err = chrome.runtime.lastError;
                 const msg = err?.message ?? "";
-                if (err && !msg.includes("already attached")) {
+                if (err) {
                     reject(
                         new Error(
                             `Failed to attach debugger to tab ${tabId}: ${msg}. If another debugger is attached, close DevTools and retry.`,
@@ -164,8 +165,14 @@ export default defineBackground(() => {
         extensionVersion: EXTENSION_VERSION,
     };
 
-    chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResponse) => {
+    const commandQueue = new CommandQueue();
+    chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendResponse) => {
         if ("type" in message) {
+            if (message.type === "cancel_command") {
+                commandQueue.cancel(message.id);
+                sendResponse({ cancelled: true });
+                return;
+            }
             if (message.type === "get_extension_version") {
                 sendResponse({ version: EXTENSION_VERSION });
                 return true;
@@ -183,7 +190,7 @@ export default defineBackground(() => {
                 return true;
             }
             if (message.type === "auto_flow_step") {
-                flowRecorder.addStep(message.step);
+                if (sender.tab?.id === flowRecorder.getRecordingTabId()) flowRecorder.addStep(message.step);
                 sendResponse({ received: true });
                 return true;
             }
@@ -191,8 +198,11 @@ export default defineBackground(() => {
         }
         if (message.target !== "background") return;
         const start = Date.now();
-        evidenceReady
-            .then(() => dispatchCommand(message.payload, dispatchCtx))
+        commandQueue
+            .run(message.payload.id, message.payload.deadline, async (signal) => {
+                await evidenceReady;
+                return dispatchCommand(message.payload, dispatchCtx, { signal, deadline: message.payload.deadline });
+            })
             .then((result) => {
                 const duration = Date.now() - start;
                 const telemetry = telemetryCollector.collectSnapshot(duration);
@@ -205,11 +215,16 @@ export default defineBackground(() => {
     // Offscreen document streams screencast frames for recording over a Port
     chrome.runtime.onConnect.addListener((port) => {
         if (port.name !== "capture-frames") return;
-        void handleCaptureConnection(port);
+        const start = (message: { tabId?: number }) => {
+            port.onMessage.removeListener(start);
+            void handleCaptureConnection(port, message.tabId);
+        };
+        port.onMessage.addListener(start);
     });
 
-    async function handleCaptureConnection(port: chrome.runtime.Port): Promise<void> {
-        if (!lastActiveTabId) {
+    async function handleCaptureConnection(port: chrome.runtime.Port, requestedTabId?: number): Promise<void> {
+        const captureTabId = requestedTabId ?? lastActiveTabId;
+        if (!captureTabId) {
             port.postMessage({
                 error: "No active tab",
                 hint: "Call `browsercontrol open <url>` or `browsercontrol tabs switch <id>` first to establish which tab to record.",
@@ -218,13 +233,13 @@ export default defineBackground(() => {
             return;
         }
         try {
-            await attachDebuggerIfNeeded(lastActiveTabId);
+            await attachDebuggerIfNeeded(captureTabId);
         } catch (e) {
             port.postMessage({ error: errorMessage(e) });
             port.disconnect();
             return;
         }
-        const target = { tabId: lastActiveTabId };
+        const target = { tabId: captureTabId };
         const result = await startScreencastRelay(target, port);
         port.postMessage(result);
         if ("error" in result) {
@@ -238,9 +253,9 @@ export default defineBackground(() => {
 
     installActionLifecycleOverlay((tabId) => ({ tabId }));
     installDialogAutoHandler();
-    installNetworkCollector(() => lastActiveTabId);
+    installNetworkCollector();
     installInterceptor();
-    installScreencastFrameRelay(() => lastActiveTabId);
+    installScreencastFrameRelay();
     ensureOffscreenDocument();
     chrome.runtime.onStartup.addListener(ensureOffscreenDocument);
 });

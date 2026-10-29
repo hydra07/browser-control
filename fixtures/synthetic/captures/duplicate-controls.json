@@ -1,0 +1,489 @@
+{
+  "schemaVersion": 1,
+  "classification": "synthetic",
+  "sourceURL": "fixture:duplicate-controls",
+  "observation": "snapshot_at",
+  "snapshot": {
+    "epoch": "fixture_WQCGPJ5VOXWHRUY6MYT3Z4YSS4",
+    "url": "http://fixture.test/duplicate-controls.html",
+    "browser": "Chrome/155.0.8059.79",
+    "frames": [
+      {
+        "id": "0FCCCB9D9713D5531503D9EFD8C1C579",
+        "url": "http://fixture.test/duplicate-controls.html"
+      }
+    ],
+    "documents": [
+      {
+        "frameId": "0FCCCB9D9713D5531503D9EFD8C1C579",
+        "url": "http://fixture.test/duplicate-controls.html",
+        "title": "Duplicate controls fixture",
+        "nodes": [
+          {
+            "index": 0,
+            "parent": -1,
+            "handle": 1,
+            "type": 9,
+            "name": "#document"
+          },
+          {
+            "index": 1,
+            "parent": 0,
+            "handle": 2,
+            "type": 10,
+            "name": "html"
+          },
+          {
+            "index": 2,
+            "parent": 0,
+            "handle": 3,
+            "type": 1,
+            "name": "HTML"
+          },
+          {
+            "index": 3,
+            "parent": 2,
+            "handle": 4,
+            "type": 1,
+            "name": "HEAD"
+          },
+          {
+            "index": 4,
+            "parent": 3,
+            "handle": 5,
+            "type": 1,
+            "name": "META"
+          },
+          {
+            "index": 5,
+            "parent": 3,
+            "handle": 6,
+            "type": 1,
+            "name": "TITLE"
+          },
+          {
+            "index": 6,
+            "parent": 5,
+            "handle": 7,
+            "type": 3,
+            "name": "#text",
+            "text": "Duplicate controls fixture"
+          },
+          {
+            "index": 7,
+            "parent": 2,
+            "handle": 8,
+            "type": 1,
+            "name": "BODY"
+          },
+          {
+            "index": 8,
+            "parent": 7,
+            "handle": 9,
+            "type": 1,
+            "name": "MAIN"
+          },
+          {
+            "index": 9,
+            "parent": 8,
+            "handle": 10,
+            "type": 1,
+            "name": "H1"
+          },
+          {
+            "index": 10,
+            "parent": 9,
+            "handle": 11,
+            "type": 3,
+            "name": "#text",
+            "text": "Invoices"
+          },
+          {
+            "index": 11,
+            "parent": 8,
+            "handle": 12,
+            "type": 1,
+            "name": "SECTION",
+            "attributes": {
+              "aria-label": "Invoice ORD-42"
+            }
+          },
+          {
+            "index": 12,
+            "parent": 11,
+            "handle": 13,
+            "type": 1,
+            "name": "H2"
+          },
+          {
+            "index": 13,
+            "parent": 12,
+            "handle": 14,
+            "type": 3,
+            "name": "#text",
+            "text": "Mai Nguyen"
+          },
+          {
+            "index": 14,
+            "parent": 11,
+            "handle": 15,
+            "type": 1,
+            "name": "BUTTON"
+          },
+          {
+            "index": 15,
+            "parent": 14,
+            "handle": 16,
+            "type": 3,
+            "name": "#text",
+            "text": "Save"
+          },
+          {
+            "index": 16,
+            "parent": 11,
+            "handle": 17,
+            "type": 1,
+            "name": "BUTTON"
+          },
+          {
+            "index": 17,
+            "parent": 16,
+            "handle": 18,
+            "type": 3,
+            "name": "#text",
+            "text": "Open invoice"
+          },
+          {
+            "index": 18,
+            "parent": 8,
+            "handle": 19,
+            "type": 1,
+            "name": "SECTION",
+            "attributes": {
+              "aria-label": "Invoice ORD-43"
+            }
+          },
+          {
+            "index": 19,
+            "parent": 18,
+            "handle": 20,
+            "type": 1,
+            "name": "H2"
+          },
+          {
+            "index": 20,
+            "parent": 19,
+            "handle": 21,
+            "type": 3,
+            "name": "#text",
+            "text": "Ada Example"
+          },
+          {
+            "index": 21,
+            "parent": 18,
+            "handle": 22,
+            "type": 1,
+            "name": "BUTTON"
+          },
+          {
+            "index": 22,
+            "parent": 21,
+            "handle": 23,
+            "type": 3,
+            "name": "#text",
+            "text": "Save"
+          },
+          {
+            "index": 23,
+            "parent": 18,
+            "handle": 24,
+            "type": 1,
+            "name": "BUTTON"
+          },
+          {
+            "index": 24,
+            "parent": 23,
+            "handle": 25,
+            "type": 3,
+            "name": "#text",
+            "text": "Open invoice"
+          },
+          {
+            "index": 25,
+            "parent": 7,
+            "handle": 26,
+            "type": 3,
+            "name": "#text",
+            "text": "\n"
+          }
+        ]
+      }
+    ],
+    "accessibility": [
+      {
+        "frameId": "0FCCCB9D9713D5531503D9EFD8C1C579",
+        "nodes": [
+          {
+            "id": "1",
+            "children": [
+              "3"
+            ],
+            "handle": 1,
+            "role": "RootWebArea",
+            "name": "Duplicate controls fixture"
+          },
+          {
+            "id": "3",
+            "parentId": "1",
+            "children": [
+              "8"
+            ],
+            "handle": 3,
+            "role": "none",
+            "ignored": true
+          },
+          {
+            "id": "8",
+            "parentId": "3",
+            "children": [
+              "9"
+            ],
+            "handle": 8,
+            "role": "none",
+            "ignored": true
+          },
+          {
+            "id": "9",
+            "parentId": "8",
+            "children": [
+              "10",
+              "12",
+              "19"
+            ],
+            "handle": 9,
+            "role": "main"
+          },
+          {
+            "id": "10",
+            "parentId": "9",
+            "children": [
+              "11"
+            ],
+            "handle": 10,
+            "role": "heading",
+            "name": "Invoices"
+          },
+          {
+            "id": "12",
+            "parentId": "9",
+            "children": [
+              "13",
+              "15",
+              "17"
+            ],
+            "handle": 12,
+            "role": "region",
+            "name": "Invoice ORD-42"
+          },
+          {
+            "id": "19",
+            "parentId": "9",
+            "children": [
+              "20",
+              "22",
+              "24"
+            ],
+            "handle": 19,
+            "role": "region",
+            "name": "Invoice ORD-43"
+          },
+          {
+            "id": "11",
+            "parentId": "10",
+            "children": [
+              "-1000000002"
+            ],
+            "handle": 11,
+            "role": "StaticText",
+            "name": "Invoices"
+          },
+          {
+            "id": "13",
+            "parentId": "12",
+            "children": [
+              "14"
+            ],
+            "handle": 13,
+            "role": "heading",
+            "name": "Mai Nguyen"
+          },
+          {
+            "id": "15",
+            "parentId": "12",
+            "children": [
+              "16"
+            ],
+            "handle": 15,
+            "role": "button",
+            "name": "Save",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "17",
+            "parentId": "12",
+            "children": [
+              "18"
+            ],
+            "handle": 17,
+            "role": "button",
+            "name": "Open invoice",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "20",
+            "parentId": "19",
+            "children": [
+              "21"
+            ],
+            "handle": 20,
+            "role": "heading",
+            "name": "Ada Example"
+          },
+          {
+            "id": "22",
+            "parentId": "19",
+            "children": [
+              "23"
+            ],
+            "handle": 22,
+            "role": "button",
+            "name": "Save",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "24",
+            "parentId": "19",
+            "children": [
+              "25"
+            ],
+            "handle": 24,
+            "role": "button",
+            "name": "Open invoice",
+            "states": {
+              "invalid": "false"
+            }
+          },
+          {
+            "id": "-1000000002",
+            "parentId": "11",
+            "role": "InlineTextBox",
+            "name": "Invoices"
+          },
+          {
+            "id": "14",
+            "parentId": "13",
+            "children": [
+              "-1000000003"
+            ],
+            "handle": 14,
+            "role": "StaticText",
+            "name": "Mai Nguyen"
+          },
+          {
+            "id": "16",
+            "parentId": "15",
+            "children": [
+              "-1000000004"
+            ],
+            "handle": 16,
+            "role": "StaticText",
+            "name": "Save"
+          },
+          {
+            "id": "18",
+            "parentId": "17",
+            "children": [
+              "-1000000005"
+            ],
+            "handle": 18,
+            "role": "StaticText",
+            "name": "Open invoice"
+          },
+          {
+            "id": "21",
+            "parentId": "20",
+            "children": [
+              "-1000000006"
+            ],
+            "handle": 21,
+            "role": "StaticText",
+            "name": "Ada Example"
+          },
+          {
+            "id": "23",
+            "parentId": "22",
+            "children": [
+              "-1000000007"
+            ],
+            "handle": 23,
+            "role": "StaticText",
+            "name": "Save"
+          },
+          {
+            "id": "25",
+            "parentId": "24",
+            "children": [
+              "-1000000008"
+            ],
+            "handle": 25,
+            "role": "StaticText",
+            "name": "Open invoice"
+          },
+          {
+            "id": "-1000000003",
+            "parentId": "14",
+            "role": "InlineTextBox",
+            "name": "Mai Nguyen"
+          },
+          {
+            "id": "-1000000004",
+            "parentId": "16",
+            "role": "InlineTextBox",
+            "name": "Save"
+          },
+          {
+            "id": "-1000000005",
+            "parentId": "18",
+            "role": "InlineTextBox",
+            "name": "Open invoice"
+          },
+          {
+            "id": "-1000000006",
+            "parentId": "21",
+            "role": "InlineTextBox",
+            "name": "Ada Example"
+          },
+          {
+            "id": "-1000000007",
+            "parentId": "23",
+            "role": "InlineTextBox",
+            "name": "Save"
+          },
+          {
+            "id": "-1000000008",
+            "parentId": "25",
+            "role": "InlineTextBox",
+            "name": "Open invoice"
+          }
+        ]
+      }
+    ],
+    "truncated": false
+  }
+}

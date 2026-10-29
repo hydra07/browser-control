@@ -1,0 +1,20 @@
+{
+  "react": {
+    "integrity": "sha512-wS+hAgJShR0KhEvPJArfuPVN1+Hz1t0Y6n5jLrGQbkb4urgPE/0Rve+1kMB1v/oWgHgm4WIcV+i7F2pTVj+2iQ==",
+    "sha256": {
+      "react.LICENSE": "52412d7bc7ce4157ea628bbaacb8829e0a9cb3c58f57f99176126bc8cf2bfc85",
+      "react.js": "d949f1c3687aedadcedac85261865f29b17cd273997e7f6b2bfc53b2f9d4c4dd"
+    },
+    "source": "https://registry.npmjs.org/react/-/react-18.3.1.tgz",
+    "version": "18.3.1"
+  },
+  "react-dom": {
+    "integrity": "sha512-5m4nQKp+rZRb09LNH59GM4BxTh9251/ylbKIbpe7TpGxfJ+9kv6BLkLBXIjjspbgbnIBNqlI23tRnTWT0snUIw==",
+    "sha256": {
+      "react-dom.LICENSE": "52412d7bc7ce4157ea628bbaacb8829e0a9cb3c58f57f99176126bc8cf2bfc85",
+      "react-dom.js": "35f4f974f4b2bcd44da73963347f8952e341f83909e4498227d4e26b98f66f0d"
+    },
+    "source": "https://registry.npmjs.org/react-dom/-/react-dom-18.3.1.tgz",
+    "version": "18.3.1"
+  }
+}

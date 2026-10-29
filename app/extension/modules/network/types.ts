@@ -1,4 +1,5 @@
 export interface NetworkEntry {
+    tabId: number;
     requestId: string;
     url: string;
     method: string;

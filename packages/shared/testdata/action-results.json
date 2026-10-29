@@ -1,0 +1,92 @@
+[
+    {
+        "valid": true,
+        "result": {
+            "actionId": "a_fixture",
+            "kind": "click",
+            "status": "completed",
+            "dispatched": true,
+            "inputState": "acknowledged",
+            "acknowledged": true,
+            "cleanupComplete": true,
+            "startedAt": 1000,
+            "dispatchedAt": 1001,
+            "finishedAt": 1002,
+            "bbox": null,
+            "verified": false,
+            "observation": "not_observed"
+        }
+    },
+    {
+        "valid": true,
+        "result": {
+            "actionId": "a_unknown",
+            "kind": "press",
+            "status": "outcome_unknown",
+            "dispatched": true,
+            "inputState": "write_attempted",
+            "acknowledged": false,
+            "cleanupComplete": true,
+            "startedAt": 1000,
+            "dispatchedAt": 1001,
+            "finishedAt": 1002,
+            "bbox": null,
+            "verified": false,
+            "observation": "not_observed"
+        }
+    },
+    {
+        "valid": true,
+        "result": {
+            "actionId": "a_cancelled",
+            "kind": "insert_text",
+            "status": "cancelled",
+            "dispatched": false,
+            "inputState": "not_sent",
+            "acknowledged": false,
+            "cleanupComplete": true,
+            "startedAt": 1000,
+            "dispatchedAt": null,
+            "finishedAt": 1002,
+            "bbox": null,
+            "verified": false,
+            "observation": "not_observed"
+        }
+    },
+    {
+        "valid": false,
+        "result": {
+            "actionId": "a_false_success",
+            "kind": "click",
+            "status": "completed",
+            "dispatched": true,
+            "inputState": "write_attempted",
+            "acknowledged": false,
+            "cleanupComplete": true,
+            "startedAt": 1000,
+            "dispatchedAt": 1001,
+            "finishedAt": 1002,
+            "bbox": null,
+            "verified": false,
+            "observation": "not_observed"
+        }
+    },
+    {
+        "valid": false,
+        "result": {
+            "actionId": "a_false_verification",
+            "kind": "click",
+            "status": "completed",
+            "dispatched": true,
+            "inputState": "acknowledged",
+            "acknowledged": true,
+            "cleanupComplete": true,
+            "startedAt": 1000,
+            "dispatchedAt": 1001,
+            "finishedAt": 1002,
+            "bbox": null,
+            "verified": true,
+            "observation": "not_observed"
+        }
+    }
+]

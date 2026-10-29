@@ -4,13 +4,14 @@
  */
 
 import type { DriftKind, ExpectedTransition, FailureEvent, FlowStep, FlowStepV2 } from "@browsercontrol/shared";
-import { normalizeFlowStep, toFlowTargetDescriptor } from "@browsercontrol/shared";
+import { normalizeFlowStep, toFlowTargetDescriptor, validateFlowSteps } from "@browsercontrol/shared";
 import { sendCommand } from "../../libs/cdp.js";
 import { emitActionLifecycle } from "../actions/events.js";
 import type { ActionResult } from "../actions/index.js";
 import {
     getAxInfoForNode,
     isRiskyTarget,
+    parseKeyCombo,
     performClick,
     performDrag,
     performPressKey,
@@ -37,9 +38,9 @@ export type { FlowReport } from "./types.js";
 function normalizeRole(role?: string): string[] {
     if (!role) return [];
     const r = role.toLowerCase().trim();
-    if (r === "a" || r === "link") return ["link", "a", "button"];
+    if (r === "a" || r === "link") return ["link"];
     if (r === "input" || r === "textbox" || r === "searchbox") return ["textbox", "searchbox", "combobox", "input"];
-    if (r === "button") return ["button", "link"];
+    if (r === "button") return ["button"];
     if (r === "heading") return ["heading"];
     return [r];
 }
@@ -84,14 +85,21 @@ function fuzzyConfidence(expected: string, actual: string): number {
 
 /** Resolves step target against live page accessibility tree or CSS selector. */
 async function resolveStepTarget(target: chrome.debugger.Debuggee, step: FlowStep): Promise<ResolvedStepTarget | null> {
-    const hasSpecificSelector = Boolean(step.selector && (step.selector.includes("#") || step.selector.includes("[")));
-
-    // 1. If selector has specific ID or attribute, try DOM query first.
-    if (hasSpecificSelector && step.selector) {
-        try {
-            const resolved = await resolveSelectorTarget(target, step.selector);
-            if (resolved && (!resolved.ambiguous || !step.name)) return resolved;
-        } catch {}
+    if (step.selector) {
+        const resolved = await resolveSelectorTarget(target, step.selector);
+        if (!resolved || resolved.ambiguous) return resolved;
+        const roles = normalizeRole(step.role);
+        const roleMatches = roles.length === 0 || roles.includes(resolved.axInfo.role?.toLowerCase() ?? "");
+        const nameMatches = !step.name || step.name.trim() === resolved.axInfo.name?.trim();
+        if (!roleMatches || !nameMatches) {
+            return {
+                ...resolved,
+                drift: "TARGET_DRIFT",
+                confidence: 0,
+                recoveryHint: "The selector matched but role/name constraints changed. Refresh and review the target.",
+            };
+        }
+        return resolved;
     }
 
     // 2. Try matching via Accessibility Tree (role + accessible name)
@@ -131,7 +139,7 @@ async function resolveStepTarget(target: chrome.debugger.Debuggee, step: FlowSte
                 return {
                     backendNodeId: 0,
                     matched: { role: step.role, name: step.name },
-                    axInfo: { role: step.role, name: step.name },
+                    axInfo: {},
                     ambiguous: true,
                     candidateCount: selection.count,
                     confidence: 0,
@@ -145,8 +153,8 @@ async function resolveStepTarget(target: chrome.debugger.Debuggee, step: FlowSte
                 const resolvedDrift: DriftKind = confidence < 0.5 ? "TARGET_DRIFT" : drift;
                 return {
                     backendNodeId: selection.value.backendDOMNodeId!,
-                    matched: { role: step.role, name: step.name },
-                    axInfo: { role: step.role, name: step.name },
+                    matched: { role: selection.value.role?.value, name: actualName },
+                    axInfo: { role: selection.value.role?.value, name: actualName },
                     confidence,
                     ...(resolvedDrift === "SEMANTIC_REPAIR"
                         ? { recoveryHint: "Review the repaired target and save a refreshed descriptor if intentional." }
@@ -157,13 +165,6 @@ async function resolveStepTarget(target: chrome.debugger.Debuggee, step: FlowSte
                     drift: resolvedDrift,
                 };
             }
-        } catch {}
-    }
-
-    // 3. Fallback to generic selector if not already matched.
-    if (!hasSpecificSelector && step.selector) {
-        try {
-            return await resolveSelectorTarget(target, step.selector);
         } catch {}
     }
 
@@ -267,11 +268,13 @@ async function verifyExpectedTransition(
             const selectorExpression = JSON.stringify(selector);
             const attributeExpression = JSON.stringify(expected.attribute?.trim() ?? "");
             const valueExpression = JSON.stringify(expected.value ?? "");
-            const checkExpression = expected.attribute
-                ? expected.value !== undefined
-                    ? `element?.getAttribute(${attributeExpression}) === ${valueExpression}`
-                    : `element?.hasAttribute(${attributeExpression}) === true`
-                : "element != null";
+            const checkExpression = expected.property
+                ? `element != null && String(element[${JSON.stringify(expected.property)}]) === ${valueExpression}`
+                : expected.attribute
+                  ? expected.value !== undefined
+                      ? `element?.getAttribute(${attributeExpression}) === ${valueExpression}`
+                      : `element?.hasAttribute(${attributeExpression}) === true`
+                  : "element != null";
             const result = await sendCommand(target, "Runtime.evaluate", {
                 expression: `(() => { const element = document.querySelector(${selectorExpression}); return ${checkExpression}; })()`,
                 returnByValue: true,
@@ -312,8 +315,20 @@ function reportFlowAssertion(expression: string, result: "passed" | "failed", se
 export async function runFlowSteps(
     target: chrome.debugger.Debuggee,
     steps: readonly (FlowStep | FlowStepV2)[],
-    opts: { captureEachStep: boolean; returnSnapshot?: boolean },
+    opts: {
+        captureEachStep: boolean;
+        returnSnapshot?: boolean;
+        deadline?: number;
+        signal?: AbortSignal;
+        runId?: string;
+    },
 ): Promise<FlowReport> {
+    const validationError = validateFlowSteps(steps);
+    if (validationError) return { success: false, reason: "invalid_flow", message: validationError, steps: [] };
+    for (const rawStep of steps) {
+        if (rawStep.action === "press_key" && !parseKeyCombo(rawStep.key ?? ""))
+            return { success: false, reason: "invalid_flow", message: "Unsupported key in workflow", steps: [] };
+    }
     if (steps.length > MAX_FLOW_STEPS) {
         reportFlowFailure("resolve", "too_many_steps", `Flow exceeded the ${MAX_FLOW_STEPS}-step limit.`, false);
         return {
@@ -326,6 +341,7 @@ export async function runFlowSteps(
 
     const results: FlowReport["steps"] = [];
     const stop = (index: number, reason: FlowReport["reason"], message: string): FlowReport => ({
+        runId: opts.runId,
         success: false,
         stoppedAtStep: index,
         reason,
@@ -339,23 +355,46 @@ export async function runFlowSteps(
     if (opts.captureEachStep) previousSnapshot = await getFullSnapshot(target);
 
     for (let i = 0; i < steps.length; i++) {
+        if (opts.signal?.aborted || (opts.deadline !== undefined && Date.now() >= opts.deadline)) {
+            return stop(
+                i,
+                "timeout",
+                "Workflow cancelled or deadline reached. Inspect completed steps before retrying.",
+            );
+        }
         const rawStep = steps[i]!;
         const step = normalizeFlowStep(rawStep);
         const expected = "expected" in rawStep ? rawStep.expected : undefined;
         const policy = "policy" in rawStep ? rawStep.policy : undefined;
+        if (step.action === "press_key" && /(^|\+)Enter$/i.test(step.key ?? "") && !step.confirmRisky) {
+            return stop(
+                i,
+                "risky_action_blocked",
+                "Enter can submit a form. Confirm intent with the user and set confirmRisky:true before dispatching it.",
+            );
+        }
         const needsTarget =
             step.action !== "scroll" &&
             step.action !== "drag" &&
-            !(step.action === "press_key" && !step.role && !step.selector);
+            !(step.action === "press_key" && !step.name && !step.selector);
 
         let resolved: ResolvedStepTarget | null = null;
 
         if (needsTarget) {
             const timeoutMs =
                 step.timeoutMs ?? (step.action === "wait_for" ? WAIT_FOR_DEFAULT_TIMEOUT_MS : DEFAULT_STEP_TIMEOUT_MS);
-            const deadline = Date.now() + timeoutMs;
+            const deadline = Math.min(Date.now() + timeoutMs, opts.deadline ?? Infinity);
             do {
-                resolved = await resolveStepTarget(target, step);
+                if (opts.signal?.aborted || Date.now() >= deadline) break;
+                try {
+                    resolved = await resolveStepTarget(target, step);
+                } catch (error) {
+                    return stop(
+                        i,
+                        "target_drift",
+                        `Target resolution failed before acting: ${error instanceof Error ? error.message : String(error)}`,
+                    );
+                }
                 if (resolved || Date.now() >= deadline) break;
                 await pageDelay(target, WAIT_FOR_POLL_MS);
             } while (true);
@@ -406,7 +445,10 @@ export async function runFlowSteps(
                 );
             }
 
-            if (resolved.drift === "TARGET_DRIFT") {
+            if (
+                resolved.drift === "TARGET_DRIFT" ||
+                (resolved.drift === "SEMANTIC_REPAIR" && policy?.onDrift !== "repair")
+            ) {
                 results.push({
                     index: i,
                     action: step.action,
@@ -431,7 +473,7 @@ export async function runFlowSteps(
                 );
             }
 
-            if (isRiskyTarget(resolved.axInfo) && !step.confirmRisky) {
+            if (["click", "press_key"].includes(step.action) && isRiskyTarget(resolved.axInfo) && !step.confirmRisky) {
                 results.push({
                     index: i,
                     action: step.action,
@@ -480,6 +522,10 @@ export async function runFlowSteps(
             }
         }
 
+        if (opts.signal?.aborted || (opts.deadline !== undefined && Date.now() >= opts.deadline)) {
+            return stop(i, "timeout", "Workflow stopped before dispatching the next action.");
+        }
+
         const actionId = `a${crypto.randomUUID()}`;
         const actionStartedAt = Date.now();
         const semanticTarget = toFlowTargetDescriptor(step);
@@ -502,7 +548,11 @@ export async function runFlowSteps(
                     actionResult = await performClick(target, resolved!.backendNodeId, { fast: true });
                     break;
                 case "type":
-                    actionResult = await performType(target, resolved?.backendNodeId, step.text ?? "", { fast: true });
+                case "fill":
+                    actionResult = await performType(target, resolved?.backendNodeId, step.text ?? "", {
+                        fast: true,
+                        clear: step.action === "fill",
+                    });
                     break;
                 case "press_key":
                     actionResult = await performPressKey(target, step.key ?? "", resolved?.backendNodeId, {
@@ -550,18 +600,21 @@ export async function runFlowSteps(
         let settleReason = actionResult.settleReason;
         if (step.action === "wait_for") {
             settleReason = (await waitForStableDom(target, { quietMs: 150, timeoutMs: 1500 })).reason;
-            if (settleReason === "timeout" && "success" in actionResult) {
-                actionResult = { error: "Wait step did not reach DOM quiet before the settle timeout" };
-            }
-        }
-        if (settleReason === "timeout" && "success" in actionResult) {
-            actionResult = { error: "Action did not reach DOM quiet before the settle timeout" };
         }
 
         let drift = resolved?.drift;
         let behaviorDrift = false;
         if ("success" in actionResult && expected && expected.kind !== "none") {
-            const transition = await verifyExpectedTransition(target, expected, beforeUrl);
+            const deadline = Math.min(
+                Date.now() + (step.timeoutMs ?? DEFAULT_STEP_TIMEOUT_MS),
+                opts.deadline ?? Infinity,
+            );
+            let transition: TransitionCheck;
+            do {
+                transition = await verifyExpectedTransition(target, expected, beforeUrl);
+                if (transition.ok || opts.signal?.aborted || Date.now() >= deadline) break;
+                await pageDelay(target, Math.min(WAIT_FOR_POLL_MS, Math.max(0, deadline - Date.now())));
+            } while (true);
             reportFlowAssertion(`expected ${expected.kind} transition`, transition.ok ? "passed" : "failed", sensitive);
             if (!transition.ok) {
                 behaviorDrift = true;
@@ -593,6 +646,13 @@ export async function runFlowSteps(
         results.push({
             index: i,
             action: step.action,
+            actionId,
+            verified:
+                success &&
+                (step.action === "fill" ||
+                    step.action === "assert_text" ||
+                    step.action === "wait_for" ||
+                    Boolean(expected && expected.kind !== "none")),
             matched: resolved?.matched,
             ambiguous: resolved?.ambiguous,
             ...(resolved?.confidence != null ? { confidence: resolved.confidence } : {}),
@@ -633,9 +693,14 @@ export async function runFlowSteps(
     if (opts.returnSnapshot || opts.captureEachStep) {
         finalSnapshot = opts.captureEachStep && previousSnapshot ? previousSnapshot : await getFullSnapshot(target);
     }
+    const failed = results.find((result) => !result.success);
     return {
-        success: true,
-        message: `Successfully executed ${steps.length} step(s).`,
+        runId: opts.runId,
+        verified: results.every((result) => result.verified === true),
+        success: !failed,
+        ...(failed
+            ? { reason: "behavior_drift", message: "Workflow completed with failed assertions; review step results." }
+            : { message: `Successfully executed ${steps.length} step(s).` }),
         steps: results,
         ...(finalSnapshot ? { finalSnapshot } : {}),
     };

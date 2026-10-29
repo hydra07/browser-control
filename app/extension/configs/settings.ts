@@ -64,13 +64,22 @@ async function loadFromBackground(): Promise<Settings | null> {
 
 // In-memory cache for synchronous hot-path reads
 let cached: Settings = { ...DEFAULT_SETTINGS };
+let loading: Promise<Settings> | undefined;
+let writes: Promise<unknown> = Promise.resolve();
 
-async function load(): Promise<Settings> {
+async function readSettings(): Promise<Settings> {
     const storage = getLocalStorage();
     if (!storage) return (await loadFromBackground()) ?? cached;
     const stored = await storage.get(STORAGE_KEY);
     cached = { ...DEFAULT_SETTINGS, ...(stored[STORAGE_KEY] as Partial<Settings> | undefined) };
     return cached;
+}
+
+function load(): Promise<Settings> {
+    loading ??= readSettings().finally(() => {
+        loading = undefined;
+    });
+    return loading;
 }
 void load().catch(() => {});
 
@@ -92,7 +101,15 @@ export async function getSettings(): Promise<Settings> {
     return load();
 }
 
-export async function saveSettings(patch: Partial<Settings>): Promise<Settings> {
+export function saveSettings(patch: Partial<Settings>): Promise<Settings> {
+    const input = { ...patch };
+    /** Serialize read-modify-write operations so overlapping edits cannot replace each other. */
+    const saved = writes.then(() => persistSettings(input));
+    writes = saved.catch(() => {});
+    return saved;
+}
+
+async function persistSettings(patch: Partial<Settings>): Promise<Settings> {
     const next = { ...(await getSettings()), ...patch };
     const storage = getLocalStorage();
     if (storage) {
@@ -103,8 +120,11 @@ export async function saveSettings(patch: Partial<Settings>): Promise<Settings> 
             type: "save_settings",
             patch,
         })) as SettingsResponse | undefined;
+        if (response?.error) throw new Error(response.error);
         const saved = mergeSettings(response?.settings);
-        if (saved) cached = saved;
+        if (!saved) throw new Error("The extension did not save settings.");
+        cached = saved;
+        return cached;
     }
     cached = next;
     return cached;

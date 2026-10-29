@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Realtime dashboard fixture</title>
+<main><h1>Fulfilment dashboard</h1><p role="status" aria-live="polite" id="updates">Orders processed: 0</p><button id="pause">Pause updates</button><button disabled>Export unavailable</button></main>
+<script>
+let count = 0; let paused = false;
+setInterval(() => { if (!paused) document.getElementById("updates").textContent = "Orders processed: " + (++count); }, 1000);
+document.getElementById("pause").addEventListener("click", () => { paused = !paused; document.getElementById("pause").textContent = paused ? "Resume updates" : "Pause updates"; });
+document.documentElement.dataset.fixtureReady = "true";
+</script></html>

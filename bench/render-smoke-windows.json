@@ -1,0 +1,720 @@
+{
+  "schemaVersion": 1,
+  "projection": "legacy-flat-ax-go-v1",
+  "renderer": "legacy-flat-cli-v1",
+  "timingClock": "windows_qpc_ns",
+  "clockFrequencyHz": 10000000,
+  "clockReadOverhead": {
+    "samples": 128,
+    "minNs": 100,
+    "p50Ns": 100,
+    "p95Ns": 200,
+    "maxNs": 7900
+  },
+  "tokenizer": {
+    "implementation": "github.com/tiktoken-go/tokenizer",
+    "version": "v0.8.1",
+    "encoding": "o200k_base",
+    "specialTokens": "ordinary_text"
+  },
+  "config": {
+    "runs": 20,
+    "warmup": 3,
+    "limit": 80,
+    "encoding": "o200k_base"
+  },
+  "filterSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "environment": {
+    "goVersion": "go1.26.3",
+    "os": "windows",
+    "arch": "amd64",
+    "cpus": 12,
+    "gomaxprocs": 12,
+    "build": {
+      "-buildmode": "exe",
+      "-compiler": "gc",
+      "CGO_ENABLED": "1",
+      "GOAMD64": "v1",
+      "vcs": "git",
+      "vcs.modified": "true",
+      "vcs.revision": "9a1b4c6df6a4785a66186dd49f62f3bd49fbbe90",
+      "vcs.time": "2026-09-30T09:01:24Z"
+    },
+    "executableSha256": "38878e4bd21502ee39f7452daf7c328f62aad3c6c755a8768e930ef47e1d4dcc",
+    "executableBytes": 26587648
+  },
+  "cases": [
+    {
+      "fixture": "article.json",
+      "fixtureSha256": "71105df3a87cf4c771b15416795e61944383c9e506362e1d2d7f3b02da59d7b1",
+      "classification": "synthetic",
+      "frameIndex": 0,
+      "inputBytes": 353357,
+      "rawDomNodes": 523,
+      "rawAxNodes": 907,
+      "inputTruncated": false,
+      "missingFrameCount": 0,
+      "projectedNodes": 4,
+      "projectionTextTruncated": true,
+      "shownNodes": 4,
+      "renderedNodes": 4,
+      "viewFiltered": false,
+      "agent": {
+        "bytes": 284,
+        "tokens": 61,
+        "sha256": "bdbf5e562da51e584c547505dbc5743c5b576985bd61ebd66124c11eabba1152"
+      },
+      "json": {
+        "bytes": 353,
+        "tokens": 82,
+        "sha256": "d17f2502be2c157eb683fe7b393bd30faabac670ddeee849592b2570d804df35"
+      },
+      "timings": {
+        "projection": {
+          "samples": 20,
+          "minNs": 499400,
+          "p50Ns": 1147700,
+          "p95Ns": 5631400,
+          "maxNs": 5990400
+        },
+        "agentRender": {
+          "samples": 20,
+          "minNs": 22500,
+          "p50Ns": 56600,
+          "p95Ns": 105400,
+          "maxNs": 2061100
+        },
+        "jsonEncode": {
+          "samples": 20,
+          "minNs": 7700,
+          "p50Ns": 25600,
+          "p95Ns": 38500,
+          "maxNs": 40200
+        },
+        "pipeline": {
+          "samples": 20,
+          "minNs": 533600,
+          "p50Ns": 1249400,
+          "p95Ns": 5722900,
+          "maxNs": 6077200
+        }
+      }
+    },
+    {
+      "fixture": "duplicate-controls.json",
+      "fixtureSha256": "92312679add1aed9ba3d3970def14f91663ea1513aa715522041956ad30d2269",
+      "classification": "synthetic",
+      "frameIndex": 0,
+      "inputBytes": 11338,
+      "rawDomNodes": 26,
+      "rawAxNodes": 27,
+      "inputTruncated": false,
+      "missingFrameCount": 0,
+      "projectedNodes": 7,
+      "projectionTextTruncated": false,
+      "shownNodes": 7,
+      "renderedNodes": 7,
+      "viewFiltered": false,
+      "agent": {
+        "bytes": 169,
+        "tokens": 53,
+        "sha256": "400869aa83a688b78a0bf1ad9a20c120e30ccd048f3c9be221069727a355e067"
+      },
+      "json": {
+        "bytes": 250,
+        "tokens": 77,
+        "sha256": "c2b66a37285afee338fb9a591be1dfc5cd944220306b4e6ef17e4e7f8105df84"
+      },
+      "timings": {
+        "projection": {
+          "samples": 20,
+          "minNs": 10100,
+          "p50Ns": 12900,
+          "p95Ns": 18300,
+          "maxNs": 25000
+        },
+        "agentRender": {
+          "samples": 20,
+          "minNs": 7900,
+          "p50Ns": 9900,
+          "p95Ns": 12900,
+          "maxNs": 63700
+        },
+        "jsonEncode": {
+          "samples": 20,
+          "minNs": 2500,
+          "p50Ns": 3300,
+          "p95Ns": 5800,
+          "maxNs": 10900
+        },
+        "pipeline": {
+          "samples": 20,
+          "minNs": 20900,
+          "p50Ns": 25900,
+          "p95Ns": 32000,
+          "maxNs": 99600
+        }
+      }
+    },
+    {
+      "fixture": "form.json",
+      "fixtureSha256": "3c030625c658873a2b8014f33c267affbbbe68bb01f5248fb8bbfb59116bb39b",
+      "classification": "synthetic",
+      "frameIndex": 0,
+      "inputBytes": 22376,
+      "rawDomNodes": 44,
+      "rawAxNodes": 57,
+      "inputTruncated": false,
+      "missingFrameCount": 0,
+      "projectedNodes": 17,
+      "projectionTextTruncated": false,
+      "shownNodes": 17,
+      "renderedNodes": 17,
+      "viewFiltered": false,
+      "agent": {
+        "bytes": 526,
+        "tokens": 166,
+        "sha256": "edda1812be80b5ee612637a70592c53c137522488c6ac2d25fd646d222f9c95a"
+      },
+      "json": {
+        "bytes": 657,
+        "tokens": 200,
+        "sha256": "b1e8c406c72836917e8d16b4dfc7ff9882bf7047f6d1ed831810a17ee9eca072"
+      },
+      "timings": {
+        "projection": {
+          "samples": 20,
+          "minNs": 20800,
+          "p50Ns": 26900,
+          "p95Ns": 40500,
+          "maxNs": 46300
+        },
+        "agentRender": {
+          "samples": 20,
+          "minNs": 16800,
+          "p50Ns": 21000,
+          "p95Ns": 29200,
+          "maxNs": 105300
+        },
+        "jsonEncode": {
+          "samples": 20,
+          "minNs": 2900,
+          "p50Ns": 3900,
+          "p95Ns": 7000,
+          "maxNs": 8000
+        },
+        "pipeline": {
+          "samples": 20,
+          "minNs": 41500,
+          "p50Ns": 52300,
+          "p95Ns": 75100,
+          "maxNs": 141100
+        }
+      }
+    },
+    {
+      "fixture": "modal.json",
+      "fixtureSha256": "5410d35d7974e7832cc80fb9e7e69c7e7cafc8018ad70d8cf8dfd226fc36f587",
+      "classification": "synthetic",
+      "frameIndex": 0,
+      "inputBytes": 10833,
+      "rawDomNodes": 32,
+      "rawAxNodes": 19,
+      "inputTruncated": false,
+      "missingFrameCount": 0,
+      "projectedNodes": 5,
+      "projectionTextTruncated": false,
+      "shownNodes": 5,
+      "renderedNodes": 5,
+      "viewFiltered": false,
+      "agent": {
+        "bytes": 149,
+        "tokens": 49,
+        "sha256": "829d28fd20a6100f3fce5c74877feb532f4145e2697f10ff67c9308706848ee8"
+      },
+      "json": {
+        "bytes": 224,
+        "tokens": 71,
+        "sha256": "0cf4123b74ceb619d33abe91d176e2bb5b5999a5cb05b9b3ff98ddddab729e49"
+      },
+      "timings": {
+        "projection": {
+          "samples": 20,
+          "minNs": 7200,
+          "p50Ns": 9900,
+          "p95Ns": 17800,
+          "maxNs": 28100
+        },
+        "agentRender": {
+          "samples": 20,
+          "minNs": 6400,
+          "p50Ns": 8000,
+          "p95Ns": 11700,
+          "maxNs": 14000
+        },
+        "jsonEncode": {
+          "samples": 20,
+          "minNs": 1900,
+          "p50Ns": 2600,
+          "p95Ns": 5000,
+          "maxNs": 7900
+        },
+        "pipeline": {
+          "samples": 20,
+          "minNs": 16900,
+          "p50Ns": 20500,
+          "p95Ns": 31000,
+          "maxNs": 47100
+        }
+      }
+    },
+    {
+      "fixture": "navigation.json",
+      "fixtureSha256": "d2f1d9c36befb7f57cccb2d96b005534fd1a31cafcddea926de06ff71b88fd07",
+      "classification": "synthetic",
+      "frameIndex": 0,
+      "inputBytes": 7845,
+      "rawDomNodes": 19,
+      "rawAxNodes": 17,
+      "inputTruncated": false,
+      "missingFrameCount": 0,
+      "projectedNodes": 4,
+      "projectionTextTruncated": false,
+      "shownNodes": 4,
+      "renderedNodes": 4,
+      "viewFiltered": false,
+      "agent": {
+        "bytes": 127,
+        "tokens": 37,
+        "sha256": "02cc20654fb46cc54064c225f51d0cb7c6ec7424e393874080ed38f63bc71f2a"
+      },
+      "json": {
+        "bytes": 196,
+        "tokens": 58,
+        "sha256": "49308d3297ee33aa7d8e2e11494e9580c423f4e1b6169c559422be6d46389a36"
+      },
+      "timings": {
+        "projection": {
+          "samples": 20,
+          "minNs": 5700,
+          "p50Ns": 7400,
+          "p95Ns": 10900,
+          "maxNs": 11600
+        },
+        "agentRender": {
+          "samples": 20,
+          "minNs": 4600,
+          "p50Ns": 5700,
+          "p95Ns": 9800,
+          "maxNs": 16000
+        },
+        "jsonEncode": {
+          "samples": 20,
+          "minNs": 1900,
+          "p50Ns": 2500,
+          "p95Ns": 3200,
+          "maxNs": 3500
+        },
+        "pipeline": {
+          "samples": 20,
+          "minNs": 13600,
+          "p50Ns": 15600,
+          "p95Ns": 23000,
+          "maxNs": 27600
+        }
+      }
+    },
+    {
+      "fixture": "nested-frames.json",
+      "fixtureSha256": "89a7bb12f1d3590cd494311b6daecf3272a3e721b691e88cb778f3f522498c55",
+      "classification": "synthetic",
+      "frameIndex": 0,
+      "inputBytes": 16262,
+      "rawDomNodes": 12,
+      "rawAxNodes": 7,
+      "inputTruncated": false,
+      "missingFrameCount": 0,
+      "projectedNodes": 1,
+      "projectionTextTruncated": false,
+      "shownNodes": 1,
+      "renderedNodes": 1,
+      "viewFiltered": false,
+      "agent": {
+        "bytes": 33,
+        "tokens": 8,
+        "sha256": "85e393e644093355a385f73e14e66437b5dd1eccc56e9d516457b30c9b394531"
+      },
+      "json": {
+        "bytes": 90,
+        "tokens": 26,
+        "sha256": "cea9be757aa2e8ba511701ca239b51aec54fd297247e2407f624908adc650f95"
+      },
+      "timings": {
+        "projection": {
+          "samples": 20,
+          "minNs": 1500,
+          "p50Ns": 1900,
+          "p95Ns": 2500,
+          "maxNs": 2500
+        },
+        "agentRender": {
+          "samples": 20,
+          "minNs": 1900,
+          "p50Ns": 2600,
+          "p95Ns": 3700,
+          "maxNs": 3700
+        },
+        "jsonEncode": {
+          "samples": 20,
+          "minNs": 2000,
+          "p50Ns": 2700,
+          "p95Ns": 3200,
+          "maxNs": 3600
+        },
+        "pipeline": {
+          "samples": 20,
+          "minNs": 6100,
+          "p50Ns": 7200,
+          "p95Ns": 8500,
+          "maxNs": 8500
+        }
+      }
+    },
+    {
+      "fixture": "nested-frames.json",
+      "fixtureSha256": "89a7bb12f1d3590cd494311b6daecf3272a3e721b691e88cb778f3f522498c55",
+      "classification": "synthetic",
+      "frameIndex": 1,
+      "inputBytes": 16262,
+      "rawDomNodes": 14,
+      "rawAxNodes": 10,
+      "inputTruncated": false,
+      "missingFrameCount": 0,
+      "projectedNodes": 2,
+      "projectionTextTruncated": false,
+      "shownNodes": 2,
+      "renderedNodes": 2,
+      "viewFiltered": false,
+      "agent": {
+        "bytes": 50,
+        "tokens": 15,
+        "sha256": "d3a9995b1af5f36a088dba6d02e53fc7d66b03a4266aa26d355b9bb1814f0a34"
+      },
+      "json": {
+        "bytes": 111,
+        "tokens": 34,
+        "sha256": "d69f5e66900d94ebb67da24cea6ff480d7ace6dfff98193b04c2fa8d429225e0"
+      },
+      "timings": {
+        "projection": {
+          "samples": 20,
+          "minNs": 3400,
+          "p50Ns": 4600,
+          "p95Ns": 6500,
+          "maxNs": 7200
+        },
+        "agentRender": {
+          "samples": 20,
+          "minNs": 3200,
+          "p50Ns": 3900,
+          "p95Ns": 7100,
+          "maxNs": 51900
+        },
+        "jsonEncode": {
+          "samples": 20,
+          "minNs": 2100,
+          "p50Ns": 2500,
+          "p95Ns": 6600,
+          "maxNs": 15500
+        },
+        "pipeline": {
+          "samples": 20,
+          "minNs": 9400,
+          "p50Ns": 11500,
+          "p95Ns": 16600,
+          "maxNs": 72700
+        }
+      }
+    },
+    {
+      "fixture": "nested-frames.json",
+      "fixtureSha256": "89a7bb12f1d3590cd494311b6daecf3272a3e721b691e88cb778f3f522498c55",
+      "classification": "synthetic",
+      "frameIndex": 2,
+      "inputBytes": 16262,
+      "rawDomNodes": 16,
+      "rawAxNodes": 16,
+      "inputTruncated": false,
+      "missingFrameCount": 0,
+      "projectedNodes": 4,
+      "projectionTextTruncated": false,
+      "shownNodes": 4,
+      "renderedNodes": 4,
+      "viewFiltered": false,
+      "agent": {
+        "bytes": 141,
+        "tokens": 43,
+        "sha256": "6210c1ce89519c72e4aac90de8080f53a02aa411d0da515e6db7f856b7aee80d"
+      },
+      "json": {
+        "bytes": 212,
+        "tokens": 64,
+        "sha256": "14b767acc441c986a939a974dbd1253e444719608656a0733663c1f0746e0ae4"
+      },
+      "timings": {
+        "projection": {
+          "samples": 20,
+          "minNs": 5600,
+          "p50Ns": 7700,
+          "p95Ns": 10200,
+          "maxNs": 19400
+        },
+        "agentRender": {
+          "samples": 20,
+          "minNs": 5200,
+          "p50Ns": 6500,
+          "p95Ns": 10500,
+          "maxNs": 10800
+        },
+        "jsonEncode": {
+          "samples": 20,
+          "minNs": 1900,
+          "p50Ns": 2500,
+          "p95Ns": 3900,
+          "maxNs": 4200
+        },
+        "pipeline": {
+          "samples": 20,
+          "minNs": 13400,
+          "p50Ns": 17100,
+          "p95Ns": 22800,
+          "maxNs": 28900
+        }
+      }
+    },
+    {
+      "fixture": "react-admin.json",
+      "fixtureSha256": "f4bf8caaaff7cdae31c557d860c393e8e9da51b7fd94723a8e20e4b438a9d60f",
+      "classification": "synthetic",
+      "frameIndex": 0,
+      "inputBytes": 11250,
+      "rawDomNodes": 28,
+      "rawAxNodes": 24,
+      "inputTruncated": false,
+      "missingFrameCount": 0,
+      "projectedNodes": 5,
+      "projectionTextTruncated": false,
+      "shownNodes": 5,
+      "renderedNodes": 5,
+      "viewFiltered": false,
+      "agent": {
+        "bytes": 193,
+        "tokens": 56,
+        "sha256": "e5841386593429bc5ed066f70b23849f6c6a2496b2d4da3c75219ab25f3c208c"
+      },
+      "json": {
+        "bytes": 268,
+        "tokens": 78,
+        "sha256": "509ea7872432d2b8e77feac78a2e166d8d34b0cb0627d9753205191b102f4744"
+      },
+      "timings": {
+        "projection": {
+          "samples": 20,
+          "minNs": 8100,
+          "p50Ns": 11000,
+          "p95Ns": 18100,
+          "maxNs": 70300
+        },
+        "agentRender": {
+          "samples": 20,
+          "minNs": 6300,
+          "p50Ns": 9100,
+          "p95Ns": 11300,
+          "maxNs": 13700
+        },
+        "jsonEncode": {
+          "samples": 20,
+          "minNs": 2000,
+          "p50Ns": 2900,
+          "p95Ns": 4700,
+          "maxNs": 7800
+        },
+        "pipeline": {
+          "samples": 20,
+          "minNs": 16900,
+          "p50Ns": 23100,
+          "p95Ns": 31100,
+          "maxNs": 91800
+        }
+      }
+    },
+    {
+      "fixture": "realtime-dashboard.json",
+      "fixtureSha256": "7e76fbd524abe1e38c036b86d18e99b32852f26de7ac7406c5a079e5b477f071",
+      "classification": "synthetic",
+      "frameIndex": 0,
+      "inputBytes": 8381,
+      "rawDomNodes": 22,
+      "rawAxNodes": 16,
+      "inputTruncated": false,
+      "missingFrameCount": 0,
+      "projectedNodes": 4,
+      "projectionTextTruncated": false,
+      "shownNodes": 4,
+      "renderedNodes": 4,
+      "viewFiltered": false,
+      "agent": {
+        "bytes": 135,
+        "tokens": 38,
+        "sha256": "6e7361d2419afec001fa15bc843e35ea4da4830d36330f14adc9c07e82ea77d6"
+      },
+      "json": {
+        "bytes": 204,
+        "tokens": 59,
+        "sha256": "5bc67521f4248f267b491f99e1cb8e4cafb48a0af5aa636ce9dab99e67ad7fdb"
+      },
+      "timings": {
+        "projection": {
+          "samples": 20,
+          "minNs": 6100,
+          "p50Ns": 7300,
+          "p95Ns": 8000,
+          "maxNs": 8800
+        },
+        "agentRender": {
+          "samples": 20,
+          "minNs": 4900,
+          "p50Ns": 6100,
+          "p95Ns": 7800,
+          "maxNs": 7800
+        },
+        "jsonEncode": {
+          "samples": 20,
+          "minNs": 1700,
+          "p50Ns": 2500,
+          "p95Ns": 3200,
+          "maxNs": 3400
+        },
+        "pipeline": {
+          "samples": 20,
+          "minNs": 13100,
+          "p50Ns": 15800,
+          "p95Ns": 18100,
+          "maxNs": 18600
+        }
+      }
+    },
+    {
+      "fixture": "shadow-dom.json",
+      "fixtureSha256": "cafc574f065a5c630b6bf1b46fdbc5ed3b15c6a9859255d299c83accf2d1b6ad",
+      "classification": "synthetic",
+      "frameIndex": 0,
+      "inputBytes": 10804,
+      "rawDomNodes": 25,
+      "rawAxNodes": 23,
+      "inputTruncated": false,
+      "missingFrameCount": 0,
+      "projectedNodes": 5,
+      "projectionTextTruncated": false,
+      "shownNodes": 5,
+      "renderedNodes": 5,
+      "viewFiltered": false,
+      "agent": {
+        "bytes": 167,
+        "tokens": 48,
+        "sha256": "2ecca4a2fb73e0f00267aba922095345b75e06dc3416acd46668dde479711f39"
+      },
+      "json": {
+        "bytes": 242,
+        "tokens": 70,
+        "sha256": "b72483f2e5e7e4b57df790314782a5c01f72cee02e9e952dcb121831bdee546f"
+      },
+      "timings": {
+        "projection": {
+          "samples": 20,
+          "minNs": 7000,
+          "p50Ns": 9600,
+          "p95Ns": 13800,
+          "maxNs": 25500
+        },
+        "agentRender": {
+          "samples": 20,
+          "minNs": 5600,
+          "p50Ns": 6700,
+          "p95Ns": 11800,
+          "maxNs": 60200
+        },
+        "jsonEncode": {
+          "samples": 20,
+          "minNs": 1800,
+          "p50Ns": 2200,
+          "p95Ns": 5500,
+          "maxNs": 6200
+        },
+        "pipeline": {
+          "samples": 20,
+          "minNs": 15500,
+          "p50Ns": 19200,
+          "p95Ns": 33300,
+          "maxNs": 73400
+        }
+      }
+    },
+    {
+      "fixture": "virtual-table.json",
+      "fixtureSha256": "33be94d01bde5cfa38e7f4d4a3ab5d340c950311b57361334f648e118e4544ac",
+      "classification": "synthetic",
+      "frameIndex": 0,
+      "inputBytes": 49435,
+      "rawDomNodes": 98,
+      "rawAxNodes": 129,
+      "inputTruncated": false,
+      "missingFrameCount": 0,
+      "projectedNodes": 41,
+      "projectionTextTruncated": false,
+      "shownNodes": 41,
+      "renderedNodes": 41,
+      "viewFiltered": false,
+      "agent": {
+        "bytes": 1482,
+        "tokens": 447,
+        "sha256": "fa2673e627c538f186442ea401e8728455f4067b2e887c0d71fab213f2697aa2"
+      },
+      "json": {
+        "bytes": 1701,
+        "tokens": 505,
+        "sha256": "249a0f4de5fb530d29b09c8fc7956ea27d23c894ed1d6b8bfe16af1ce1ffac65"
+      },
+      "timings": {
+        "projection": {
+          "samples": 20,
+          "minNs": 45500,
+          "p50Ns": 64900,
+          "p95Ns": 102900,
+          "maxNs": 127200
+        },
+        "agentRender": {
+          "samples": 20,
+          "minNs": 43200,
+          "p50Ns": 55800,
+          "p95Ns": 92300,
+          "maxNs": 556400
+        },
+        "jsonEncode": {
+          "samples": 20,
+          "minNs": 6600,
+          "p50Ns": 7900,
+          "p95Ns": 22900,
+          "maxNs": 42600
+        },
+        "pipeline": {
+          "samples": 20,
+          "minNs": 98400,
+          "p50Ns": 130800,
+          "p95Ns": 236900,
+          "maxNs": 644500
+        }
+      }
+    }
+  ]
+}

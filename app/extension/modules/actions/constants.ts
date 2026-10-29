@@ -1,6 +1,6 @@
 /** Pattern matching destructive button/link names to warn or block automated execution. */
 export const RISKY_NAME_PATTERN =
-    /delete|remove|uninstall|deactivate|cancel|unsubscribe|sign\s*out|log\s*out|pay|purchase|confirm|permanently/i;
+    /delete|remove|uninstall|deactivate|cancel|unsubscribe|sign\s*out|log\s*out|pay|purchase|submit|confirm|permanently|xoá|xóa|thanh toán/i;
 
 /** Key definitions mapping key names to CDP dispatch parameters (key, code, keyCode). */
 export const KEY_DEFS: Record<string, { key: string; code: string; keyCode: number; text?: string }> = {

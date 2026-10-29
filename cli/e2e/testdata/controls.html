@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>BrowserControl synthetic controls</title>
+<body data-fixture="controls">
+  <main>
+    <form aria-label="Fixture profile" onsubmit="return false">
+      <label>Name <input name="fixture-name" autocomplete="off"></label>
+      <button type="button">Save fixture</button>
+      <p role="status" aria-live="polite">Not saved</p>
+    </form>
+  </main>
+  <script>
+    document.querySelector("button").addEventListener("click", () => {
+      document.querySelector('[role="status"]').textContent =
+        "Saved " + document.querySelector("input").value;
+    });
+  </script>
+</body>
+</html>
