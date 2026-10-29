@@ -14,6 +14,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -64,15 +65,15 @@ func TestBatchHonorsEachStepsTimeoutWithoutEchoingInput(t *testing.T) {
 }
 
 func TestUnknownOutcomeIsNeverAutomaticallyReplayed(t *testing.T) {
-	calls := 0
+	var calls atomic.Int32
 	s := testSession(t, func(w http.ResponseWriter, r *http.Request) {
-		calls++
+		calls.Add(1)
 		conn, _, _ := w.(http.Hijacker).Hijack()
 		_ = conn.Close()
 	})
 	_, err := s.call("click", map[string]any{"nodeId": 42})
-	if err == nil || !strings.Contains(err.Error(), "outcome unknown") || calls != 1 {
-		t.Fatalf("err=%v calls=%d", err, calls)
+	if err == nil || !strings.Contains(err.Error(), "outcome unknown") || calls.Load() != 1 {
+		t.Fatalf("err=%v calls=%d", err, calls.Load())
 	}
 }
 
